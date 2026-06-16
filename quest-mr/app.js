@@ -168,6 +168,18 @@ tiltGroup.rotation.z = THREE.MathUtils.degToRad(23.4);
 tiltGroup.add(earthMesh);
 tiltGroup.add(cloudMesh);
 ballGroup.add(tiltGroup);
+
+// Moon — true to scale: radius ~0.273x Earth, distance ~60.3 Earth radii. At
+// this real ratio it appears as a small dot far outside the room.
+const MOON_RADIUS = EARTH_RADIUS * 0.273;
+const MOON_DISTANCE = EARTH_RADIUS * 60.3;
+const moon = new THREE.Mesh(
+  new THREE.SphereGeometry(MOON_RADIUS, 32, 24),
+  new THREE.MeshStandardMaterial({ map: loadTex("moon_1024.jpg"), roughness: 1.0, metalness: 0.0 })
+);
+moon.position.copy(new THREE.Vector3(0.5, 0.45, -0.75).normalize()).multiplyScalar(MOON_DISTANCE);
+ballGroup.add(moon);
+
 ballGroup.position.copy(roomCenter).add(ballOffset);
 
 // ---------------------------------------------------------------------------
@@ -819,6 +831,49 @@ function keyboardSteer() {
 }
 
 // ---------------------------------------------------------------------------
+// Smooth locomotion (VR/AR): a thumbstick moves the player by offsetting the
+// XR reference space, so you can glide closer to the Earth (or toward the Moon).
+// ---------------------------------------------------------------------------
+let xrBaseRefSpace = null;
+const locomotion = new THREE.Vector3();
+const LOCO_SPEED = 1.8; // m/s
+
+renderer.xr.addEventListener("sessionstart", () => {
+  xrBaseRefSpace = renderer.xr.getReferenceSpace();
+  locomotion.set(0, 0, 0);
+});
+
+function updateLocomotion(dt) {
+  const session = renderer.xr.getSession();
+  if (!session || !xrBaseRefSpace) return;
+
+  let mx = 0;
+  let mz = 0;
+  for (const src of session.inputSources) {
+    const ax = src.gamepad?.axes;
+    if (!ax || ax.length < 2) continue;
+    const x = ax.length >= 4 ? ax[2] : ax[0];
+    const z = ax.length >= 4 ? ax[3] : ax[1];
+    if (Math.abs(x) > 0.15) mx += x;
+    if (Math.abs(z) > 0.15) mz += z;
+  }
+  if (mx === 0 && mz === 0) return;
+
+  const cam = renderer.xr.getCamera();
+  cam.getWorldDirection(tmpDir);
+  tmpDir.y = 0;
+  if (tmpDir.lengthSq() < 1e-6) tmpDir.set(0, 0, -1);
+  tmpDir.normalize();
+  tmpRight.crossVectors(tmpDir, worldUp).normalize();
+
+  locomotion.addScaledVector(tmpDir, -mz * LOCO_SPEED * dt);
+  locomotion.addScaledVector(tmpRight, mx * LOCO_SPEED * dt);
+
+  const offset = new XRRigidTransform({ x: -locomotion.x, y: -locomotion.y, z: -locomotion.z });
+  renderer.xr.setReferenceSpace(xrBaseRefSpace.getOffsetReferenceSpace(offset));
+}
+
+// ---------------------------------------------------------------------------
 // Physics: straight-line motion with reflective walls.
 // ---------------------------------------------------------------------------
 function bounceAxis(axis, limit) {
@@ -857,6 +912,7 @@ renderer.setAnimationLoop((timestamp) => {
 
   keyboardSteer();
   updateHandTouch(dt);
+  updateLocomotion(dt);
 
   if (ballActive) {
     if (stepBall(dt)) {
@@ -874,6 +930,7 @@ renderer.setAnimationLoop((timestamp) => {
   earthMesh.rotation.y += dt * EARTH_SPIN;
   cloudMesh.rotation.y += dt * CLOUD_SPIN;
   cloudMesh.material.opacity = 0.75 + Math.sin(timestamp * 0.00035) * 0.12;
+  moon.rotation.y += dt * 0.04;
 
   // Ambient space life: orbiting satellite, occasional comet, surface lightning.
   elapsed += dt;
