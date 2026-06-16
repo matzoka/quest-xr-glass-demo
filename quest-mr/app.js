@@ -1080,14 +1080,14 @@ function stepBall(dt) {
 // Distant Sun and Saturn, well outside the room. Large, self-lit Sun that casts
 // light; ringed Saturn with a tilted axis. Both spin.
 // ---------------------------------------------------------------------------
-const sun = new THREE.Mesh(
+const sunMesh = new THREE.Mesh(
   new THREE.SphereGeometry(EARTH_RADIUS * 50, 64, 48),
   new THREE.MeshBasicMaterial({ map: loadTex("2k_sun.jpg") })
 );
-sun.position.set(-60, 42, -120);
-scene.add(sun);
+sunMesh.position.set(-60, 42, -120);
+scene.add(sunMesh);
 const sunLight = new THREE.PointLight(0xfff2e6, 2.4, 0, 0.0);
-sunLight.position.copy(sun.position);
+sunLight.position.copy(sunMesh.position);
 scene.add(sunLight);
 
 const SATURN_R = EARTH_RADIUS * 20;
@@ -1148,7 +1148,7 @@ renderer.setAnimationLoop((timestamp) => {
   moon.rotation.y += dt * 0.04;
   moonOrbit.rotation.y += dt * MOON_ORBIT_SPEED;
   updatePlane(dt);
-  sun.rotation.y += dt * 0.03;
+  sunMesh.rotation.y += dt * 0.03;
   saturnBall.rotation.y += dt * 0.1;
 
   // Ambient space life: orbiting satellite, occasional comet, surface lightning.
