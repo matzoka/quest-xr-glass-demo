@@ -45,3 +45,20 @@ Quest の AR / VR セッションは **HTTPS（セキュアコンテキスト）
 
 デプロイ手順・調整できるパラメータ・球モデルの再生成方法など、詳しくは
 [quest-mr/README.md](quest-mr/README.md) を参照してください。
+
+## GitHub Pages で公開する
+
+このリポジトリは GitHub Pages での公開に対応しています。リポジトリのルートに
+ある [index.html](index.html) が `quest-mr/` へ自動リダイレクトするため、
+リポジトリ全体をそのまま Pages として配信できます。
+
+1. GitHub の **Settings → Pages** を開きます。
+2. **Build and deployment** の **Source** を「Deploy from a branch」にします。
+3. **Branch** を `master`、フォルダを `/ (root)` に設定して **Save** します。
+4. 数分待つと、以下の URL で公開されます（HTTPS 配信なので Quest でそのまま動きます）。
+
+   https://matzoka.github.io/quest-xr-glass-demo/
+
+ルートにアクセスすると `quest-mr/` へリダイレクトされます。直接
+https://matzoka.github.io/quest-xr-glass-demo/quest-mr/ を開いても構いません。
+この URL を Quest Browser で開き、「Enter VR」または「Enter AR」を押します。
