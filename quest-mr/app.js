@@ -1354,27 +1354,72 @@ const matDark = new THREE.MeshStandardMaterial({ color: 0x2a2d33, roughness: 0.6
 const matGold = new THREE.MeshStandardMaterial({ color: 0xc8a24a, roughness: 0.4, metalness: 0.6, emissive: 0x3a2c08, emissiveIntensity: 0.3 });
 const matSilver = new THREE.MeshStandardMaterial({ color: 0xc7ccd2, roughness: 0.3, metalness: 0.8 });
 
-// Saturn V: white stack with black bands, nose cone (+Y) and tail fins.
+// Saturn V: a 3-stage stack (+Y up). The surviving spacecraft (short S-IVB +
+// CSM + escape tower) sits near the local origin; the first/second stages hang
+// below and are dropped during ascent. Returns the parts so the mission can
+// stage them, just like the real Apollo 11 launch.
 function buildSaturnV() {
-  const g = new THREE.Group();
+  const group = new THREE.Group();
   const R = 0.014;
-  const L = 0.12;
-  g.add(new THREE.Mesh(new THREE.CylinderGeometry(R, R, L, 20), matWhite));
-  for (const yy of [0.32, 0.04, -0.22]) {
-    const b = new THREE.Mesh(new THREE.CylinderGeometry(R * 1.03, R * 1.03, L * 0.05, 20), matBlack);
-    b.position.y = L * yy;
-    g.add(b);
-  }
-  const nose = new THREE.Mesh(new THREE.ConeGeometry(R, R * 2.6, 20), matWhite);
-  nose.position.y = L / 2 + R * 1.3;
-  g.add(nose);
+
+  // Surviving spacecraft (this is all that coasts to the Moon).
+  const top = new THREE.Group();
+  const sivb = new THREE.Mesh(new THREE.CylinderGeometry(R * 0.85, R, 0.02, 18), matWhite);
+  sivb.position.y = -0.008;
+  top.add(sivb);
+  const svc = new THREE.Mesh(new THREE.CylinderGeometry(R * 0.78, R * 0.78, 0.016, 18), matGray);
+  svc.position.y = 0.01;
+  top.add(svc);
+  const cm = new THREE.Mesh(new THREE.ConeGeometry(R * 0.78, 0.014, 18), matGray);
+  cm.position.y = 0.025;
+  top.add(cm);
+  const tower = new THREE.Mesh(new THREE.CylinderGeometry(0.0012, 0.0012, 0.016, 6), matDark);
+  tower.position.y = 0.04;
+  top.add(tower);
+  group.add(top);
+
+  // Second stage (S-II).
+  const stage2 = new THREE.Group();
+  stage2.add(new THREE.Mesh(new THREE.CylinderGeometry(R, R, 0.045, 20), matWhite));
+  const band2 = new THREE.Mesh(new THREE.CylinderGeometry(R * 1.03, R * 1.03, 0.005, 20), matBlack);
+  band2.position.y = 0.024;
+  stage2.add(band2);
+  stage2.position.y = -0.04;
+  group.add(stage2);
+
+  // First stage (S-IC) with tail fins.
+  const stage1 = new THREE.Group();
+  stage1.add(new THREE.Mesh(new THREE.CylinderGeometry(R, R, 0.07, 20), matWhite));
+  const band1 = new THREE.Mesh(new THREE.CylinderGeometry(R * 1.03, R * 1.03, 0.005, 20), matBlack);
+  band1.position.y = 0.03;
+  stage1.add(band1);
   for (let k = 0; k < 4; k += 1) {
     const a = (k * Math.PI) / 2;
-    const f = new THREE.Mesh(new THREE.BoxGeometry(R * 0.5, R * 2.4, R * 1.7), matBlack);
-    f.position.set(Math.cos(a) * R, -L / 2 + R * 1.2, Math.sin(a) * R);
-    g.add(f);
+    const f = new THREE.Mesh(new THREE.BoxGeometry(R * 0.5, R * 1.8, R * 1.6), matBlack);
+    f.position.set(Math.cos(a) * R, -0.03, Math.sin(a) * R);
+    stage1.add(f);
   }
-  return g;
+  stage1.position.y = -0.095;
+  group.add(stage1);
+
+  // Engine plume (additive), shown only during powered ascent.
+  const plume = new THREE.Mesh(
+    new THREE.ConeGeometry(R * 0.9, 0.05, 14, 1, true),
+    new THREE.MeshBasicMaterial({
+      color: 0xffb060,
+      transparent: true,
+      opacity: 0.8,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+    })
+  );
+  plume.position.y = -0.155;
+  plume.rotation.x = Math.PI; // flares downward (-Y)
+  plume.visible = false;
+  group.add(plume);
+
+  return { group, stage1, stage2, plume };
 }
 
 // Command + Service Module: gray cylinder with a conical capsule and a nozzle.
@@ -1391,27 +1436,41 @@ function buildCSM() {
   return g;
 }
 
-// Lunar Module: gold octagonal descent stage, silver ascent stage + dome, four
-// splayed legs with foot pads. Built standing on +Y.
-function buildLM() {
+// A thin cylinder spanning two local points — used for landing-gear struts so
+// they actually connect the body to the foot pads.
+const _cbA = new THREE.Vector3();
+const _cbB = new THREE.Vector3();
+const _cbDir = new THREE.Vector3();
+function cylinderBetween(from, to, radius, mat) {
+  _cbDir.subVectors(to, from);
+  const len = _cbDir.length();
+  const m = new THREE.Mesh(new THREE.CylinderGeometry(radius, radius, len, 6), mat);
+  m.position.copy(from).add(to).multiplyScalar(0.5);
+  m.quaternion.setFromUnitVectors(_yUp, _cbDir.normalize());
+  return m;
+}
+
+// Lunar Module (+Y up): octagonal descent stage, boxy ascent stage + dome, and
+// four splayed legs whose struts run cleanly from the body down to foot pads.
+function buildLM(descentMat) {
   const g = new THREE.Group();
-  const descent = new THREE.Mesh(new THREE.CylinderGeometry(0.016, 0.018, 0.012, 8), matGold);
+  const descent = new THREE.Mesh(new THREE.CylinderGeometry(0.014, 0.016, 0.012, 8), descentMat || matSilver);
   g.add(descent);
-  const ascent = new THREE.Mesh(new THREE.BoxGeometry(0.016, 0.011, 0.016), matSilver);
+  const ascent = new THREE.Mesh(new THREE.BoxGeometry(0.015, 0.011, 0.015), matSilver);
   ascent.position.y = 0.012;
   g.add(ascent);
   const dome = new THREE.Mesh(new THREE.SphereGeometry(0.005, 12, 8), matSilver);
-  dome.position.set(0, 0.019, 0.005);
+  dome.position.set(0, 0.019, 0.004);
   g.add(dome);
   for (let k = 0; k < 4; k += 1) {
     const a = Math.PI / 4 + (k * Math.PI) / 2;
-    const leg = new THREE.Mesh(new THREE.CylinderGeometry(0.0012, 0.0012, 0.018, 6), matSilver);
-    leg.position.set(Math.cos(a) * 0.016, -0.011, Math.sin(a) * 0.016);
-    leg.rotation.z = -Math.cos(a) * 0.5;
-    leg.rotation.x = Math.sin(a) * 0.5;
-    g.add(leg);
-    const pad = new THREE.Mesh(new THREE.CylinderGeometry(0.0035, 0.0035, 0.0015, 8), matSilver);
-    pad.position.set(Math.cos(a) * 0.024, -0.019, Math.sin(a) * 0.024);
+    const cos = Math.cos(a);
+    const sin = Math.sin(a);
+    const from = _cbA.set(cos * 0.012, -0.004, sin * 0.012); // upper attach on the body
+    const foot = _cbB.set(cos * 0.026, -0.02, sin * 0.026); // splayed out and down
+    g.add(cylinderBetween(from, foot, 0.0013, matSilver));
+    const pad = new THREE.Mesh(new THREE.CylinderGeometry(0.0035, 0.0035, 0.0012, 10), matSilver);
+    pad.position.set(cos * 0.026, -0.0205, sin * 0.026);
     g.add(pad);
   }
   return g;
@@ -1470,11 +1529,11 @@ function buildFlag() {
 // Flying mission craft live in world space and are positioned each frame.
 const saturnV = buildSaturnV();
 const csm = buildCSM();
-const lmFlying = buildLM();
-saturnV.visible = false;
+const lmFlying = buildLM(matSilver);
+saturnV.group.visible = false;
 csm.visible = false;
 lmFlying.visible = false;
-scene.add(saturnV);
+scene.add(saturnV.group);
 scene.add(csm);
 scene.add(lmFlying);
 
@@ -1484,7 +1543,7 @@ scene.add(lmFlying);
 const SURF_SCALE = 1.4;
 const landerUp = new THREE.Vector3(0.35, 0.82, 0.45).normalize();
 const flagUp = new THREE.Vector3(0.6, 0.74, 0.3).normalize();
-const surfaceLander = buildLM();
+const surfaceLander = buildLM(matSilver);
 surfaceLander.scale.setScalar(SURF_SCALE);
 surfaceLander.position.copy(landerUp).multiplyScalar(MOON_RADIUS * 0.99);
 alignY(surfaceLander, landerUp);
@@ -1516,12 +1575,26 @@ const apTangent = new THREE.Vector3();
 const apSurfUp = new THREE.Vector3();
 const apPrev = new THREE.Vector3();
 let apPrevValid = false;
+const ORBIT_R = MOON_RADIUS * 2.6; // well clear of the lunar surface
+const ORBIT_START_ANG = 0.4;
+const LAUNCH_TOP = EARTH_RADIUS + 0.63; // craft-center distance at end of ascent
+
+// Restore the dropped stages for the next launch.
+function resetSaturnV() {
+  saturnV.stage1.visible = true;
+  saturnV.stage1.position.set(0, -0.095, 0);
+  saturnV.stage1.scale.setScalar(1);
+  saturnV.stage2.visible = true;
+  saturnV.stage2.position.set(0, -0.04, 0);
+  saturnV.stage2.scale.setScalar(1);
+}
 
 function updateApollo(dt) {
   apolloT += dt / APOLLO_DURATION;
   if (apolloT >= 1) {
     apolloT -= 1;
     apPrevValid = false;
+    resetSaturnV();
   }
   const t = apolloT;
 
@@ -1529,50 +1602,69 @@ function updateApollo(dt) {
   moon.getWorldPosition(moonWorld);
   apDirEM.copy(moonWorld).sub(earthWorld).normalize();
 
-  saturnV.visible = false;
+  saturnV.group.visible = false;
+  saturnV.plume.visible = false;
   csm.visible = false;
   lmFlying.visible = false;
 
-  const launchEnd = EARTH_RADIUS + 0.6;
-
   if (t < 0.12) {
-    // Launch: accelerate radially out from the Earth toward the Moon.
+    // Launch + staging: lift off the Earth and drop the 1st then 2nd stage,
+    // leaving only the short CSM/LM spacecraft to continue to the Moon.
     const p = t / 0.12;
-    saturnV.visible = true;
-    saturnV.position.copy(earthWorld).addScaledVector(apDirEM, EARTH_RADIUS + p * p * 0.6);
-    alignY(saturnV, apDirEM);
-    apPrev.copy(saturnV.position);
+    saturnV.group.visible = true;
+    saturnV.plume.visible = true;
+    saturnV.plume.scale.y = 0.7 + Math.random() * 0.6; // flicker
+    const climb = smooth(p) * 0.5;
+    saturnV.group.position.copy(earthWorld).addScaledVector(apDirEM, EARTH_RADIUS + 0.13 + climb);
+    alignY(saturnV.group, apDirEM);
+
+    if (t > 0.03) {
+      const sp = smooth((t - 0.03) / 0.04); // S-IC drops 0.03–0.07
+      saturnV.stage1.position.y = -0.095 - sp * 0.25;
+      saturnV.stage1.scale.setScalar(1 - sp * 0.6);
+      if (t > 0.07) saturnV.stage1.visible = false;
+    }
+    if (t > 0.07) {
+      const sp = smooth((t - 0.07) / 0.04); // S-II drops 0.07–0.11
+      saturnV.stage2.position.y = -0.04 - sp * 0.25;
+      saturnV.stage2.scale.setScalar(1 - sp * 0.6);
+      if (t > 0.11) saturnV.stage2.visible = false;
+    }
+    apPrev.copy(saturnV.group.position);
     apPrevValid = true;
   } else if (t < 0.5) {
-    // Trans-lunar coast: glide to the lunar-orbit insertion point.
+    // Trans-lunar coast: only the short stack remains; glide to a point that
+    // sits exactly on the lunar orbit circle (so it never enters the surface).
     const p = (t - 0.12) / 0.38;
-    saturnV.visible = true;
-    apA.copy(earthWorld).addScaledVector(apDirEM, launchEnd);
-    apB.copy(moonWorld).addScaledVector(apDirEM, -MOON_RADIUS * 1.8);
-    saturnV.position.lerpVectors(apA, apB, smooth(p));
+    saturnV.group.visible = true;
+    saturnV.stage1.visible = false;
+    saturnV.stage2.visible = false;
+    apA.copy(earthWorld).addScaledVector(apDirEM, LAUNCH_TOP);
+    orbitPos(moonWorld, ORBIT_R, ORBIT_START_ANG, apB);
+    saturnV.group.position.lerpVectors(apA, apB, smooth(p));
     if (apPrevValid) {
-      apTangent.copy(saturnV.position).sub(apPrev);
-      alignY(saturnV, apTangent);
+      apTangent.copy(saturnV.group.position).sub(apPrev);
+      alignY(saturnV.group, apTangent);
     }
-    apPrev.copy(saturnV.position);
+    apPrev.copy(saturnV.group.position);
     apPrevValid = true;
   } else if (t < 0.92) {
-    // Lunar operations: the CSM orbits; the LM separates and descends.
+    // Lunar orbit: the CSM ("母艦") circles the Moon; the LM separates and lands.
     const p = (t - 0.5) / 0.42;
     csm.visible = true;
-    const orbitR = MOON_RADIUS * 1.8;
-    const ang = p * Math.PI * 3 + 0.4;
-    orbitPos(moonWorld, orbitR, ang, apA);
+    const ang = ORBIT_START_ANG + p * Math.PI * 3;
+    orbitPos(moonWorld, ORBIT_R, ang, apA);
     csm.position.copy(apA);
-    orbitPos(moonWorld, orbitR, ang + 0.01, apB);
+    orbitPos(moonWorld, ORBIT_R, ang + 0.01, apB);
     apTangent.copy(apB).sub(apA);
     alignY(csm, apTangent);
 
     if (p > 0.25) {
       const dp = (p - 0.25) / 0.5;
       if (dp < 1) {
+        // Descend from orbit down onto the surface lander's exact spot.
         lmFlying.visible = true;
-        surfaceLander.getWorldPosition(apB); // touchdown target on the surface
+        surfaceLander.getWorldPosition(apB);
         lmFlying.position.lerpVectors(apA, apB, smooth(dp));
         apSurfUp.copy(apB).sub(moonWorld).normalize();
         alignY(lmFlying, apSurfUp);
