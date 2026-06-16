@@ -460,6 +460,7 @@ new MTLLoader().setPath("./assets/NCC-1701/").load("untitled.mtl", (materials) =
         obj.position.sub(center); // recenter on origin
         const maxDim = Math.max(size.x, size.y, size.z) || 1;
         obj.scale.setScalar((EARTH_RADIUS * 0.9) / maxDim);
+        obj.rotation.y = Math.PI; // flip so the bow leads the direction of travel
         enterprise.add(obj);
         console.log("Enterprise model loaded. raw size:", size.x.toFixed(2), size.y.toFixed(2), size.z.toFixed(2));
       },
