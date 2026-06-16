@@ -408,7 +408,7 @@ function spawnEnterprise() {
   shipVel
     .set(-side * (0.85 + Math.random() * 0.3), -0.15 + Math.random() * 0.2, -0.3 + Math.random() * 0.6)
     .normalize()
-    .multiplyScalar(1.7 + Math.random() * 1.0);
+    .multiplyScalar(0.85 + Math.random() * 0.5);
   shipActive = true;
   enterprise.visible = true;
   playShipEntrance();
