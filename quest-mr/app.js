@@ -93,12 +93,12 @@ scene.add(ballGroup);
 const ballOffset = new THREE.Vector3(0, -0.9, 0);
 const ballVelocity = new THREE.Vector3();
 let ballActive = false;
-let cruiseSpeed = 2.6; // constant speed kept while flying (set by the last kick)
+let cruiseSpeed = 1.3; // constant speed kept while flying (set by the last kick)
 
-const CRUISE_DEFAULT = 2.6; // speed for keyboard / click / trigger kicks
-const MIN_KICK = 1.8; // a gentle touch still gets the ball moving
-const MAX_KICK = 5.5; // cap so a fast swing does not fling it absurdly fast
-const HAND_GAIN = 2.3; // how strongly hand speed maps to launch speed
+const CRUISE_DEFAULT = 1.3; // speed for keyboard / click / trigger kicks
+const MIN_KICK = 0.9; // a gentle touch still gets the ball moving
+const MAX_KICK = 2.75; // cap so a fast swing does not fling it absurdly fast
+const HAND_GAIN = 1.15; // how strongly hand speed maps to launch speed
 const TOUCH_PAD = 0.06; // extra reach so light touches register reliably
 
 let lastFrameTime = 0;
@@ -576,6 +576,7 @@ async function enterXr(mode) {
       scene.background = new THREE.Color(0x07090c);
       floor.visible = true;
       exitButton.visible = false;
+      resetButton.visible = false;
       currentMode = "preview";
       statusEl.textContent = `${label} を終了しました。もう一度入るには VR/AR を選んでください。`;
       updateXrAvailability();
@@ -595,7 +596,8 @@ async function enterXr(mode) {
     vrButton.disabled = false;
     arButton.disabled = false;
     button.textContent = `Exit ${label}`;
-    exitButton.visible = true; // show the in-XR Exit button
+    exitButton.visible = true;
+    resetButton.visible = true; // show the in-XR Exit / Reset buttons
     statusEl.textContent = `${label} 起動中。地球に触れて弾く／スティックで移動。終了は「終了」ボタンを指してトリガー。`;
   } catch (error) {
     console.error(error);
@@ -808,16 +810,23 @@ function kick(direction, speed) {
   ballActive = true;
 }
 
+// Stop the Earth and return it to its starting position.
+function resetBall() {
+  ballActive = false;
+  ballVelocity.set(0, 0, 0);
+  ballOffset.set(0, -0.9, 0);
+}
+
 // ---------------------------------------------------------------------------
 // In-XR Exit button: a panel you point at with a controller (trigger) to leave
 // the session. Shown only while in VR/AR.
 // ---------------------------------------------------------------------------
-function makeButtonTexture(label) {
+function makeButtonTexture(label, bg) {
   const c = document.createElement("canvas");
   c.width = 320;
   c.height = 140;
   const ctx = c.getContext("2d");
-  ctx.fillStyle = "rgba(190,30,42,0.95)";
+  ctx.fillStyle = bg || "rgba(190,30,42,0.95)";
   ctx.beginPath();
   ctx.roundRect(4, 4, 312, 132, 24);
   ctx.fill();
@@ -847,6 +856,20 @@ exitButton.position.set(0, 1.4, -0.5); // in front of the user, a bit low
 exitButton.renderOrder = 999;
 exitButton.visible = false;
 scene.add(exitButton);
+
+const resetButton = new THREE.Mesh(
+  new THREE.PlaneGeometry(0.34, 0.15),
+  new THREE.MeshBasicMaterial({
+    map: makeButtonTexture("リセット / Reset", "rgba(30,110,190,0.95)"),
+    transparent: true,
+    depthTest: false,
+    side: THREE.DoubleSide,
+  })
+);
+resetButton.position.set(0, 1.6, -0.5); // just above the Exit button
+resetButton.renderOrder = 999;
+resetButton.visible = false;
+scene.add(resetButton);
 
 const raycaster = new THREE.Raycaster();
 const tempMatrix = new THREE.Matrix4();
@@ -881,8 +904,10 @@ for (let index = 0; index < 2; index += 1) {
       tempMatrix.identity().extractRotation(controller.matrixWorld);
       raycaster.ray.origin.setFromMatrixPosition(controller.matrixWorld);
       raycaster.ray.direction.set(0, 0, -1).applyMatrix4(tempMatrix);
-      if (raycaster.intersectObject(exitButton).length > 0) {
-        renderer.xr.getSession()?.end();
+      const uiHit = raycaster.intersectObjects([exitButton, resetButton])[0];
+      if (uiHit) {
+        if (uiHit.object === exitButton) renderer.xr.getSession()?.end();
+        else resetBall();
         return;
       }
     }
