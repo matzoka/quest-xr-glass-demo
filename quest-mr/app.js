@@ -1006,7 +1006,7 @@ function keyboardSteer() {
 // ---------------------------------------------------------------------------
 let xrBaseRefSpace = null;
 const locomotion = new THREE.Vector3();
-const LOCO_SPEED = 1.8; // m/s
+const LOCO_SPEED = 4.0; // m/s
 
 renderer.xr.addEventListener("sessionstart", () => {
   xrBaseRefSpace = renderer.xr.getReferenceSpace();
@@ -1084,7 +1084,7 @@ const sunMesh = new THREE.Mesh(
   new THREE.SphereGeometry(EARTH_RADIUS * 50, 64, 48),
   new THREE.MeshBasicMaterial({ map: loadTex("2k_sun.jpg") })
 );
-sunMesh.position.set(-60, 42, -120);
+sunMesh.position.set(-16, 11, -22);
 scene.add(sunMesh);
 const sunLight = new THREE.PointLight(0xfff2e6, 2.4, 0, 0.0);
 sunLight.position.copy(sunMesh.position);
@@ -1092,7 +1092,7 @@ scene.add(sunLight);
 
 const SATURN_R = EARTH_RADIUS * 20;
 const saturnGroup = new THREE.Group();
-saturnGroup.position.set(70, -18, -90);
+saturnGroup.position.set(15, -2, -13);
 saturnGroup.rotation.z = THREE.MathUtils.degToRad(26.7); // axial tilt
 scene.add(saturnGroup);
 const saturnBall = new THREE.Mesh(
