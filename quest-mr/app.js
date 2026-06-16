@@ -174,28 +174,44 @@ ballGroup.position.copy(roomCenter).add(ballOffset);
 // Orbiting satellite (ISS-like): a central truss + hub with big solar panels,
 // riding a tilted circular orbit around the Earth (and moving with it).
 // ---------------------------------------------------------------------------
-const bodyMat = new THREE.MeshStandardMaterial({ color: 0xc2cad4, metalness: 0.8, roughness: 0.35 });
-const panelMat = new THREE.MeshStandardMaterial({
-  color: 0x24407e,
-  metalness: 0.5,
-  roughness: 0.4,
-  emissive: 0x0b1c3d,
-  emissiveIntensity: 0.5,
-});
+const hullMat = new THREE.MeshStandardMaterial({ color: 0xdde3ec, metalness: 0.5, roughness: 0.45 });
+const glowMat = new THREE.MeshBasicMaterial({ color: 0x6fd2ff });
 
+// USS Enterprise-like ship: saucer + engineering hull + two warp nacelles.
+// Built facing -Z (its bow), which matches the orbit's travel direction.
 const satellite = new THREE.Group();
-satellite.add(new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.014, 0.014), bodyMat)); // truss
-const hub = new THREE.Mesh(new THREE.CylinderGeometry(0.016, 0.016, 0.06, 12), bodyMat);
-hub.rotation.z = Math.PI / 2;
-satellite.add(hub);
+
+const saucer = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.08, 0.018, 28), hullMat);
+saucer.position.set(0, 0, -0.085); // forward saucer section
+satellite.add(saucer);
+
+const hull = new THREE.Mesh(new THREE.CapsuleGeometry(0.022, 0.085, 6, 12), hullMat);
+hull.rotation.x = Math.PI / 2; // lie along Z (the engineering hull)
+hull.position.set(0, -0.02, 0.02);
+satellite.add(hull);
+
+const neck = new THREE.Mesh(new THREE.BoxGeometry(0.022, 0.04, 0.014), hullMat);
+neck.position.set(0, -0.012, -0.045); // connect saucer to hull
+satellite.add(neck);
+
 for (const sx of [-1, 1]) {
-  for (const off of [0.05, 0.088]) {
-    const panel = new THREE.Mesh(new THREE.BoxGeometry(0.034, 0.0015, 0.055), panelMat);
-    panel.position.set(sx * off, 0, 0);
-    satellite.add(panel);
-  }
+  const nacelle = new THREE.Mesh(new THREE.CapsuleGeometry(0.013, 0.1, 6, 12), hullMat);
+  nacelle.rotation.x = Math.PI / 2;
+  nacelle.position.set(sx * 0.065, 0.035, 0.05);
+  satellite.add(nacelle);
+
+  const glow = new THREE.Mesh(new THREE.SphereGeometry(0.014, 12, 10), glowMat);
+  glow.position.set(sx * 0.065, 0.035, 0.108); // glowing rear of each nacelle
+  satellite.add(glow);
+
+  const pylon = new THREE.Mesh(new THREE.BoxGeometry(0.01, 0.05, 0.03), hullMat);
+  pylon.position.set(sx * 0.033, 0.01, 0.05);
+  pylon.rotation.z = sx * 0.6;
+  satellite.add(pylon);
 }
-satellite.position.set(EARTH_RADIUS * 1.7, 0, 0); // orbit radius from Earth center
+
+satellite.position.set(EARTH_RADIUS * 2.2, 0, 0); // orbit radius from Earth center
+satellite.scale.setScalar(1.7); // a sizeable ship
 
 const satOrbit = new THREE.Group();
 satOrbit.rotation.x = THREE.MathUtils.degToRad(35); // inclined orbit
@@ -255,62 +271,85 @@ function updateLightning(dt) {
 }
 
 // ---------------------------------------------------------------------------
-// Comet: every so often a glowing head with a trailing tail streaks across the
-// scene, then disappears until the next pass.
+// Shooting star: every so often a small meteor falls toward the Earth from a
+// fixed direction and burns up in a bright flash as it reaches the surface.
+// Lives in ballGroup's frame, so the Earth's center is the local origin.
 // ---------------------------------------------------------------------------
-const cometGroup = new THREE.Group();
-cometGroup.add(new THREE.Mesh(new THREE.SphereGeometry(0.045, 16, 12), new THREE.MeshBasicMaterial({ color: 0xdcefff })));
-const cometTail = new THREE.Mesh(
-  new THREE.ConeGeometry(0.07, 0.95, 18, 1, true),
+const meteorGroup = new THREE.Group();
+ballGroup.add(meteorGroup);
+
+const meteor = new THREE.Mesh(
+  new THREE.SphereGeometry(0.028, 12, 10),
+  new THREE.MeshBasicMaterial({ color: 0xfff1da })
+);
+const meteorTrail = new THREE.Mesh(
+  new THREE.ConeGeometry(0.045, 0.42, 14, 1, true),
   new THREE.MeshBasicMaterial({
-    color: 0x8fd0ff,
+    color: 0xffb060,
     transparent: true,
-    opacity: 0.5,
+    opacity: 0.7,
     blending: THREE.AdditiveBlending,
     depthWrite: false,
     side: THREE.DoubleSide,
   })
 );
-cometTail.rotation.x = Math.PI / 2; // cone tip points +Z (the group's "behind" after lookAt)
-cometTail.position.z = 0.5; // trail behind the head
-cometGroup.add(cometTail);
-cometGroup.visible = false;
-scene.add(cometGroup);
+meteorTrail.rotation.x = Math.PI / 2; // cone tip points +Z (behind, after lookAt at center)
+meteorTrail.position.z = 0.22; // trail streams away from the Earth
+meteor.add(meteorTrail);
+meteor.visible = false;
+meteorGroup.add(meteor);
 
-const cometVel = new THREE.Vector3();
-const cometTmp = new THREE.Vector3();
-let cometActive = false;
-let nextCometAt = 3.0;
+const meteorFlash = new THREE.Mesh(
+  new THREE.SphereGeometry(0.05, 14, 12),
+  new THREE.MeshBasicMaterial({
+    color: 0xffd9a0,
+    transparent: true,
+    opacity: 0,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+  })
+);
+meteorFlash.visible = false;
+meteorGroup.add(meteorFlash);
 
-function spawnComet() {
-  const side = Math.random() < 0.5 ? -1 : 1;
-  cometGroup.position.set(
-    roomCenter.x + side * (roomHalf.x + 1.2),
-    roomCenter.y + roomHalf.y * (0.2 + Math.random() * 0.9),
-    roomCenter.z + (Math.random() * 2 - 1) * roomHalf.z
-  );
-  cometVel
-    .set(-side * (0.85 + Math.random() * 0.3), -0.15 + Math.random() * 0.2, -0.3 + Math.random() * 0.6)
-    .normalize()
-    .multiplyScalar(2.6 + Math.random() * 1.6);
-  cometActive = true;
-  cometGroup.visible = true;
+const METEOR_DIR = new THREE.Vector3(0.45, 1.0, 0.35).normalize(); // fixed incoming direction
+const METEOR_START = 1.15; // distance from Earth center where it appears
+const METEOR_SPEED = 1.1;
+const METEOR_FLASH_TIME = 0.35;
+let meteorActive = false;
+let meteorFlashLife = 0;
+let nextMeteorAt = 5.0;
+
+function spawnMeteor() {
+  meteor.position.copy(METEOR_DIR).multiplyScalar(METEOR_START);
+  meteor.lookAt(0, 0, 0); // -Z faces the Earth center (travel direction)
+  meteor.visible = true;
+  meteorActive = true;
 }
 
-function updateComet(dt) {
-  if (!cometActive) {
-    if (elapsed >= nextCometAt) spawnComet();
+function updateMeteor(dt) {
+  if (meteorFlashLife > 0) {
+    meteorFlashLife -= dt;
+    const k = Math.max(0, meteorFlashLife / METEOR_FLASH_TIME);
+    meteorFlash.material.opacity = k;
+    meteorFlash.scale.setScalar(1 + (1 - k) * 3); // expanding burst
+    if (meteorFlashLife <= 0) meteorFlash.visible = false;
+  }
+  if (!meteorActive) {
+    if (elapsed >= nextMeteorAt) spawnMeteor();
     return;
   }
-  cometGroup.position.addScaledVector(cometVel, dt);
-  cometGroup.lookAt(cometTmp.copy(cometGroup.position).add(cometVel)); // -Z faces travel dir
-  const dx = cometGroup.position.x - roomCenter.x;
-  const dy = cometGroup.position.y - roomCenter.y;
-  const dz = cometGroup.position.z - roomCenter.z;
-  if (Math.abs(dx) > roomHalf.x + 1.6 || Math.abs(dy) > roomHalf.y + 2.4 || Math.abs(dz) > roomHalf.z + 1.6) {
-    cometActive = false;
-    cometGroup.visible = false;
-    nextCometAt = elapsed + 6 + Math.random() * 9;
+  meteor.position.addScaledVector(METEOR_DIR, -METEOR_SPEED * dt);
+  if (meteor.position.length() <= EARTH_RADIUS * 1.02) {
+    // Impact: burst of light at the surface point; the meteor burns up.
+    meteorFlash.position.copy(METEOR_DIR).multiplyScalar(EARTH_RADIUS * 1.02);
+    meteorFlash.scale.setScalar(1);
+    meteorFlash.material.opacity = 1;
+    meteorFlash.visible = true;
+    meteorFlashLife = METEOR_FLASH_TIME;
+    meteor.visible = false;
+    meteorActive = false;
+    nextMeteorAt = elapsed + 15 + Math.random() * 15; // every ~15-30 s
   }
 }
 
@@ -655,7 +694,7 @@ renderer.setAnimationLoop((timestamp) => {
   // Ambient space life: orbiting satellite, occasional comet, surface lightning.
   elapsed += dt;
   satOrbit.rotation.y += dt * SAT_ORBIT_SPEED;
-  updateComet(dt);
+  updateMeteor(dt);
   updateLightning(dt);
 
   renderer.render(scene, camera);
