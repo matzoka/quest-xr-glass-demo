@@ -598,7 +598,7 @@ async function enterXr(mode) {
     button.textContent = `Exit ${label}`;
     exitButton.visible = true;
     resetButton.visible = true; // show the in-XR Exit / Reset buttons
-    statusEl.textContent = `${label} 起動中。地球に触れて弾く／スティックで移動。終了は「終了」ボタンを指してトリガー。`;
+    statusEl.textContent = `${label} 起動中。左スティックで水平移動／右スティック上下で昇降。グリップでホームに復帰。地球に触れて弾く。終了は「終了」ボタンを指してトリガー。`;
   } catch (error) {
     console.error(error);
     button.disabled = false;
@@ -915,6 +915,11 @@ for (let index = 0; index < 2; index += 1) {
     tmpDir.set(0, 0, -1).applyQuaternion(controller.getWorldQuaternion(new THREE.Quaternion()));
     kick(tmpDir, CRUISE_DEFAULT);
   });
+  // Grip / squeeze button: snap the player straight back to the home position.
+  controller.addEventListener("squeezestart", () => {
+    initAudio();
+    resetToHome();
+  });
   scene.add(controller);
 }
 
@@ -1013,21 +1018,34 @@ renderer.xr.addEventListener("sessionstart", () => {
   locomotion.set(0, 0, 0);
 });
 
+// Snap the player straight back to where they started the session.
+function resetToHome() {
+  locomotion.set(0, 0, 0);
+  if (xrBaseRefSpace) renderer.xr.setReferenceSpace(xrBaseRefSpace);
+}
+
 function updateLocomotion(dt) {
   const session = renderer.xr.getSession();
   if (!session || !xrBaseRefSpace) return;
 
+  // Left thumbstick glides across the horizontal plane; the right thumbstick's
+  // vertical axis lifts / lowers the player so you can rise up to any planet.
   let mx = 0;
   let mz = 0;
+  let my = 0;
   for (const src of session.inputSources) {
     const ax = src.gamepad?.axes;
     if (!ax || ax.length < 2) continue;
     const x = ax.length >= 4 ? ax[2] : ax[0];
-    const z = ax.length >= 4 ? ax[3] : ax[1];
-    if (Math.abs(x) > 0.15) mx += x;
-    if (Math.abs(z) > 0.15) mz += z;
+    const y = ax.length >= 4 ? ax[3] : ax[1];
+    if (src.handedness === "right") {
+      if (Math.abs(y) > 0.15) my += -y; // push stick up to rise
+    } else {
+      if (Math.abs(x) > 0.15) mx += x;
+      if (Math.abs(y) > 0.15) mz += y;
+    }
   }
-  if (mx === 0 && mz === 0) return;
+  if (mx === 0 && mz === 0 && my === 0) return;
 
   const cam = renderer.xr.getCamera();
   cam.getWorldDirection(tmpDir);
@@ -1038,6 +1056,7 @@ function updateLocomotion(dt) {
 
   locomotion.addScaledVector(tmpDir, -mz * LOCO_SPEED * dt);
   locomotion.addScaledVector(tmpRight, mx * LOCO_SPEED * dt);
+  locomotion.y += my * LOCO_SPEED * dt;
 
   const offset = new XRRigidTransform({ x: -locomotion.x, y: -locomotion.y, z: -locomotion.z });
   renderer.xr.setReferenceSpace(xrBaseRefSpace.getOffsetReferenceSpace(offset));
@@ -1302,10 +1321,10 @@ function addPlanet(file, radius, position, tiltDeg, spin) {
   return mesh;
 }
 
-// Mars — 0.5x Earth, rusty and small, off to the right.
-addPlanet("2k_mars.jpg", EARTH_RADIUS * 0.5, new THREE.Vector3(9, 5, -11), 25.2, 0.12);
-// Venus — same size as Earth, pale thick atmosphere, to the left.
-addPlanet("2k_venus_atmosphere.jpg", EARTH_RADIUS * 1.0, new THREE.Vector3(-11, 4, -9), 2.6, -0.03);
+// Mars — 0.5x Earth, rusty and small, just outside the right-hand wall.
+addPlanet("2k_mars.jpg", EARTH_RADIUS * 0.5, new THREE.Vector3(5.4, 2.4, -2.2), 25.2, 0.12);
+// Venus — same size as Earth, pale thick atmosphere, just outside the left wall.
+addPlanet("2k_venus_atmosphere.jpg", EARTH_RADIUS * 1.0, new THREE.Vector3(-5.6, 2.2, -2.2), 2.6, -0.03);
 // Jupiter — 20x Earth, banded giant, far to the left-behind.
 addPlanet("2k_jupiter.jpg", EARTH_RADIUS * 20, new THREE.Vector3(-42, 6, 26), 3.1, 0.22);
 
