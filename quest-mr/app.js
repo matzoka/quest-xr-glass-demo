@@ -169,15 +169,16 @@ tiltGroup.add(earthMesh);
 tiltGroup.add(cloudMesh);
 ballGroup.add(tiltGroup);
 
-// Moon — true to scale: radius ~0.273x Earth, distance ~60.3 Earth radii. At
-// this real ratio it appears as a small dot far outside the room.
+// Moon — true SIZE ratio (~0.273x Earth, about a quarter), but the distance is
+// pulled in from the real ~60 Earth-radii so the Moon sits just beside the
+// Earth and both are framed together (like the familiar composite photos).
 const MOON_RADIUS = EARTH_RADIUS * 0.273;
-const MOON_DISTANCE = EARTH_RADIUS * 60.3;
+const MOON_DISTANCE = EARTH_RADIUS * 2.8;
 const moon = new THREE.Mesh(
-  new THREE.SphereGeometry(MOON_RADIUS, 32, 24),
+  new THREE.SphereGeometry(MOON_RADIUS, 48, 32),
   new THREE.MeshStandardMaterial({ map: loadTex("moon_1024.jpg"), roughness: 1.0, metalness: 0.0 })
 );
-moon.position.copy(new THREE.Vector3(0.5, 0.45, -0.75).normalize()).multiplyScalar(MOON_DISTANCE);
+moon.position.copy(new THREE.Vector3(1.0, 0.15, -0.1).normalize()).multiplyScalar(MOON_DISTANCE);
 ballGroup.add(moon);
 
 ballGroup.position.copy(roomCenter).add(ballOffset);
