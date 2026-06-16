@@ -1251,7 +1251,7 @@ const sunLight = new THREE.PointLight(0xfff2e6, 2.4, 0, 0.0);
 sunLight.position.copy(sunMesh.position);
 scene.add(sunLight);
 
-const SATURN_R = EARTH_RADIUS * 20;
+const SATURN_R = EARTH_RADIUS * 15;
 const saturnGroup = new THREE.Group();
 saturnGroup.position.set(45, -9, -35);
 saturnGroup.rotation.z = THREE.MathUtils.degToRad(26.7); // axial tilt
@@ -1281,6 +1281,33 @@ const saturnRing = new THREE.Mesh(
 );
 saturnRing.rotation.x = -Math.PI / 2; // lay flat in the equatorial plane
 saturnGroup.add(saturnRing);
+
+// ---------------------------------------------------------------------------
+// Other planets, scattered well outside the room so they read as distant
+// worlds. Each is a textured sphere on a tilted spin axis; `spin` is the
+// per-second rotation applied in the animation loop.
+// ---------------------------------------------------------------------------
+const planets = [];
+function addPlanet(file, radius, position, tiltDeg, spin) {
+  const group = new THREE.Group();
+  group.position.copy(position);
+  group.rotation.z = THREE.MathUtils.degToRad(tiltDeg);
+  const mesh = new THREE.Mesh(
+    new THREE.SphereGeometry(radius, 64, 48),
+    new THREE.MeshStandardMaterial({ map: loadTex(file), roughness: 0.95, metalness: 0.0 })
+  );
+  group.add(mesh);
+  scene.add(group);
+  planets.push({ mesh, spin });
+  return mesh;
+}
+
+// Mars — 0.5x Earth, rusty and small, off to the right.
+addPlanet("2k_mars.jpg", EARTH_RADIUS * 0.5, new THREE.Vector3(9, 5, -11), 25.2, 0.12);
+// Venus — same size as Earth, pale thick atmosphere, to the left.
+addPlanet("2k_venus_atmosphere.jpg", EARTH_RADIUS * 1.0, new THREE.Vector3(-11, 4, -9), 2.6, -0.03);
+// Jupiter — 20x Earth, banded giant, far to the left-behind.
+addPlanet("2k_jupiter.jpg", EARTH_RADIUS * 20, new THREE.Vector3(-42, 6, 26), 3.1, 0.22);
 
 renderer.setAnimationLoop((timestamp) => {
   const dt = Math.min((timestamp - lastFrameTime) / 1000 || 0, 0.04);
@@ -1312,6 +1339,7 @@ renderer.setAnimationLoop((timestamp) => {
   sunMaterial.uniforms.uTime.value = elapsed;
   sunMesh.rotation.y += dt * 0.03;
   saturnBall.rotation.y += dt * 0.1;
+  for (const p of planets) p.mesh.rotation.y += dt * p.spin;
 
   // Ambient space life: orbiting satellite, occasional comet, surface lightning.
   elapsed += dt;
