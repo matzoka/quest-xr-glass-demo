@@ -209,6 +209,7 @@ for (const sx of [-1, 1]) {
   }
 }
 satellite.position.set(EARTH_RADIUS * 1.7, 0, 0); // orbit radius from Earth center
+satellite.scale.setScalar(0.5); // smaller now that the Moon is in the scene
 
 const satOrbit = new THREE.Group();
 satOrbit.rotation.x = THREE.MathUtils.degToRad(35); // inclined orbit
@@ -569,6 +570,7 @@ function initAudio() {
   if (audioContext.state === "suspended") {
     audioContext.resume();
   }
+  unlockShipClip();
 }
 
 function playCollisionSound() {
@@ -679,6 +681,23 @@ shipClip.addEventListener("canplaythrough", () => {
 shipClip.addEventListener("error", () => {
   shipClipReady = false; // no file (or unsupported) — fall back to the synth fanfare
 });
+
+// Browsers block autoplay until a user gesture. On the first tap/click/trigger
+// we "unlock" the clip by play+pause inside that gesture, so it can then
+// auto-play when the Enterprise enters (desktop preview is lenient, but real
+// browsers and Quest are strict).
+let shipClipUnlocked = false;
+function unlockShipClip() {
+  if (shipClipUnlocked) return;
+  const p = shipClip.play();
+  if (p && p.then) {
+    p.then(() => {
+      shipClip.pause();
+      shipClip.currentTime = 0;
+      shipClipUnlocked = true;
+    }).catch(() => {});
+  }
+}
 
 function playShipEntrance() {
   if (shipClipReady) {
