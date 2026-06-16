@@ -1554,14 +1554,23 @@ flag.position.copy(flagUp).multiplyScalar(MOON_RADIUS * 0.99);
 alignY(flag, flagUp);
 moon.add(flag);
 
-// Lunar-orbit plane basis (perpendicular to a slightly tilted axis).
-const orbAxis = new THREE.Vector3(0.25, 1, 0.15).normalize();
-const orbU = new THREE.Vector3(1, 0, 0).cross(orbAxis);
-if (orbU.lengthSq() < 1e-6) orbU.set(0, 0, 1);
-orbU.normalize();
-const orbV = new THREE.Vector3().crossVectors(orbAxis, orbU).normalize();
+// Lunar orbit, defined fresh each frame so angle 0 always sits on the Moon's
+// Earth-facing (near) side. The incoming craft therefore arrives at the near
+// side and circles at a constant radius — it can never cross the Moon body.
+const ORBIT_AXIS = new THREE.Vector3(0.2, 1, 0.15).normalize();
+const inPlane1 = new THREE.Vector3(); // angle-0 direction (toward Earth)
+const inPlane2 = new THREE.Vector3(); // perpendicular in the orbit plane
+function updateOrbitBasis() {
+  inPlane1.copy(apDirEM).multiplyScalar(-1); // moon -> Earth (unit; apDirEM is unit)
+  inPlane2.crossVectors(ORBIT_AXIS, inPlane1);
+  if (inPlane2.lengthSq() < 1e-6) inPlane2.set(1, 0, 0);
+  inPlane2.normalize();
+}
 function orbitPos(center, r, ang, out) {
-  return out.copy(center).addScaledVector(orbU, Math.cos(ang) * r).addScaledVector(orbV, Math.sin(ang) * r);
+  return out
+    .copy(center)
+    .addScaledVector(inPlane1, Math.cos(ang) * r)
+    .addScaledVector(inPlane2, Math.sin(ang) * r);
 }
 
 const APOLLO_DURATION = 48; // seconds for one full mission loop
@@ -1576,7 +1585,7 @@ const apSurfUp = new THREE.Vector3();
 const apPrev = new THREE.Vector3();
 let apPrevValid = false;
 const ORBIT_R = MOON_RADIUS * 2.6; // well clear of the lunar surface
-const ORBIT_START_ANG = 0.4;
+const ORBIT_START_ANG = 0; // angle 0 = Moon's near side, where the craft arrives
 const LAUNCH_TOP = EARTH_RADIUS + 0.63; // craft-center distance at end of ascent
 
 // Restore the dropped stages for the next launch.
@@ -1601,6 +1610,7 @@ function updateApollo(dt) {
   earthWorld.copy(ballGroup.position); // roomCenter + ballOffset
   moon.getWorldPosition(moonWorld);
   apDirEM.copy(moonWorld).sub(earthWorld).normalize();
+  updateOrbitBasis();
 
   saturnV.group.visible = false;
   saturnV.plume.visible = false;
@@ -1612,8 +1622,6 @@ function updateApollo(dt) {
     // leaving only the short CSM/LM spacecraft to continue to the Moon.
     const p = t / 0.12;
     saturnV.group.visible = true;
-    saturnV.plume.visible = true;
-    saturnV.plume.scale.y = 0.7 + Math.random() * 0.6; // flicker
     const climb = smooth(p) * 0.5;
     saturnV.group.position.copy(earthWorld).addScaledVector(apDirEM, EARTH_RADIUS + 0.13 + climb);
     alignY(saturnV.group, apDirEM);
@@ -1630,23 +1638,40 @@ function updateApollo(dt) {
       saturnV.stage2.scale.setScalar(1 - sp * 0.6);
       if (t > 0.11) saturnV.stage2.visible = false;
     }
+
+    // Keep the engine plume glued to the base of whichever stage is burning,
+    // so it never floats away from the rocket as stages separate.
+    saturnV.plume.visible = true;
+    let plumeY;
+    let plumeScale;
+    if (t < 0.04) {
+      plumeY = -0.155; // S-IC base
+      plumeScale = 1;
+    } else if (t < 0.08) {
+      plumeY = -0.0875; // S-II base
+      plumeScale = 0.75;
+    } else {
+      plumeY = -0.043; // S-IVB base
+      plumeScale = 0.5;
+    }
+    saturnV.plume.position.y = plumeY;
+    saturnV.plume.scale.set(plumeScale, plumeScale * (0.7 + Math.random() * 0.6), plumeScale);
     apPrev.copy(saturnV.group.position);
     apPrevValid = true;
   } else if (t < 0.5) {
-    // Trans-lunar coast: only the short stack remains; glide to a point that
-    // sits exactly on the lunar orbit circle (so it never enters the surface).
+    // Trans-lunar coast: the short CSM/LM stack (shown as the very same CSM that
+    // will orbit) glides to the Moon's near side — straight in, never crossing
+    // the Moon body — and ends exactly on the lunar orbit circle.
     const p = (t - 0.12) / 0.38;
-    saturnV.group.visible = true;
-    saturnV.stage1.visible = false;
-    saturnV.stage2.visible = false;
+    csm.visible = true;
     apA.copy(earthWorld).addScaledVector(apDirEM, LAUNCH_TOP);
     orbitPos(moonWorld, ORBIT_R, ORBIT_START_ANG, apB);
-    saturnV.group.position.lerpVectors(apA, apB, smooth(p));
+    csm.position.lerpVectors(apA, apB, smooth(p));
     if (apPrevValid) {
-      apTangent.copy(saturnV.group.position).sub(apPrev);
-      alignY(saturnV.group, apTangent);
+      apTangent.copy(csm.position).sub(apPrev);
+      alignY(csm, apTangent);
     }
-    apPrev.copy(saturnV.group.position);
+    apPrev.copy(csm.position);
     apPrevValid = true;
   } else if (t < 0.92) {
     // Lunar orbit: the CSM ("母艦") circles the Moon; the LM separates and lands.
