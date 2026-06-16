@@ -1,19 +1,19 @@
-# Quest XR ガラス球デモ
+# Quest XR 地球デモ
 
-宇宙空間に浮かぶ部屋の中のガラス球を、手（コントローラー）で触れて弾くデモです。
-弾かれた球は直線に飛び、部屋の壁・床で跳ね返り続けます。Meta Quest 3 の VR / AR
-で動作します。
+宇宙空間に浮かぶ部屋の中の地球を、手（コントローラー）で触れて弾くデモです。
+弾かれた地球は直線に飛び、部屋の壁・床で跳ね返り続けます。地球はゆっくり自転し、
+雲のレイヤーが地表とは別の速度で流れます。Meta Quest 3 の VR / AR で動作します。
 
-Three.js + WebXR で動作し、球の3Dモデルは Blender で生成しています。
+Three.js + WebXR で動作します。
 
 ## 操作方法
 
 ### Quest（VR / AR）
 
 - 「Enter VR」または「Enter AR」を押してセッションを開始します。
-- コントローラー（手）を球に近づけて**触れる**と、その方向へ球が弾けます。速く動かすほど速く飛びます。
-- 離れた位置にある球は、**トリガー**を引くとコントローラーの指した方向へ発射できます。
-- 球は一定速度で直線移動し、部屋の壁・床で跳ね返り続けます。再び触れると進路が変わります。
+- コントローラー（手）を地球に近づけて**触れる**と、その方向へ弾けます。速く動かすほど速く飛びます。
+- 離れた位置にある地球は、**トリガー**を引くとコントローラーの指した方向へ発射できます。
+- 地球は一定速度で直線移動し、部屋の壁・床で跳ね返り続けます。再び触れると進路が変わります。
 
 ### PC（動作確認用プレビュー）
 
@@ -42,25 +42,31 @@ Quest の AR / VR セッションは **HTTPS（セキュアコンテキスト）
 
 公開した URL を Quest Browser で開き、「Enter VR」または「Enter AR」を押します。
 
-同梱の `_headers` は、Netlify 形式のヘッダーに対応するホスト向けに `.glb` の
-MIME タイプを設定するためのものです。
+同梱の `_headers` は、Netlify 形式のヘッダーに対応するホスト向けに MIME タイプを
+設定するためのものです。
 
 ## ファイル構成
 
 - `index.html` … エントリーポイント（Three.js を CDN から読み込み）
-- `app.js` … シーン構築・物理（直線移動と反射）・入力処理の本体
+- `app.js` … シーン構築・物理（直線移動と反射）・入力処理・地球の自転と雲の制御
 - `styles.css` … HUD のスタイル
-- `assets/glass_demo.glb` … ガラス球の 3D モデル（Blender で生成）
-- `_headers` … 静的ホスト用の MIME 設定
+- `assets/earth_atmos_2048.jpg` … 地表テクスチャ（three.js サンプル / NASA 由来）
+- `assets/earth_clouds_1024.png` … 雲テクスチャ（同上、`alphaMap` として使用）
+- `_headers` … 静的ホスト用のヘッダー設定
 
 ## 調整できるところ（`app.js`）
 
 - `roomCenter` / `roomHalf` … 部屋の位置とサイズ（中心からの半径）
-- `CRUISE_DEFAULT` / `MIN_KICK` / `MAX_KICK` / `HAND_GAIN` … 球の飛ぶ速度と手の感度
-- `glassModel.scale.setScalar(0.82)` … 球の見かけの大きさ
+- `EARTH_RADIUS` … 地球の大きさ
+- `EARTH_SPIN` / `CLOUD_SPIN` … 自転の速さと、雲が流れる速さ（rad/秒）
+- `CRUISE_DEFAULT` / `MIN_KICK` / `MAX_KICK` / `HAND_GAIN` … 弾く速度と手の感度
 
-## 球モデルの再生成
+## テクスチャについて
 
-球の `.glb` は、リポジトリルートの `scripts/create_quest_mr_glass_demo.py` を
-Blender で実行すると再生成されます（Blender MCP 経由、または Blender の
-スクリプトエディタから実行）。
+地球と雲のテクスチャは three.js のサンプル（NASA Blue Marble 由来）を `assets/` に
+同梱しています。外部 CDN に依存しないため、オフラインや CORS 制限のある環境でも
+そのまま表示できます。
+
+初期版のガラス球モデル（`assets/glass_demo.glb`）と生成スクリプト
+（`scripts/create_quest_mr_glass_demo.py`）は、地球版では使用しませんが参考として
+残しています。

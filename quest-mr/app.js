@@ -1,6 +1,5 @@
 import * as THREE from "three";
 import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js";
-import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 
 const statusEl = document.querySelector("#status");
 const vrButton = document.querySelector("#vrButton");
@@ -34,7 +33,7 @@ scene.environment = pmrem.fromScene(new RoomEnvironment(renderer), 0.04).texture
 // ---------------------------------------------------------------------------
 const roomCenter = new THREE.Vector3(0, 2.2, -2.2); // world position of the box center
 const roomHalf = new THREE.Vector3(4.5, 2.2, 4.5); // half extents (box is 9 x 4.4 x 9 m)
-let ballRadius = 0.34; // refined once the model is measured
+let ballRadius = 0.36; // set from the Earth radius below
 const collisionHalf = new THREE.Vector3(); // roomHalf - ballRadius, per axis
 
 function updateCollisionHalf() {
@@ -69,14 +68,15 @@ camera.lookAt(roomCenter);
 // ---------------------------------------------------------------------------
 // Lights
 // ---------------------------------------------------------------------------
-const hemi = new THREE.HemisphereLight(0xe8f7ff, 0x1b2330, 2.0);
+const hemi = new THREE.HemisphereLight(0xe8f7ff, 0x1b2330, 1.4);
 scene.add(hemi);
 
-const key = new THREE.DirectionalLight(0xffffff, 2.4);
-key.position.set(2, 3, 2);
-scene.add(key);
+// Acts as the "sun": lights one hemisphere of the Earth, leaving a soft night side.
+const sun = new THREE.DirectionalLight(0xffffff, 3.0);
+sun.position.set(3, 2, 2);
+scene.add(sun);
 
-const cyan = new THREE.PointLight(0x2fc7ff, 5, 6);
+const cyan = new THREE.PointLight(0x2fc7ff, 4, 6);
 cyan.position.set(-1.5, 1.2, -0.8);
 scene.add(cyan);
 
@@ -84,7 +84,7 @@ scene.add(cyan);
 // Ball state. `ballOffset` is the displacement from roomCenter; the room is
 // never rotated, so offsets/velocities are identical in world and room space.
 // ---------------------------------------------------------------------------
-const ballGroup = new THREE.Group(); // wraps the model, centered on its geometry
+const ballGroup = new THREE.Group(); // moves the Earth around the room
 scene.add(ballGroup);
 
 // Start a little below the room center so the ball is within arm's reach.
@@ -114,59 +114,63 @@ const tmpRight = new THREE.Vector3();
 const worldUp = new THREE.Vector3(0, 1, 0);
 
 // ---------------------------------------------------------------------------
-// Model
+// Earth: a textured sphere spinning slowly on a tilted axis, wrapped in a
+// slightly larger cloud shell that drifts at its own speed. Textures come from
+// the three.js sample set via CDN to keep things simple.
 // ---------------------------------------------------------------------------
-const loader = new GLTFLoader();
-let glassModel = null;
+const EARTH_RADIUS = 0.36;
+const EARTH_SPIN = 0.1; // rad/s — slow, Earth-like rotation (~63 s per turn)
+const CLOUD_SPIN = 0.13; // clouds drift a touch faster than the surface
+const TEX_BASE = "./assets/";
 
-loader.load(
-  "./assets/glass_demo.glb",
-  (gltf) => {
-    glassModel = gltf.scene;
-    glassModel.name = "glass_demo";
-    glassModel.scale.setScalar(0.82);
+ballRadius = EARTH_RADIUS;
+updateCollisionHalf();
 
-    glassModel.traverse((child) => {
-      if (!child.isMesh) return;
-      child.material = new THREE.MeshPhysicalMaterial({
-        color: 0x8fdfff,
-        roughness: 0.015,
-        metalness: 0,
-        transparent: true,
-        opacity: 0.62,
-        transmission: 0.58,
-        thickness: 0.95,
-        ior: 1.48,
-        clearcoat: 1,
-        clearcoatRoughness: 0.012,
-        envMapIntensity: 3.0,
-        side: THREE.DoubleSide,
-      });
-    });
+const texLoader = new THREE.TextureLoader();
+texLoader.setCrossOrigin("anonymous");
 
-    // Measure the model AFTER scaling, then re-center it on its geometric
-    // center inside ballGroup. From now on ballGroup.position is the ball's
-    // true center, so no per-frame offset correction is needed.
-    glassModel.updateWorldMatrix(true, true);
-    const modelBox = new THREE.Box3().setFromObject(glassModel);
-    const center = modelBox.getCenter(new THREE.Vector3());
-    const size = modelBox.getSize(new THREE.Vector3());
-    glassModel.position.sub(center);
-    ballRadius = Math.max(size.x, size.y, size.z) * 0.5;
-    updateCollisionHalf();
+function loadTex(file) {
+  const tex = texLoader.load(TEX_BASE + file, undefined, undefined, (err) => {
+    console.error("texture load failed:", file, err);
+    statusEl.textContent = "地球テクスチャの読み込みに失敗しました（ネットワークをご確認ください）。";
+  });
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
 
-    ballGroup.add(glassModel);
-    ballGroup.position.copy(roomCenter);
-
-    statusEl.textContent = "準備完了。コントローラーで球に触れると、その方向へ弾けます（PCはWASD/矢印/クリック）。";
-    updateXrAvailability();
-  },
-  undefined,
-  (error) => {
-    console.error(error);
-    statusEl.textContent = "glass_demo.glb を読み込めませんでした。";
-  }
+const earthMesh = new THREE.Mesh(
+  new THREE.SphereGeometry(EARTH_RADIUS, 64, 48),
+  new THREE.MeshStandardMaterial({
+    map: loadTex("earth_atmos_2048.jpg"),
+    roughness: 0.9,
+    metalness: 0.0,
+    envMapIntensity: 0.35,
+  })
 );
+
+const cloudMesh = new THREE.Mesh(
+  new THREE.SphereGeometry(EARTH_RADIUS * 1.015, 64, 48),
+  new THREE.MeshStandardMaterial({
+    alphaMap: loadTex("earth_clouds_1024.png"),
+    color: 0xffffff,
+    transparent: true,
+    opacity: 0.9,
+    depthWrite: false,
+    roughness: 1.0,
+    metalness: 0.0,
+  })
+);
+
+// Tilt the spin axis ~23.4 degrees like the real Earth.
+const tiltGroup = new THREE.Group();
+tiltGroup.rotation.z = THREE.MathUtils.degToRad(23.4);
+tiltGroup.add(earthMesh);
+tiltGroup.add(cloudMesh);
+ballGroup.add(tiltGroup);
+ballGroup.position.copy(roomCenter).add(ballOffset);
+
+statusEl.textContent = "準備完了。コントローラーで地球に触れると、その方向へ弾けます（PCはWASD/矢印/クリック）。";
+updateXrAvailability();
 
 // ---------------------------------------------------------------------------
 // XR availability / session handling
@@ -247,7 +251,7 @@ async function enterXr(mode) {
     vrButton.disabled = false;
     arButton.disabled = false;
     button.textContent = `Exit ${label}`;
-    statusEl.textContent = `${label} 起動中。手（コントローラー）を球に近づけて触れると弾けます。`;
+    statusEl.textContent = `${label} 起動中。手（コントローラー）を地球に近づけて触れると弾けます。`;
   } catch (error) {
     console.error(error);
     button.disabled = false;
@@ -322,11 +326,10 @@ function playCollisionSound() {
 }
 
 // ---------------------------------------------------------------------------
-// Launching the ball
+// Launching the Earth
 // ---------------------------------------------------------------------------
-// Kick the ball along a (world == room) direction at a given speed.
+// Kick the Earth along a (world == room) direction at a given speed.
 function kick(direction, speed) {
-  if (!glassModel) return;
   if (direction.lengthSq() < 1e-8) return;
   cruiseSpeed = THREE.MathUtils.clamp(speed, MIN_KICK, MAX_KICK);
   ballVelocity.copy(direction).normalize().multiplyScalar(cruiseSpeed);
@@ -334,8 +337,8 @@ function kick(direction, speed) {
 }
 
 // ---------------------------------------------------------------------------
-// XR controllers: touch the ball to launch it; trigger launches along the
-// pointing direction as a fallback for when the ball is out of reach.
+// XR controllers: touch the Earth to launch it; trigger launches along the
+// pointing direction as a fallback for when it is out of reach.
 // ---------------------------------------------------------------------------
 const grips = [];
 const gripPrev = []; // previous world position of each grip
@@ -358,7 +361,6 @@ for (let index = 0; index < 2; index += 1) {
   const controller = renderer.xr.getController(index);
   controller.addEventListener("select", () => {
     initAudio();
-    if (!glassModel) return;
     // Launch from the controller along its pointing (-Z) direction.
     tmpDir.set(0, 0, -1).applyQuaternion(controller.getWorldQuaternion(new THREE.Quaternion()));
     kick(tmpDir, CRUISE_DEFAULT);
@@ -369,7 +371,6 @@ for (let index = 0; index < 2; index += 1) {
 const MARKER_RADIUS = 0.025;
 
 function updateHandTouch(dt) {
-  if (!glassModel) return;
   tmpBall.copy(roomCenter).add(ballOffset);
 
   for (let i = 0; i < grips.length; i += 1) {
@@ -394,7 +395,7 @@ function updateHandTouch(dt) {
 
     if (touching && !gripTouching[i]) {
       initAudio();
-      // Push the ball away from the hand (the natural "I bumped it" direction).
+      // Push the Earth away from the hand (the natural "I bumped it" direction).
       tmpDir.copy(tmpBall).sub(tmpHand);
       if (tmpDir.lengthSq() < 1e-6) {
         tmpDir.copy(ballVelocity.lengthSq() > 1e-6 ? ballVelocity : tmpVec.set(0, 0, -1));
@@ -419,13 +420,11 @@ window.addEventListener("keyup", (event) => {
 
 renderer.domElement.addEventListener("pointerdown", () => {
   initAudio();
-  if (!glassModel) return;
   camera.getWorldDirection(tmpDir);
   kick(tmpDir, CRUISE_DEFAULT);
 });
 
 function keyboardSteer() {
-  if (!glassModel) return;
   const forward =
     (pressedKeys.has("KeyW") || pressedKeys.has("ArrowUp") ? 1 : 0) -
     (pressedKeys.has("KeyS") || pressedKeys.has("ArrowDown") ? 1 : 0);
@@ -491,21 +490,22 @@ renderer.setAnimationLoop((timestamp) => {
   keyboardSteer();
   updateHandTouch(dt);
 
-  if (glassModel) {
-    if (ballActive) {
-      if (stepBall(dt)) {
-        playCollisionSound();
-      }
-      ballGroup.position.copy(roomCenter).add(ballOffset);
-      ballGroup.rotation.x += ballVelocity.z * dt * 1.4;
-      ballGroup.rotation.y += ballVelocity.x * dt * 1.4;
-    } else {
-      // Idle: gentle float + slow spin until the ball is touched.
-      ballGroup.position.copy(roomCenter).add(ballOffset);
-      ballGroup.position.y += Math.sin(timestamp * 0.0012) * 0.02;
-      ballGroup.rotation.y = timestamp * 0.00035;
+  if (ballActive) {
+    if (stepBall(dt)) {
+      playCollisionSound();
     }
+    ballGroup.position.copy(roomCenter).add(ballOffset);
+  } else {
+    // Idle: gentle float in place until the Earth is touched.
+    ballGroup.position.copy(roomCenter).add(ballOffset);
+    ballGroup.position.y += Math.sin(timestamp * 0.0012) * 0.02;
   }
+
+  // The Earth always spins slowly on its tilted axis; the cloud shell drifts a
+  // little faster, and its opacity breathes to suggest weather changing.
+  earthMesh.rotation.y += dt * EARTH_SPIN;
+  cloudMesh.rotation.y += dt * CLOUD_SPIN;
+  cloudMesh.material.opacity = 0.75 + Math.sin(timestamp * 0.00035) * 0.12;
 
   renderer.render(scene, camera);
 });
