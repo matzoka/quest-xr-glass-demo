@@ -202,7 +202,7 @@ const satOrbit = new THREE.Group();
 satOrbit.rotation.x = THREE.MathUtils.degToRad(35); // inclined orbit
 satOrbit.add(satellite);
 ballGroup.add(satOrbit);
-const SAT_ORBIT_SPEED = 0.5; // rad/s — a visible orbit
+const SAT_ORBIT_SPEED = 0.8; // rad/s — a clearly visible orbit, even while the Earth moves
 
 // ---------------------------------------------------------------------------
 // Lightning: brief additive flashes at random points on the Earth's surface.
