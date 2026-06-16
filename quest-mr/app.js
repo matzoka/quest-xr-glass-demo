@@ -1328,6 +1328,262 @@ addPlanet("2k_venus_atmosphere.jpg", EARTH_RADIUS * 1.0, new THREE.Vector3(-5.6,
 // Jupiter — 20x Earth, banded giant, far to the left-behind.
 addPlanet("2k_jupiter.jpg", EARTH_RADIUS * 20, new THREE.Vector3(-42, 6, 26), 3.1, 0.22);
 
+// ---------------------------------------------------------------------------
+// Apollo 11 mission. A Saturn V launches from the Earth, coasts to the Moon,
+// the Command/Service Module ("母艦") settles into lunar orbit, and the Lunar
+// Module separates and descends to the surface — looping every ~48 s. A lunar
+// lander and a US flag are planted permanently on the Moon's surface.
+// ---------------------------------------------------------------------------
+const _yUp = new THREE.Vector3(0, 1, 0);
+const _alignTmp = new THREE.Vector3();
+function alignY(obj, dir) {
+  _alignTmp.copy(dir);
+  if (_alignTmp.lengthSq() < 1e-9) return;
+  _alignTmp.normalize();
+  obj.quaternion.setFromUnitVectors(_yUp, _alignTmp);
+}
+function smooth(p) {
+  p = THREE.MathUtils.clamp(p, 0, 1);
+  return p * p * (3 - 2 * p);
+}
+
+const matWhite = new THREE.MeshStandardMaterial({ color: 0xf3f4f6, roughness: 0.6, metalness: 0.1 });
+const matBlack = new THREE.MeshStandardMaterial({ color: 0x20242b, roughness: 0.7, metalness: 0.2 });
+const matGray = new THREE.MeshStandardMaterial({ color: 0xb9c0c8, roughness: 0.35, metalness: 0.7 });
+const matDark = new THREE.MeshStandardMaterial({ color: 0x2a2d33, roughness: 0.6, metalness: 0.5 });
+const matGold = new THREE.MeshStandardMaterial({ color: 0xc8a24a, roughness: 0.4, metalness: 0.6, emissive: 0x3a2c08, emissiveIntensity: 0.3 });
+const matSilver = new THREE.MeshStandardMaterial({ color: 0xc7ccd2, roughness: 0.3, metalness: 0.8 });
+
+// Saturn V: white stack with black bands, nose cone (+Y) and tail fins.
+function buildSaturnV() {
+  const g = new THREE.Group();
+  const R = 0.014;
+  const L = 0.12;
+  g.add(new THREE.Mesh(new THREE.CylinderGeometry(R, R, L, 20), matWhite));
+  for (const yy of [0.32, 0.04, -0.22]) {
+    const b = new THREE.Mesh(new THREE.CylinderGeometry(R * 1.03, R * 1.03, L * 0.05, 20), matBlack);
+    b.position.y = L * yy;
+    g.add(b);
+  }
+  const nose = new THREE.Mesh(new THREE.ConeGeometry(R, R * 2.6, 20), matWhite);
+  nose.position.y = L / 2 + R * 1.3;
+  g.add(nose);
+  for (let k = 0; k < 4; k += 1) {
+    const a = (k * Math.PI) / 2;
+    const f = new THREE.Mesh(new THREE.BoxGeometry(R * 0.5, R * 2.4, R * 1.7), matBlack);
+    f.position.set(Math.cos(a) * R, -L / 2 + R * 1.2, Math.sin(a) * R);
+    g.add(f);
+  }
+  return g;
+}
+
+// Command + Service Module: gray cylinder with a conical capsule and a nozzle.
+function buildCSM() {
+  const g = new THREE.Group();
+  const R = 0.013;
+  g.add(new THREE.Mesh(new THREE.CylinderGeometry(R, R, 0.05, 18), matGray));
+  const cm = new THREE.Mesh(new THREE.ConeGeometry(R, R * 2.2, 18), matGray);
+  cm.position.y = 0.025 + R * 1.1;
+  g.add(cm);
+  const nozzle = new THREE.Mesh(new THREE.ConeGeometry(R * 0.7, R * 1.4, 14, 1, true), matDark);
+  nozzle.position.y = -0.025 - R * 0.6;
+  g.add(nozzle);
+  return g;
+}
+
+// Lunar Module: gold octagonal descent stage, silver ascent stage + dome, four
+// splayed legs with foot pads. Built standing on +Y.
+function buildLM() {
+  const g = new THREE.Group();
+  const descent = new THREE.Mesh(new THREE.CylinderGeometry(0.016, 0.018, 0.012, 8), matGold);
+  g.add(descent);
+  const ascent = new THREE.Mesh(new THREE.BoxGeometry(0.016, 0.011, 0.016), matSilver);
+  ascent.position.y = 0.012;
+  g.add(ascent);
+  const dome = new THREE.Mesh(new THREE.SphereGeometry(0.005, 12, 8), matSilver);
+  dome.position.set(0, 0.019, 0.005);
+  g.add(dome);
+  for (let k = 0; k < 4; k += 1) {
+    const a = Math.PI / 4 + (k * Math.PI) / 2;
+    const leg = new THREE.Mesh(new THREE.CylinderGeometry(0.0012, 0.0012, 0.018, 6), matSilver);
+    leg.position.set(Math.cos(a) * 0.016, -0.011, Math.sin(a) * 0.016);
+    leg.rotation.z = -Math.cos(a) * 0.5;
+    leg.rotation.x = Math.sin(a) * 0.5;
+    g.add(leg);
+    const pad = new THREE.Mesh(new THREE.CylinderGeometry(0.0035, 0.0035, 0.0015, 8), matSilver);
+    pad.position.set(Math.cos(a) * 0.024, -0.019, Math.sin(a) * 0.024);
+    g.add(pad);
+  }
+  return g;
+}
+
+// US flag: a 13-stripe canvas with a starred canton, on a silver pole with a
+// horizontal top rod so the cloth stays spread out (no wind on the Moon).
+function makeUSFlagTexture() {
+  const c = document.createElement("canvas");
+  c.width = 190;
+  c.height = 100;
+  const g = c.getContext("2d");
+  const stripeH = c.height / 13;
+  for (let i = 0; i < 13; i += 1) {
+    g.fillStyle = i % 2 === 0 ? "#b22234" : "#ffffff";
+    g.fillRect(0, i * stripeH, c.width, stripeH + 1);
+  }
+  const cw = c.width * 0.4;
+  const ch = stripeH * 7;
+  g.fillStyle = "#3c3b6e";
+  g.fillRect(0, 0, cw, ch);
+  g.fillStyle = "#ffffff";
+  for (let r = 0; r < 9; r += 1) {
+    const cols = r % 2 === 0 ? 6 : 5;
+    for (let col = 0; col < cols; col += 1) {
+      const x = (cw * ((r % 2 === 0 ? col + 0.5 : col + 1))) / 6.2;
+      const y = (ch * (r + 0.5)) / 9;
+      g.beginPath();
+      g.arc(x, y, 1.7, 0, Math.PI * 2);
+      g.fill();
+    }
+  }
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.anisotropy = maxAnisotropy;
+  return tex;
+}
+function buildFlag() {
+  const g = new THREE.Group();
+  const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.0015, 0.0015, 0.06, 8), matSilver);
+  pole.position.y = 0.03;
+  g.add(pole);
+  const rod = new THREE.Mesh(new THREE.CylinderGeometry(0.001, 0.001, 0.04, 6), matSilver);
+  rod.rotation.z = Math.PI / 2;
+  rod.position.set(0.02, 0.058, 0);
+  g.add(rod);
+  const cloth = new THREE.Mesh(
+    new THREE.PlaneGeometry(0.04, 0.025),
+    new THREE.MeshBasicMaterial({ map: makeUSFlagTexture(), side: THREE.DoubleSide })
+  );
+  cloth.position.set(0.02, 0.046, 0);
+  g.add(cloth);
+  return g;
+}
+
+// Flying mission craft live in world space and are positioned each frame.
+const saturnV = buildSaturnV();
+const csm = buildCSM();
+const lmFlying = buildLM();
+saturnV.visible = false;
+csm.visible = false;
+lmFlying.visible = false;
+scene.add(saturnV);
+scene.add(csm);
+scene.add(lmFlying);
+
+// Permanent surface objects ride the Moon (children of `moon`), so they stay
+// stuck to the surface as the Moon spins and orbits. Scaled up a touch so they
+// read clearly from across the room.
+const SURF_SCALE = 1.4;
+const landerUp = new THREE.Vector3(0.35, 0.82, 0.45).normalize();
+const flagUp = new THREE.Vector3(0.6, 0.74, 0.3).normalize();
+const surfaceLander = buildLM();
+surfaceLander.scale.setScalar(SURF_SCALE);
+surfaceLander.position.copy(landerUp).multiplyScalar(MOON_RADIUS * 0.99);
+alignY(surfaceLander, landerUp);
+moon.add(surfaceLander);
+const flag = buildFlag();
+flag.scale.setScalar(SURF_SCALE);
+flag.position.copy(flagUp).multiplyScalar(MOON_RADIUS * 0.99);
+alignY(flag, flagUp);
+moon.add(flag);
+
+// Lunar-orbit plane basis (perpendicular to a slightly tilted axis).
+const orbAxis = new THREE.Vector3(0.25, 1, 0.15).normalize();
+const orbU = new THREE.Vector3(1, 0, 0).cross(orbAxis);
+if (orbU.lengthSq() < 1e-6) orbU.set(0, 0, 1);
+orbU.normalize();
+const orbV = new THREE.Vector3().crossVectors(orbAxis, orbU).normalize();
+function orbitPos(center, r, ang, out) {
+  return out.copy(center).addScaledVector(orbU, Math.cos(ang) * r).addScaledVector(orbV, Math.sin(ang) * r);
+}
+
+const APOLLO_DURATION = 48; // seconds for one full mission loop
+let apolloT = 0;
+const earthWorld = new THREE.Vector3();
+const moonWorld = new THREE.Vector3();
+const apA = new THREE.Vector3();
+const apB = new THREE.Vector3();
+const apDirEM = new THREE.Vector3();
+const apTangent = new THREE.Vector3();
+const apSurfUp = new THREE.Vector3();
+const apPrev = new THREE.Vector3();
+let apPrevValid = false;
+
+function updateApollo(dt) {
+  apolloT += dt / APOLLO_DURATION;
+  if (apolloT >= 1) {
+    apolloT -= 1;
+    apPrevValid = false;
+  }
+  const t = apolloT;
+
+  earthWorld.copy(ballGroup.position); // roomCenter + ballOffset
+  moon.getWorldPosition(moonWorld);
+  apDirEM.copy(moonWorld).sub(earthWorld).normalize();
+
+  saturnV.visible = false;
+  csm.visible = false;
+  lmFlying.visible = false;
+
+  const launchEnd = EARTH_RADIUS + 0.6;
+
+  if (t < 0.12) {
+    // Launch: accelerate radially out from the Earth toward the Moon.
+    const p = t / 0.12;
+    saturnV.visible = true;
+    saturnV.position.copy(earthWorld).addScaledVector(apDirEM, EARTH_RADIUS + p * p * 0.6);
+    alignY(saturnV, apDirEM);
+    apPrev.copy(saturnV.position);
+    apPrevValid = true;
+  } else if (t < 0.5) {
+    // Trans-lunar coast: glide to the lunar-orbit insertion point.
+    const p = (t - 0.12) / 0.38;
+    saturnV.visible = true;
+    apA.copy(earthWorld).addScaledVector(apDirEM, launchEnd);
+    apB.copy(moonWorld).addScaledVector(apDirEM, -MOON_RADIUS * 1.8);
+    saturnV.position.lerpVectors(apA, apB, smooth(p));
+    if (apPrevValid) {
+      apTangent.copy(saturnV.position).sub(apPrev);
+      alignY(saturnV, apTangent);
+    }
+    apPrev.copy(saturnV.position);
+    apPrevValid = true;
+  } else if (t < 0.92) {
+    // Lunar operations: the CSM orbits; the LM separates and descends.
+    const p = (t - 0.5) / 0.42;
+    csm.visible = true;
+    const orbitR = MOON_RADIUS * 1.8;
+    const ang = p * Math.PI * 3 + 0.4;
+    orbitPos(moonWorld, orbitR, ang, apA);
+    csm.position.copy(apA);
+    orbitPos(moonWorld, orbitR, ang + 0.01, apB);
+    apTangent.copy(apB).sub(apA);
+    alignY(csm, apTangent);
+
+    if (p > 0.25) {
+      const dp = (p - 0.25) / 0.5;
+      if (dp < 1) {
+        lmFlying.visible = true;
+        surfaceLander.getWorldPosition(apB); // touchdown target on the surface
+        lmFlying.position.lerpVectors(apA, apB, smooth(dp));
+        apSurfUp.copy(apB).sub(moonWorld).normalize();
+        alignY(lmFlying, apSurfUp);
+      }
+      // dp >= 1: landed — the permanent surfaceLander stands in for it.
+    }
+    apPrevValid = false;
+  }
+  // t >= 0.92: brief reset gap before the next launch.
+}
+
 renderer.setAnimationLoop((timestamp) => {
   const dt = Math.min((timestamp - lastFrameTime) / 1000 || 0, 0.04);
   lastFrameTime = timestamp;
@@ -1359,6 +1615,11 @@ renderer.setAnimationLoop((timestamp) => {
   sunMesh.rotation.y += dt * 0.03;
   saturnBall.rotation.y += dt * 0.1;
   for (const p of planets) p.mesh.rotation.y += dt * p.spin;
+
+  // Refresh world matrices so the Apollo mission can read the live Moon
+  // position (the Moon both orbits the Earth and the Earth roams the room).
+  ballGroup.updateWorldMatrix(true, true);
+  updateApollo(dt);
 
   // Ambient space life: orbiting satellite, occasional comet, surface lightning.
   elapsed += dt;
