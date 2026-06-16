@@ -1,0 +1,95 @@
+html,
+body {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+  background: #07090c;
+  color: #f3f7fb;
+  font-family: Arial, Helvetica, sans-serif;
+}
+
+canvas {
+  display: block;
+}
+
+#hud {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 5;
+}
+
+.panel {
+  position: absolute;
+  left: 18px;
+  top: 18px;
+  max-width: min(360px, calc(100vw - 36px));
+  padding: 14px 16px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 8px;
+  background: rgba(8, 12, 18, 0.62);
+  backdrop-filter: blur(14px);
+  pointer-events: auto;
+}
+
+h1 {
+  margin: 0 0 6px;
+  font-size: 17px;
+  line-height: 1.2;
+  font-weight: 700;
+}
+
+p {
+  margin: 0;
+  color: #c8d4df;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.actionButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 42px;
+  padding: 0 16px;
+  border: 1px solid rgba(96, 221, 255, 0.45);
+  border-radius: 8px;
+  background: #0b2530;
+  color: #f7fbff;
+  font: 700 14px/1 Arial, Helvetica, sans-serif;
+  cursor: pointer;
+}
+
+.actionButton.secondary {
+  border-color: rgba(255, 255, 255, 0.22);
+  background: #161d28;
+}
+
+.actionButton:disabled {
+  cursor: default;
+  opacity: 0.72;
+}
+
+@media (max-width: 520px) {
+  .panel {
+    left: 12px;
+    right: 12px;
+    top: 12px;
+    max-width: none;
+  }
+
+  .actions {
+    flex-direction: column;
+  }
+
+  .actionButton {
+    width: 100%;
+  }
+}

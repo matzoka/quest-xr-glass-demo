@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>Quest XR Glass Demo</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <main id="hud">
+      <section class="panel">
+        <h1>Quest XR Glass Demo</h1>
+        <p id="status">ガラス球を読み込み中…</p>
+        <div class="actions">
+          <button class="actionButton" id="vrButton" type="button">Enter VR</button>
+          <button class="actionButton secondary" id="arButton" type="button">Enter AR</button>
+        </div>
+      </section>
+    </main>
+    <script type="importmap">
+      {
+        "imports": {
+          "three": "https://cdn.jsdelivr.net/npm/three@0.165.0/build/three.module.js",
+          "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/"
+        }
+      }
+    </script>
+    <script type="module" src="./app.js"></script>
+  </body>
+</html>

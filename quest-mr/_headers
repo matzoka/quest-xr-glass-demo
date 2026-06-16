@@ -1,0 +1,6 @@
+/assets/*.glb
+  Content-Type: model/gltf-binary
+
+/*
+  Cross-Origin-Opener-Policy: same-origin
+  Cross-Origin-Embedder-Policy: require-corp
