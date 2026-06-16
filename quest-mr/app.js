@@ -1082,8 +1082,10 @@ function stepBall(dt) {
 // ---------------------------------------------------------------------------
 const SUN_VERT = `
 varying vec3 vPosition;
+varying vec3 vNormal;
 void main() {
   vPosition = position;
+  vNormal = normalize(normalMatrix * normal);
   gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
 }`;
 
@@ -1091,6 +1093,7 @@ const SUN_FRAG = `
 precision mediump float;
 uniform float uTime;
 varying vec3 vPosition;
+varying vec3 vNormal;
 
 vec3 m289v3(vec3 x){return x-floor(x*(1./289.))*289.;}
 vec4 m289v4(vec4 x){return x-floor(x*(1./289.))*289.;}
@@ -1145,25 +1148,35 @@ float fbm(vec3 p){
 }
 void main(){
   vec3 n=normalize(vPosition);
-  float t1=uTime*.12;
-  float t2=uTime*.08;
+  float t1=uTime*.07;
+  float t2=uTime*.045;
+  // 強めのドメインワープで渦状コロナループを表現
   vec3 q=vec3(
-    fbm(n*3.+vec3(t1,t1*.7,t1*.5)),
-    fbm(n*3.+vec3(t2*.9,t2,t2*.6)),
-    fbm(n*3.+vec3(t1*.5,t2*.8,t1))
+    fbm(n*4.+vec3(t1,t1*.6,t1*.35)),
+    fbm(n*4.+vec3(t2*.8,t2,t2*.5)),
+    fbm(n*4.+vec3(t1*.4,t2*.7,t1*.9))
   );
-  float f=fbm(n*2.5+q*1.5);
+  float f=fbm(n*3.+q*2.2+vec3(t1*.4));
   f=f*.5+.5;
-  f=pow(f,.7);
-  vec3 cD=vec3(.55,.02,.0);
-  vec3 cM=vec3(1.,.38,.0);
-  vec3 cB=vec3(1.,.85,.08);
-  vec3 cH=vec3(1.,.97,.85);
+  f=pow(clamp(f,0.,1.),1.3);
+
+  // SDO風カラーパレット：黒→暗赤→赤→オレンジ
+  vec3 c0=vec3(0.03,0.0,0.0);    // 太陽黒点
+  vec3 c1=vec3(0.4,0.05,0.0);    // 暗い赤
+  vec3 c2=vec3(0.82,0.15,0.0);   // 赤
+  vec3 c3=vec3(1.0,0.48,0.02);   // 明るいオレンジ（最明）
+
   vec3 col;
-  if(f<.33)col=mix(cD,cM,f/.33);
-  else if(f<.66)col=mix(cM,cB,(f-.33)/.33);
-  else col=mix(cB,cH,(f-.66)/.34);
-  gl_FragColor=vec4(col*2.2,1.);
+  if(f<.3)col=mix(c0,c1,f/.3);
+  else if(f<.6)col=mix(c1,c2,(f-.3)/.3);
+  else col=mix(c2,c3,(f-.6)/.4);
+
+  // コロナエッジグロー（輪郭に明るいオレンジ）
+  float rim=1.-abs(dot(vNormal,vec3(0.,0.,1.)));
+  rim=pow(rim,2.2);
+  col+=rim*vec3(1.0,0.45,0.0)*2.0;
+
+  gl_FragColor=vec4(col*1.9,1.);
 }`;
 
 const sunMaterial = new THREE.ShaderMaterial({
