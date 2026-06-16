@@ -583,6 +583,7 @@ async function enterXr(mode) {
       arButton.textContent = "Enter AR";
       scene.background = new THREE.Color(0x07090c);
       floor.visible = true;
+      exitButton.visible = false;
       currentMode = "preview";
       statusEl.textContent = `${label} を終了しました。もう一度入るには VR/AR を選んでください。`;
       updateXrAvailability();
@@ -602,7 +603,8 @@ async function enterXr(mode) {
     vrButton.disabled = false;
     arButton.disabled = false;
     button.textContent = `Exit ${label}`;
-    statusEl.textContent = `${label} 起動中。手（コントローラー）を地球に近づけて触れると弾けます。`;
+    exitButton.visible = true; // show the in-XR Exit button
+    statusEl.textContent = `${label} 起動中。地球に触れて弾く／スティックで移動。終了は「終了」ボタンを指してトリガー。`;
   } catch (error) {
     console.error(error);
     button.disabled = false;
@@ -766,6 +768,10 @@ async function loadShipBuffer() {
 }
 
 function playShipEntrance() {
+  if (audioContext) {
+    if (audioContext.state === "suspended") audioContext.resume();
+    if (!shipBuffer && !shipBufferTried) loadShipBuffer();
+  }
   if (audioContext && audioContext.state === "running" && shipBuffer) {
     try {
       if (shipSource) {
@@ -811,6 +817,49 @@ function kick(direction, speed) {
 }
 
 // ---------------------------------------------------------------------------
+// In-XR Exit button: a panel you point at with a controller (trigger) to leave
+// the session. Shown only while in VR/AR.
+// ---------------------------------------------------------------------------
+function makeButtonTexture(label) {
+  const c = document.createElement("canvas");
+  c.width = 320;
+  c.height = 140;
+  const ctx = c.getContext("2d");
+  ctx.fillStyle = "rgba(190,30,42,0.95)";
+  ctx.beginPath();
+  ctx.roundRect(4, 4, 312, 132, 24);
+  ctx.fill();
+  ctx.lineWidth = 4;
+  ctx.strokeStyle = "rgba(255,255,255,0.85)";
+  ctx.stroke();
+  ctx.fillStyle = "#fff";
+  ctx.font = "bold 46px sans-serif";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText(label, 160, 70);
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.anisotropy = maxAnisotropy;
+  return tex;
+}
+const exitButton = new THREE.Mesh(
+  new THREE.PlaneGeometry(0.34, 0.15),
+  new THREE.MeshBasicMaterial({
+    map: makeButtonTexture("終了 / Exit"),
+    transparent: true,
+    depthTest: false,
+    side: THREE.DoubleSide,
+  })
+);
+exitButton.position.set(0, 1.4, -0.5); // in front of the user, a bit low
+exitButton.renderOrder = 999;
+exitButton.visible = false;
+scene.add(exitButton);
+
+const raycaster = new THREE.Raycaster();
+const tempMatrix = new THREE.Matrix4();
+
+// ---------------------------------------------------------------------------
 // XR controllers: touch the Earth to launch it; trigger launches along the
 // pointing direction as a fallback for when it is out of reach.
 // ---------------------------------------------------------------------------
@@ -835,7 +884,17 @@ for (let index = 0; index < 2; index += 1) {
   const controller = renderer.xr.getController(index);
   controller.addEventListener("select", () => {
     initAudio();
-    // Launch from the controller along its pointing (-Z) direction.
+    // If aiming at the Exit button, leave the XR session instead of launching.
+    if (exitButton.visible) {
+      tempMatrix.identity().extractRotation(controller.matrixWorld);
+      raycaster.ray.origin.setFromMatrixPosition(controller.matrixWorld);
+      raycaster.ray.direction.set(0, 0, -1).applyMatrix4(tempMatrix);
+      if (raycaster.intersectObject(exitButton).length > 0) {
+        renderer.xr.getSession()?.end();
+        return;
+      }
+    }
+    // Otherwise launch along the controller's pointing (-Z) direction.
     tmpDir.set(0, 0, -1).applyQuaternion(controller.getWorldQuaternion(new THREE.Quaternion()));
     kick(tmpDir, CRUISE_DEFAULT);
   });
