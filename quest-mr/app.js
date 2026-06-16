@@ -307,7 +307,9 @@ let nextMeteorAt = 5.0;
 
 function spawnMeteor() {
   meteor.position.copy(METEOR_DIR).multiplyScalar(METEOR_START);
-  meteor.lookAt(0, 0, 0); // -Z faces the Earth center (travel direction)
+  // Aim +Z up to space so the bow (-Z) faces the Earth center it falls toward,
+  // and the burning trail (+Z) streams up behind it.
+  meteor.lookAt(shipTmp.copy(meteor.position).add(METEOR_DIR));
   meteor.visible = true;
   meteorActive = true;
 }
@@ -409,6 +411,7 @@ function spawnEnterprise() {
     .multiplyScalar(1.7 + Math.random() * 1.0);
   shipActive = true;
   enterprise.visible = true;
+  playShipEntrance();
 }
 
 function updateEnterprise(dt) {
@@ -417,14 +420,17 @@ function updateEnterprise(dt) {
     return;
   }
   enterprise.position.addScaledVector(shipVel, dt);
-  enterprise.lookAt(shipTmp.copy(enterprise.position).add(shipVel)); // -Z faces travel dir
+  // Object3D.lookAt aims +Z at the target, so look "backward" to put the bow
+  // (-Z, the saucer) forward and the engine wake (+Z) trailing behind.
+  enterprise.lookAt(shipTmp.copy(enterprise.position).sub(shipVel));
   const dx = enterprise.position.x - roomCenter.x;
   const dy = enterprise.position.y - roomCenter.y;
   const dz = enterprise.position.z - roomCenter.z;
   if (Math.abs(dx) > roomHalf.x + 1.6 || Math.abs(dy) > roomHalf.y + 2.4 || Math.abs(dz) > roomHalf.z + 1.6) {
     shipActive = false;
     enterprise.visible = false;
-    nextShipAt = elapsed + 6 + Math.random() * 9;
+    stopShipAudio(); // music stops the moment the ship leaves the scene
+    nextShipAt = elapsed + 150 + Math.random() * 90; // ~2.5-4 min between visits
   }
 }
 
@@ -582,6 +588,109 @@ function playCollisionSound() {
   overtone.start(now);
   main.stop(now + 0.14);
   overtone.stop(now + 0.1);
+}
+
+// A short original triumphant fanfare for the Enterprise's entrance. Not a
+// copyrighted theme — just a rising brass-like motif. Plays on spawn and is
+// faded out the moment the ship leaves the scene.
+let enterpriseVoices = [];
+
+function playEnterpriseTheme() {
+  initAudio();
+  if (!audioContext || audioContext.state !== "running") return; // needs a prior user gesture
+  stopEnterpriseTheme();
+  const ctx = audioContext;
+  const now = ctx.currentTime;
+
+  const master = ctx.createGain();
+  master.gain.value = 0.22;
+  master.connect(ctx.destination);
+  enterpriseVoices.push({ osc: null, gain: master });
+
+  const seq = [
+    [392.0, 0.0, 0.45], // G4
+    [523.25, 0.45, 0.45], // C5
+    [659.25, 0.9, 0.5], // E5
+    [783.99, 1.4, 1.5], // G5 (held)
+  ];
+  for (const [freq, t, dur] of seq) {
+    const start = now + t;
+    const o1 = ctx.createOscillator();
+    const o2 = ctx.createOscillator();
+    const g = ctx.createGain();
+    o1.type = "sawtooth";
+    o2.type = "triangle";
+    o1.frequency.value = freq;
+    o2.frequency.value = freq * 2;
+    g.gain.setValueAtTime(0.0001, start);
+    g.gain.exponentialRampToValueAtTime(0.9, start + 0.05);
+    g.gain.exponentialRampToValueAtTime(0.3, start + dur * 0.6);
+    g.gain.exponentialRampToValueAtTime(0.0001, start + dur);
+    o1.connect(g);
+    o2.connect(g);
+    g.connect(master);
+    o1.start(start);
+    o2.start(start);
+    o1.stop(start + dur + 0.05);
+    o2.stop(start + dur + 0.05);
+    enterpriseVoices.push({ osc: o1, gain: g });
+    enterpriseVoices.push({ osc: o2, gain: g });
+  }
+}
+
+function stopEnterpriseTheme() {
+  if (!audioContext) return;
+  const now = audioContext.currentTime;
+  for (const v of enterpriseVoices) {
+    try {
+      v.gain.gain.cancelScheduledValues(now);
+      v.gain.gain.setValueAtTime(Math.max(0.0001, v.gain.gain.value), now);
+      v.gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.15);
+      if (v.osc) v.osc.stop(now + 0.2);
+    } catch (e) {
+      /* node already stopped */
+    }
+  }
+  enterpriseVoices = [];
+}
+
+// Optional real audio clip: drop a licensed file at assets/enterprise_theme.mp3
+// and it plays on the ship's entrance; otherwise the synth fanfare above is
+// used. The file is intentionally NOT bundled — provide your own to respect
+// copyright.
+let shipClipReady = false;
+const shipClip = new Audio("./assets/enterprise_theme.mp3");
+shipClip.preload = "auto";
+shipClip.addEventListener("canplaythrough", () => {
+  shipClipReady = true;
+});
+shipClip.addEventListener("error", () => {
+  shipClipReady = false; // no file (or unsupported) — fall back to the synth fanfare
+});
+
+function playShipEntrance() {
+  if (shipClipReady) {
+    try {
+      shipClip.currentTime = 0;
+      const p = shipClip.play();
+      if (p && p.catch) p.catch(() => playEnterpriseTheme());
+      return;
+    } catch (e) {
+      /* fall through to the synth fanfare */
+    }
+  }
+  playEnterpriseTheme();
+}
+
+function stopShipAudio() {
+  stopEnterpriseTheme();
+  if (shipClip && !shipClip.paused) {
+    try {
+      shipClip.pause();
+    } catch (e) {
+      /* ignore */
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------
