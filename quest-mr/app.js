@@ -1084,7 +1084,7 @@ const sunMesh = new THREE.Mesh(
   new THREE.SphereGeometry(EARTH_RADIUS * 50, 64, 48),
   new THREE.MeshBasicMaterial({ map: loadTex("2k_sun.jpg") })
 );
-sunMesh.position.set(-16, 11, -22);
+sunMesh.position.set(-48, 30, -62);
 scene.add(sunMesh);
 const sunLight = new THREE.PointLight(0xfff2e6, 2.4, 0, 0.0);
 sunLight.position.copy(sunMesh.position);
@@ -1092,7 +1092,7 @@ scene.add(sunLight);
 
 const SATURN_R = EARTH_RADIUS * 20;
 const saturnGroup = new THREE.Group();
-saturnGroup.position.set(15, -2, -13);
+saturnGroup.position.set(45, -9, -35);
 saturnGroup.rotation.z = THREE.MathUtils.degToRad(26.7); // axial tilt
 scene.add(saturnGroup);
 const saturnBall = new THREE.Mesh(
