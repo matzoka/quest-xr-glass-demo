@@ -1573,8 +1573,25 @@ function orbitPos(center, r, ang, out) {
     .addScaledVector(inPlane2, Math.sin(ang) * r);
 }
 
-const APOLLO_DURATION = 48; // seconds for one full mission loop
-let apolloT = 0;
+// Mission timeline, in seconds. Staging is slow and deliberate; the long coast
+// to the Moon is the dominant leg.
+const T_LIFTOFF = 3; // full stack climbs off the pad
+const T_STAGE1 = 6; // S-IC separation (3x slower than before)
+const T_WAIT = 2; // pause between separations
+const T_STAGE2 = 6; // S-II separation
+const T_ASCENT = T_LIFTOFF + T_STAGE1 + T_WAIT + T_STAGE2; // 17 s
+const T_COAST = 30; // trans-lunar coast — the longest leg
+const T_PITCH = 2; // nose touches the surface, then pitches 90° over
+const T_ORBIT = 18; // low lunar orbit + LM descent
+const T_GAP = 2; // brief pause before relaunch
+const T_TOTAL = T_ASCENT + T_COAST + T_PITCH + T_ORBIT + T_GAP;
+const B_ASCENT = T_ASCENT;
+const B_COAST = B_ASCENT + T_COAST;
+const B_PITCH = B_COAST + T_PITCH;
+const B_ORBIT = B_PITCH + T_ORBIT;
+const STAGE2_START = T_LIFTOFF + T_STAGE1 + T_WAIT; // 11 s
+
+let missionT = 0;
 const earthWorld = new THREE.Vector3();
 const moonWorld = new THREE.Vector3();
 const apA = new THREE.Vector3();
@@ -1584,9 +1601,18 @@ const apTangent = new THREE.Vector3();
 const apSurfUp = new THREE.Vector3();
 const apPrev = new THREE.Vector3();
 let apPrevValid = false;
-const ORBIT_R = MOON_RADIUS * 2.6; // well clear of the lunar surface
-const ORBIT_START_ANG = 0; // angle 0 = Moon's near side, where the craft arrives
+const NOSE_OFFSET = 0.054; // CSM center -> nose tip
+const ORBIT_R = MOON_RADIUS + NOSE_OFFSET; // craft center; nose just grazes the surface
 const LAUNCH_TOP = EARTH_RADIUS + 0.63; // craft-center distance at end of ascent
+const _qRad = new THREE.Quaternion();
+const _qTan = new THREE.Quaternion();
+const _qDir = new THREE.Vector3();
+function quatAlignY(dir, out) {
+  _qDir.copy(dir);
+  if (_qDir.lengthSq() < 1e-9) return;
+  _qDir.normalize();
+  out.setFromUnitVectors(_yUp, _qDir);
+}
 
 // Restore the dropped stages for the next launch.
 function resetSaturnV() {
@@ -1599,13 +1625,13 @@ function resetSaturnV() {
 }
 
 function updateApollo(dt) {
-  apolloT += dt / APOLLO_DURATION;
-  if (apolloT >= 1) {
-    apolloT -= 1;
+  missionT += dt;
+  if (missionT >= T_TOTAL) {
+    missionT -= T_TOTAL;
     apPrevValid = false;
     resetSaturnV();
   }
-  const t = apolloT;
+  const t = missionT;
 
   earthWorld.copy(ballGroup.position); // roomCenter + ballOffset
   moon.getWorldPosition(moonWorld);
@@ -1617,37 +1643,35 @@ function updateApollo(dt) {
   csm.visible = false;
   lmFlying.visible = false;
 
-  if (t < 0.12) {
-    // Launch + staging: lift off the Earth and drop the 1st then 2nd stage,
-    // leaving only the short CSM/LM spacecraft to continue to the Moon.
-    const p = t / 0.12;
+  if (t < B_ASCENT) {
+    // Launch + staging (17 s): climb off the pad, drop S-IC, wait 2 s, drop
+    // S-II — leaving only the short CSM/LM spacecraft.
     saturnV.group.visible = true;
-    const climb = smooth(p) * 0.5;
+    const climb = smooth(t / B_ASCENT) * 0.5;
     saturnV.group.position.copy(earthWorld).addScaledVector(apDirEM, EARTH_RADIUS + 0.13 + climb);
     alignY(saturnV.group, apDirEM);
 
-    if (t > 0.03) {
-      const sp = smooth((t - 0.03) / 0.04); // S-IC drops 0.03–0.07
-      saturnV.stage1.position.y = -0.095 - sp * 0.25;
-      saturnV.stage1.scale.setScalar(1 - sp * 0.6);
-      if (t > 0.07) saturnV.stage1.visible = false;
+    if (t > T_LIFTOFF) {
+      const sp = smooth((t - T_LIFTOFF) / T_STAGE1); // S-IC drops over 6 s
+      saturnV.stage1.position.y = -0.095 - sp * 0.5;
+      saturnV.stage1.scale.setScalar(1 - sp * 0.7);
+      if (sp >= 1) saturnV.stage1.visible = false;
     }
-    if (t > 0.07) {
-      const sp = smooth((t - 0.07) / 0.04); // S-II drops 0.07–0.11
-      saturnV.stage2.position.y = -0.04 - sp * 0.25;
-      saturnV.stage2.scale.setScalar(1 - sp * 0.6);
-      if (t > 0.11) saturnV.stage2.visible = false;
+    if (t > STAGE2_START) {
+      const sp = smooth((t - STAGE2_START) / T_STAGE2); // S-II drops over 6 s
+      saturnV.stage2.position.y = -0.04 - sp * 0.5;
+      saturnV.stage2.scale.setScalar(1 - sp * 0.7);
+      if (sp >= 1) saturnV.stage2.visible = false;
     }
 
-    // Keep the engine plume glued to the base of whichever stage is burning,
-    // so it never floats away from the rocket as stages separate.
+    // Keep the engine plume glued to the base of whichever stage is burning.
     saturnV.plume.visible = true;
     let plumeY;
     let plumeScale;
-    if (t < 0.04) {
+    if (t < T_LIFTOFF) {
       plumeY = -0.155; // S-IC base
       plumeScale = 1;
-    } else if (t < 0.08) {
+    } else if (t < STAGE2_START) {
       plumeY = -0.0875; // S-II base
       plumeScale = 0.75;
     } else {
@@ -1658,14 +1682,13 @@ function updateApollo(dt) {
     saturnV.plume.scale.set(plumeScale, plumeScale * (0.7 + Math.random() * 0.6), plumeScale);
     apPrev.copy(saturnV.group.position);
     apPrevValid = true;
-  } else if (t < 0.5) {
-    // Trans-lunar coast: the short CSM/LM stack (shown as the very same CSM that
-    // will orbit) glides to the Moon's near side — straight in, never crossing
-    // the Moon body — and ends exactly on the lunar orbit circle.
-    const p = (t - 0.12) / 0.38;
+  } else if (t < B_COAST) {
+    // Trans-lunar coast (longest leg): the CSM glides nose-first to the Moon's
+    // near side and stops where its nose just grazes the surface.
+    const p = (t - B_ASCENT) / T_COAST;
     csm.visible = true;
     apA.copy(earthWorld).addScaledVector(apDirEM, LAUNCH_TOP);
-    orbitPos(moonWorld, ORBIT_R, ORBIT_START_ANG, apB);
+    orbitPos(moonWorld, ORBIT_R, 0, apB); // near-side arrival point
     csm.position.lerpVectors(apA, apB, smooth(p));
     if (apPrevValid) {
       apTangent.copy(csm.position).sub(apPrev);
@@ -1673,11 +1696,25 @@ function updateApollo(dt) {
     }
     apPrev.copy(csm.position);
     apPrevValid = true;
-  } else if (t < 0.92) {
-    // Lunar orbit: the CSM ("母艦") circles the Moon; the LM separates and lands.
-    const p = (t - 0.5) / 0.42;
+  } else if (t < B_PITCH) {
+    // Nose touches the surface, then the craft pitches 90° from "pointing at the
+    // Moon" to lying tangent (horizontal) along the orbit — same forward sense,
+    // never a 180° flip.
+    const p = (t - B_COAST) / T_PITCH;
     csm.visible = true;
-    const ang = ORBIT_START_ANG + p * Math.PI * 3;
+    orbitPos(moonWorld, ORBIT_R, 0, apA);
+    csm.position.copy(apA);
+    apTangent.copy(moonWorld).sub(apA); // nose pointing down at the Moon
+    quatAlignY(apTangent, _qRad);
+    quatAlignY(inPlane2, _qTan); // tangent at angle 0 (orbit forward direction)
+    csm.quaternion.slerpQuaternions(_qRad, _qTan, smooth(p));
+    apPrevValid = false;
+  } else if (t < B_ORBIT) {
+    // Low lunar orbit: the CSM ("母艦") circles just above the surface, starting
+    // tangent at angle 0 so its heading flows straight on from the pitch-over.
+    const p = (t - B_PITCH) / T_ORBIT;
+    csm.visible = true;
+    const ang = p * Math.PI * 3; // ~1.5 revolutions
     orbitPos(moonWorld, ORBIT_R, ang, apA);
     csm.position.copy(apA);
     orbitPos(moonWorld, ORBIT_R, ang + 0.01, apB);
@@ -1687,18 +1724,18 @@ function updateApollo(dt) {
     if (p > 0.25) {
       const dp = (p - 0.25) / 0.5;
       if (dp < 1) {
-        // Descend from orbit down onto the surface lander's exact spot.
+        // LM separates and drops straight down to the surface below the orbit.
         lmFlying.visible = true;
-        surfaceLander.getWorldPosition(apB);
+        apSurfUp.copy(apA).sub(moonWorld).normalize();
+        apB.copy(moonWorld).addScaledVector(apSurfUp, MOON_RADIUS + 0.004);
         lmFlying.position.lerpVectors(apA, apB, smooth(dp));
-        apSurfUp.copy(apB).sub(moonWorld).normalize();
         alignY(lmFlying, apSurfUp);
       }
       // dp >= 1: landed — the permanent surfaceLander stands in for it.
     }
     apPrevValid = false;
   }
-  // t >= 0.92: brief reset gap before the next launch.
+  // t >= B_ORBIT: brief reset gap before the next launch.
 }
 
 renderer.setAnimationLoop((timestamp) => {
