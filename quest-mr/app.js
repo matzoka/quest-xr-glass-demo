@@ -1141,42 +1141,65 @@ float snoise(vec3 v){
   m=m*m;
   return 42.*dot(m*m,vec4(dot(p0,x0),dot(p1,x1),dot(p2,x2),dot(p3,x3)));
 }
+// 通常fBm
 float fbm(vec3 p){
   float v=0.;float a=.5;
   for(int i=0;i<5;i++){v+=a*snoise(p);p=p*2.+vec3(100.);a*=.5;}
   return v;
 }
+// Ridged fBm: 暗い背景に尖った明るい炎の筋を作る
+float rfbm(vec3 p){
+  float v=0.;float a=.6;
+  for(int i=0;i<4;i++){
+    float n=1.-abs(snoise(p)); // 0〜1の山形、暗部が0
+    n=n*n;                     // さらに尖らせる
+    v+=a*n;
+    p=p*2.2+vec3(100.);a*=.5;
+  }
+  return v;
+}
 void main(){
   vec3 n=normalize(vPosition);
-  float t1=uTime*.07;
-  float t2=uTime*.045;
-  // 強めのドメインワープで渦状コロナループを表現
-  vec3 q=vec3(
-    fbm(n*4.+vec3(t1,t1*.6,t1*.35)),
-    fbm(n*4.+vec3(t2*.8,t2,t2*.5)),
-    fbm(n*4.+vec3(t1*.4,t2*.7,t1*.9))
-  );
-  float f=fbm(n*3.+q*2.2+vec3(t1*.4));
-  f=f*.5+.5;
-  f=pow(clamp(f,0.,1.),1.3);
+  float t1=uTime*.065;
+  float t2=uTime*.04;
 
-  // SDO風カラーパレット：黒→暗赤→赤→オレンジ
-  vec3 c0=vec3(0.03,0.0,0.0);    // 太陽黒点
-  vec3 c1=vec3(0.4,0.05,0.0);    // 暗い赤
-  vec3 c2=vec3(0.82,0.15,0.0);   // 赤
-  vec3 c3=vec3(1.0,0.48,0.02);   // 明るいオレンジ（最明）
+  // ドメインワープ（渦状コロナループ）
+  vec3 q=vec3(
+    fbm(n*4.+vec3(t1,t1*.55,t1*.3)),
+    fbm(n*4.+vec3(t2*.75,t2,t2*.45)),
+    fbm(n*4.+vec3(t1*.35,t2*.65,t1*.85))
+  );
+
+  // 暗い表面ベース（べき乗で黒い部分を広げる）
+  float base=fbm(n*3.+q*2.+vec3(t1*.35));
+  base=base*.5+.5;
+  base=pow(clamp(base,0.,1.),2.2);
+
+  // リッジドノイズで炎・フレアの筋（明るい尖った線）
+  float ridge=rfbm(n*5.+q*1.2+vec3(t2*.5));
+  ridge=pow(clamp(ridge,0.,1.),1.5)*0.42;
+
+  float f=clamp(base+ridge,0.,1.);
+
+  // Hα / SDO304Å 風パレット: 黒→暗赤→赤→赤オレンジ（黄は輝点のみ）
+  vec3 c0=vec3(0.02,0.0,0.0);
+  vec3 c1=vec3(0.25,0.02,0.0);
+  vec3 c2=vec3(0.65,0.08,0.0);
+  vec3 c3=vec3(1.0,0.30,0.01);
+  vec3 c4=vec3(1.0,0.75,0.12);   // 最上位輝点のみ黄橙
 
   vec3 col;
-  if(f<.3)col=mix(c0,c1,f/.3);
-  else if(f<.6)col=mix(c1,c2,(f-.3)/.3);
-  else col=mix(c2,c3,(f-.6)/.4);
+  if(f<.2)col=mix(c0,c1,f/.2);
+  else if(f<.5)col=mix(c1,c2,(f-.2)/.3);
+  else if(f<.8)col=mix(c2,c3,(f-.5)/.3);
+  else col=mix(c3,c4,(f-.8)/.2);
 
-  // コロナエッジグロー（輪郭に明るいオレンジ）
+  // コロナエッジ（控えめな赤）
   float rim=1.-abs(dot(vNormal,vec3(0.,0.,1.)));
-  rim=pow(rim,2.2);
-  col+=rim*vec3(1.0,0.45,0.0)*2.0;
+  rim=pow(rim,3.2);
+  col+=rim*vec3(0.85,0.18,0.0)*0.85;
 
-  gl_FragColor=vec4(col*1.9,1.);
+  gl_FragColor=vec4(col*1.65,1.);
 }`;
 
 const sunMaterial = new THREE.ShaderMaterial({
