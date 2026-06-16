@@ -129,6 +129,7 @@ updateCollisionHalf();
 
 const texLoader = new THREE.TextureLoader();
 texLoader.setCrossOrigin("anonymous");
+const maxAnisotropy = renderer.capabilities.getMaxAnisotropy();
 
 function loadTex(file) {
   const tex = texLoader.load(TEX_BASE + file, undefined, undefined, (err) => {
@@ -136,6 +137,7 @@ function loadTex(file) {
     statusEl.textContent = "地球テクスチャの読み込みに失敗しました（ネットワークをご確認ください）。";
   });
   tex.colorSpace = THREE.SRGBColorSpace;
+  tex.anisotropy = maxAnisotropy; // sharper when viewed up close / at grazing angles
   return tex;
 }
 
@@ -152,8 +154,7 @@ const earthMesh = new THREE.Mesh(
 const cloudMesh = new THREE.Mesh(
   new THREE.SphereGeometry(EARTH_RADIUS * 1.015, 64, 48),
   new THREE.MeshStandardMaterial({
-    alphaMap: loadTex("earth_clouds_1024.png"),
-    color: 0xffffff,
+    map: loadTex("earth_clouds_2048.png"),
     transparent: true,
     opacity: 0.9,
     depthWrite: false,
@@ -184,6 +185,71 @@ const moonOrbit = new THREE.Group();
 moonOrbit.rotation.x = THREE.MathUtils.degToRad(6); // gently inclined orbit
 moonOrbit.add(moon);
 ballGroup.add(moonOrbit);
+
+// Airliner (JAL-style) tracing the Tokyo <-> Los Angeles route along the
+// surface. Child of earthMesh, so it rides the Earth's spin while flying.
+function latLonToDir(latDeg, lonDeg) {
+  const phi = ((lonDeg + 180) / 360) * 2 * Math.PI;
+  const theta = ((90 - latDeg) / 180) * Math.PI;
+  return new THREE.Vector3(
+    -Math.cos(phi) * Math.sin(theta),
+    Math.cos(theta),
+    Math.sin(phi) * Math.sin(theta)
+  ).normalize();
+}
+function slerpDir(a, b, t, out) {
+  const dot = THREE.MathUtils.clamp(a.dot(b), -1, 1);
+  const omega = Math.acos(dot);
+  const so = Math.sin(omega);
+  if (so < 1e-4) return out.copy(a);
+  return out
+    .copy(a)
+    .multiplyScalar(Math.sin((1 - t) * omega) / so)
+    .addScaledVector(b, Math.sin(t * omega) / so);
+}
+
+const planeBodyMat = new THREE.MeshStandardMaterial({ color: 0xf3f5f8, metalness: 0.3, roughness: 0.5 });
+const planeTailMat = new THREE.MeshStandardMaterial({ color: 0xc8102e, metalness: 0.2, roughness: 0.5 }); // JAL-style red
+const plane = new THREE.Group(); // built with the nose toward -Z
+const fuselage = new THREE.Mesh(new THREE.CapsuleGeometry(0.0024, 0.013, 4, 8), planeBodyMat);
+fuselage.rotation.x = Math.PI / 2;
+plane.add(fuselage);
+plane.add(new THREE.Mesh(new THREE.BoxGeometry(0.022, 0.0008, 0.004), planeBodyMat)); // wings
+const tailplane = new THREE.Mesh(new THREE.BoxGeometry(0.009, 0.0007, 0.0028), planeBodyMat);
+tailplane.position.set(0, 0, 0.007);
+plane.add(tailplane);
+const fin = new THREE.Mesh(new THREE.BoxGeometry(0.0008, 0.004, 0.0035), planeTailMat);
+fin.position.set(0, 0.0022, 0.0075);
+plane.add(fin);
+earthMesh.add(plane);
+
+const PLANE_TOKYO = latLonToDir(35.7, 139.7);
+const PLANE_LA = latLonToDir(34.0, -118.2);
+const PLANE_ALT = EARTH_RADIUS * 1.02;
+const PLANE_SPEED = 0.05; // fraction of the route per second (~20 s one way)
+let planeT = 0;
+let planeDir = 1;
+const planePos = new THREE.Vector3();
+const planeNext = new THREE.Vector3();
+const planeUp = new THREE.Vector3();
+const planeMat = new THREE.Matrix4();
+
+function updatePlane(dt) {
+  planeT += planeDir * PLANE_SPEED * dt;
+  if (planeT >= 1) {
+    planeT = 1;
+    planeDir = -1;
+  } else if (planeT <= 0) {
+    planeT = 0;
+    planeDir = 1;
+  }
+  slerpDir(PLANE_TOKYO, PLANE_LA, planeT, planePos).multiplyScalar(PLANE_ALT);
+  slerpDir(PLANE_TOKYO, PLANE_LA, THREE.MathUtils.clamp(planeT + planeDir * 0.02, 0, 1), planeNext).multiplyScalar(PLANE_ALT);
+  plane.position.copy(planePos);
+  planeUp.copy(planePos).normalize();
+  planeMat.lookAt(planePos, planeNext, planeUp); // -Z faces the direction of travel
+  plane.quaternion.setFromRotationMatrix(planeMat);
+}
 
 ballGroup.position.copy(roomCenter).add(ballOffset);
 
@@ -960,6 +1026,7 @@ renderer.setAnimationLoop((timestamp) => {
   cloudMesh.material.opacity = 0.75 + Math.sin(timestamp * 0.00035) * 0.12;
   moon.rotation.y += dt * 0.04;
   moonOrbit.rotation.y += dt * MOON_ORBIT_SPEED;
+  updatePlane(dt);
 
   // Ambient space life: orbiting satellite, occasional comet, surface lightning.
   elapsed += dt;
