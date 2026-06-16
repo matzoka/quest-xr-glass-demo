@@ -13,7 +13,7 @@ const arButton = document.querySelector("#arButton");
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x07090c);
 
-const camera = new THREE.PerspectiveCamera(65, window.innerWidth / window.innerHeight, 0.01, 60);
+const camera = new THREE.PerspectiveCamera(65, window.innerWidth / window.innerHeight, 0.01, 400);
 
 const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
 renderer.setSize(window.innerWidth, window.innerHeight);
@@ -1076,6 +1076,51 @@ function stepBall(dt) {
 // ---------------------------------------------------------------------------
 // Main loop
 // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// Distant Sun and Saturn, well outside the room. Large, self-lit Sun that casts
+// light; ringed Saturn with a tilted axis. Both spin.
+// ---------------------------------------------------------------------------
+const sun = new THREE.Mesh(
+  new THREE.SphereGeometry(EARTH_RADIUS * 50, 64, 48),
+  new THREE.MeshBasicMaterial({ map: loadTex("2k_sun.jpg") })
+);
+sun.position.set(-60, 42, -120);
+scene.add(sun);
+const sunLight = new THREE.PointLight(0xfff2e6, 2.4, 0, 0.0);
+sunLight.position.copy(sun.position);
+scene.add(sunLight);
+
+const SATURN_R = EARTH_RADIUS * 20;
+const saturnGroup = new THREE.Group();
+saturnGroup.position.set(70, -18, -90);
+saturnGroup.rotation.z = THREE.MathUtils.degToRad(26.7); // axial tilt
+scene.add(saturnGroup);
+const saturnBall = new THREE.Mesh(
+  new THREE.SphereGeometry(SATURN_R, 64, 48),
+  new THREE.MeshStandardMaterial({ map: loadTex("2k_saturn.jpg"), roughness: 0.9, metalness: 0.0 })
+);
+saturnGroup.add(saturnBall);
+const ringGeo = new THREE.RingGeometry(SATURN_R * 1.2, SATURN_R * 2.3, 128);
+const rpos = ringGeo.attributes.position;
+const ruv = ringGeo.attributes.uv;
+const rvec = new THREE.Vector3();
+for (let i = 0; i < rpos.count; i += 1) {
+  rvec.fromBufferAttribute(rpos, i);
+  const u = (rvec.length() - SATURN_R * 1.2) / (SATURN_R * 2.3 - SATURN_R * 1.2);
+  ruv.setXY(i, u, 1);
+}
+const saturnRing = new THREE.Mesh(
+  ringGeo,
+  new THREE.MeshBasicMaterial({
+    map: loadTex("2k_saturn_ring_alpha.png"),
+    transparent: true,
+    side: THREE.DoubleSide,
+    depthWrite: false,
+  })
+);
+saturnRing.rotation.x = -Math.PI / 2; // lay flat in the equatorial plane
+saturnGroup.add(saturnRing);
+
 renderer.setAnimationLoop((timestamp) => {
   const dt = Math.min((timestamp - lastFrameTime) / 1000 || 0, 0.04);
   lastFrameTime = timestamp;
@@ -1103,6 +1148,8 @@ renderer.setAnimationLoop((timestamp) => {
   moon.rotation.y += dt * 0.04;
   moonOrbit.rotation.y += dt * MOON_ORBIT_SPEED;
   updatePlane(dt);
+  sun.rotation.y += dt * 0.03;
+  saturnBall.rotation.y += dt * 0.1;
 
   // Ambient space life: orbiting satellite, occasional comet, surface lightning.
   elapsed += dt;
