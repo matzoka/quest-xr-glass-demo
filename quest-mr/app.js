@@ -174,12 +174,16 @@ ballGroup.add(tiltGroup);
 // Earth and both are framed together (like the familiar composite photos).
 const MOON_RADIUS = EARTH_RADIUS * 0.273;
 const MOON_DISTANCE = EARTH_RADIUS * 2.8;
+const MOON_ORBIT_SPEED = 0.15; // rad/s — orbits the Earth (~42 s per revolution)
 const moon = new THREE.Mesh(
   new THREE.SphereGeometry(MOON_RADIUS, 48, 32),
   new THREE.MeshStandardMaterial({ map: loadTex("moon_1024.jpg"), roughness: 1.0, metalness: 0.0 })
 );
-moon.position.copy(new THREE.Vector3(1.0, 0.15, -0.1).normalize()).multiplyScalar(MOON_DISTANCE);
-ballGroup.add(moon);
+moon.position.set(MOON_DISTANCE, 0, 0);
+const moonOrbit = new THREE.Group();
+moonOrbit.rotation.x = THREE.MathUtils.degToRad(6); // gently inclined orbit
+moonOrbit.add(moon);
+ballGroup.add(moonOrbit);
 
 ballGroup.position.copy(roomCenter).add(ballOffset);
 
@@ -951,6 +955,7 @@ renderer.setAnimationLoop((timestamp) => {
   cloudMesh.rotation.y += dt * CLOUD_SPIN;
   cloudMesh.material.opacity = 0.75 + Math.sin(timestamp * 0.00035) * 0.12;
   moon.rotation.y += dt * 0.04;
+  moonOrbit.rotation.y += dt * MOON_ORBIT_SPEED;
 
   // Ambient space life: orbiting satellite, occasional comet, surface lightning.
   elapsed += dt;
