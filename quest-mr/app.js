@@ -1575,13 +1575,13 @@ function orbitPos(center, r, ang, out) {
 
 // Mission timeline, in seconds. Staging is slow and deliberate; the long coast
 // to the Moon is the dominant leg.
-const T_LIFTOFF = 3; // full stack climbs off the pad
-const T_STAGE1 = 6; // S-IC separation (3x slower than before)
+const T_LIFTOFF = 2; // full stack climbs off the pad
+const T_STAGE1 = 2; // S-IC separation
 const T_WAIT = 2; // pause between separations
-const T_STAGE2 = 6; // S-II separation
-const T_ASCENT = T_LIFTOFF + T_STAGE1 + T_WAIT + T_STAGE2; // 17 s
-const T_COAST = 30; // trans-lunar coast — the longest leg
-const T_PITCH = 2; // nose touches the surface, then pitches 90° over
+const T_STAGE2 = 2; // S-II separation
+const T_ASCENT = T_LIFTOFF + T_STAGE1 + T_WAIT + T_STAGE2; // 8 s
+const T_COAST = 10; // trans-lunar coast
+const T_PITCH = 2; // pitches 90° over while still clear of the surface
 const T_ORBIT = 18; // low lunar orbit + LM descent
 const T_GAP = 2; // brief pause before relaunch
 const T_TOTAL = T_ASCENT + T_COAST + T_PITCH + T_ORBIT + T_GAP;
@@ -1602,7 +1602,8 @@ const apSurfUp = new THREE.Vector3();
 const apPrev = new THREE.Vector3();
 let apPrevValid = false;
 const NOSE_OFFSET = 0.054; // CSM center -> nose tip
-const ORBIT_R = MOON_RADIUS + NOSE_OFFSET; // craft center; nose just grazes the surface
+const ARRIVAL_CLEAR = 0.06; // keep the nose well clear of the surface at pitch-over
+const ORBIT_R = MOON_RADIUS + NOSE_OFFSET + ARRIVAL_CLEAR; // craft center; nose stops short of the surface
 const LAUNCH_TOP = EARTH_RADIUS + 0.63; // craft-center distance at end of ascent
 const _qRad = new THREE.Quaternion();
 const _qTan = new THREE.Quaternion();
@@ -1697,16 +1698,16 @@ function updateApollo(dt) {
     apPrev.copy(csm.position);
     apPrevValid = true;
   } else if (t < B_PITCH) {
-    // Nose touches the surface, then the craft pitches 90° from "pointing at the
-    // Moon" to lying tangent (horizontal) along the orbit — same forward sense,
-    // never a 180° flip.
+    // Still clear of the surface, the craft pitches over from "pointing at the
+    // Moon" to lying tangent along the orbit, ending in the orbit's heading.
     const p = (t - B_COAST) / T_PITCH;
     csm.visible = true;
     orbitPos(moonWorld, ORBIT_R, 0, apA);
     csm.position.copy(apA);
     apTangent.copy(moonWorld).sub(apA); // nose pointing down at the Moon
     quatAlignY(apTangent, _qRad);
-    quatAlignY(inPlane2, _qTan); // tangent at angle 0 (orbit forward direction)
+    apB.copy(inPlane2).multiplyScalar(-1); // orbit travels the -inPlane2 way
+    quatAlignY(apB, _qTan);
     csm.quaternion.slerpQuaternions(_qRad, _qTan, smooth(p));
     apPrevValid = false;
   } else if (t < B_ORBIT) {
@@ -1714,10 +1715,10 @@ function updateApollo(dt) {
     // tangent at angle 0 so its heading flows straight on from the pitch-over.
     const p = (t - B_PITCH) / T_ORBIT;
     csm.visible = true;
-    const ang = p * Math.PI * 3; // ~1.5 revolutions
+    const ang = -p * Math.PI * 3; // ~1.5 revolutions, reversed direction
     orbitPos(moonWorld, ORBIT_R, ang, apA);
     csm.position.copy(apA);
-    orbitPos(moonWorld, ORBIT_R, ang + 0.01, apB);
+    orbitPos(moonWorld, ORBIT_R, ang - 0.01, apB); // next point along the reversed motion
     apTangent.copy(apB).sub(apA);
     alignY(csm, apTangent);
 
