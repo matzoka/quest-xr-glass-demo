@@ -1,5 +1,7 @@
 import * as THREE from "three";
 import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js";
+import { OBJLoader } from "three/addons/loaders/OBJLoader.js";
+import { MTLLoader } from "three/addons/loaders/MTLLoader.js";
 
 const statusEl = document.querySelector("#status");
 const vrButton = document.querySelector("#vrButton");
@@ -429,53 +431,42 @@ function updateMeteor(dt) {
 // (reappearing every several seconds), built facing -Z (its bow) with a faint
 // additive engine wake trailing each nacelle.
 // ---------------------------------------------------------------------------
-const shipHullMat = new THREE.MeshStandardMaterial({ color: 0xdde3ec, metalness: 0.5, roughness: 0.45 });
-const shipGlowMat = new THREE.MeshBasicMaterial({ color: 0x6fd2ff });
-
 const enterprise = new THREE.Group();
-const eSaucer = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.09, 0.02, 28), shipHullMat);
-eSaucer.position.set(0, 0, -0.1); // forward saucer section
-enterprise.add(eSaucer);
-const eHull = new THREE.Mesh(new THREE.CapsuleGeometry(0.025, 0.1, 6, 12), shipHullMat);
-eHull.rotation.x = Math.PI / 2;
-eHull.position.set(0, -0.022, 0.025);
-enterprise.add(eHull);
-const eNeck = new THREE.Mesh(new THREE.BoxGeometry(0.025, 0.045, 0.016), shipHullMat);
-eNeck.position.set(0, -0.014, -0.05);
-enterprise.add(eNeck);
-for (const sx of [-1, 1]) {
-  const nacelle = new THREE.Mesh(new THREE.CapsuleGeometry(0.015, 0.12, 6, 12), shipHullMat);
-  nacelle.rotation.x = Math.PI / 2;
-  nacelle.position.set(sx * 0.075, 0.04, 0.06);
-  enterprise.add(nacelle);
-
-  const glow = new THREE.Mesh(new THREE.SphereGeometry(0.016, 12, 10), shipGlowMat);
-  glow.position.set(sx * 0.075, 0.04, 0.128); // glowing rear of each nacelle
-  enterprise.add(glow);
-
-  const pylon = new THREE.Mesh(new THREE.BoxGeometry(0.012, 0.055, 0.035), shipHullMat);
-  pylon.position.set(sx * 0.038, 0.012, 0.06);
-  pylon.rotation.z = sx * 0.6;
-  enterprise.add(pylon);
-
-  const wake = new THREE.Mesh(
-    new THREE.ConeGeometry(0.02, 0.55, 12, 1, true),
-    new THREE.MeshBasicMaterial({
-      color: 0x7fd8ff,
-      transparent: true,
-      opacity: 0.28,
-      blending: THREE.AdditiveBlending,
-      depthWrite: false,
-      side: THREE.DoubleSide,
-    })
-  );
-  wake.rotation.x = Math.PI / 2; // cone tip points +Z (behind the ship)
-  wake.position.set(sx * 0.075, 0.04, 0.42); // trail behind the nacelle
-  enterprise.add(wake);
-}
-enterprise.scale.setScalar(1.4);
 enterprise.visible = false;
 scene.add(enterprise);
+
+// Load the detailed USS Enterprise model (OBJ + MTL + textures in
+// assets/NCC-1701/), center it, scale to a target length, and add it to the
+// `enterprise` group that flies across the scene.
+new MTLLoader().setPath("./assets/NCC-1701/").load("untitled.mtl", (materials) => {
+  materials.preload();
+  new OBJLoader()
+    .setMaterials(materials)
+    .setPath("./assets/NCC-1701/")
+    .load(
+      "untitled.obj",
+      (obj) => {
+        obj.traverse((child) => {
+          if (child.isMesh) {
+            const mats = Array.isArray(child.material) ? child.material : [child.material];
+            mats.forEach((m) => {
+              if (m && m.map) m.map.anisotropy = maxAnisotropy;
+            });
+          }
+        });
+        const box = new THREE.Box3().setFromObject(obj);
+        const size = box.getSize(new THREE.Vector3());
+        const center = box.getCenter(new THREE.Vector3());
+        obj.position.sub(center); // recenter on origin
+        const maxDim = Math.max(size.x, size.y, size.z) || 1;
+        obj.scale.setScalar((EARTH_RADIUS * 0.9) / maxDim);
+        enterprise.add(obj);
+        console.log("Enterprise model loaded. raw size:", size.x.toFixed(2), size.y.toFixed(2), size.z.toFixed(2));
+      },
+      undefined,
+      (err) => console.error("Enterprise model load failed:", err)
+    );
+});
 
 const shipVel = new THREE.Vector3();
 const shipTmp = new THREE.Vector3();
