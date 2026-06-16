@@ -1083,17 +1083,21 @@ function stepBall(dt) {
 const SUN_VERT = `
 varying vec3 vPosition;
 varying vec3 vNormal;
+varying vec2 vUv;
 void main() {
   vPosition = position;
   vNormal = normalize(normalMatrix * normal);
+  vUv = uv;
   gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
 }`;
 
 const SUN_FRAG = `
 precision mediump float;
 uniform float uTime;
+uniform sampler2D uTex;
 varying vec3 vPosition;
 varying vec3 vNormal;
+varying vec2 vUv;
 
 vec3 m289v3(vec3 x){return x-floor(x*(1./289.))*289.;}
 vec4 m289v4(vec4 x){return x-floor(x*(1./289.))*289.;}
@@ -1160,59 +1164,89 @@ float rfbm(vec3 p){
 }
 void main(){
   vec3 n=normalize(vPosition);
-  float t1=uTime*.065;
-  float t2=uTime*.04;
+  float t1=uTime*.05;
+  float t2=uTime*.03;
 
-  // ドメインワープ（渦状コロナループ）
+  // ノイズで UV をゆっくり歪め、プラズマが沸き立つ揺らぎを作る。
   vec3 q=vec3(
-    fbm(n*4.+vec3(t1,t1*.55,t1*.3)),
-    fbm(n*4.+vec3(t2*.75,t2,t2*.45)),
-    fbm(n*4.+vec3(t1*.35,t2*.65,t1*.85))
-  );
+    fbm(n*3.5+vec3(t1,t1*.6,t1*.3)),
+    fbm(n*3.5+vec3(t2*.7,t2,t2*.5))
+  ,0.);
+  vec2 warp=vec2(q.x,q.y)*0.022;
+  // 細かい対流セル（粒状斑）のさざ波も加える。
+  warp+=vec2(snoise(n*9.+vec3(t2)),snoise(n*9.+vec3(7.,t2,3.)))*0.006;
 
-  // 暗い表面ベース（べき乗で黒い部分を広げる）
-  float base=fbm(n*3.+q*2.+vec3(t1*.35));
-  base=base*.5+.5;
-  base=pow(clamp(base,0.,1.),2.2);
+  // NASA 由来の太陽テクスチャをサンプリング（歪ませた UV で）。
+  vec3 tex=texture2D(uTex,vUv+warp).rgb;
 
-  // リッジドノイズで炎・フレアの筋（明るい尖った線）
-  float ridge=rfbm(n*5.+q*1.2+vec3(t2*.5));
-  ridge=pow(clamp(ridge,0.,1.),1.5)*0.42;
+  // 明部を引き締め、エネルギーを与えて自己発光らしく見せる。
+  float lum=dot(tex,vec3(0.299,0.587,0.114));
+  // リッジドノイズで動くフレアの筋を上乗せ（明部だけ強調）。
+  float flare=rfbm(n*5.+q*1.2+vec3(t2*.5));
+  flare=pow(clamp(flare,0.,1.),2.0)*smoothstep(0.35,0.8,lum);
 
-  float f=clamp(base+ridge,0.,1.);
+  vec3 col=tex*1.45;
+  col+=flare*vec3(1.0,0.45,0.08)*0.7;
 
-  // Hα / SDO304Å 風パレット: 黒→暗赤→赤→赤オレンジ（黄は輝点のみ）
-  vec3 c0=vec3(0.02,0.0,0.0);
-  vec3 c1=vec3(0.25,0.02,0.0);
-  vec3 c2=vec3(0.65,0.08,0.0);
-  vec3 c3=vec3(1.0,0.30,0.01);
-  vec3 c4=vec3(1.0,0.75,0.12);   // 最上位輝点のみ黄橙
-
-  vec3 col;
-  if(f<.2)col=mix(c0,c1,f/.2);
-  else if(f<.5)col=mix(c1,c2,(f-.2)/.3);
-  else if(f<.8)col=mix(c2,c3,(f-.5)/.3);
-  else col=mix(c3,c4,(f-.8)/.2);
-
-  // コロナエッジ（控えめな赤）
+  // コロナエッジ（縁の輝き、控えめなオレンジ）。
   float rim=1.-abs(dot(vNormal,vec3(0.,0.,1.)));
-  rim=pow(rim,3.2);
-  col+=rim*vec3(0.85,0.18,0.0)*0.85;
+  rim=pow(rim,3.0);
+  col+=rim*vec3(1.0,0.42,0.05)*0.9;
 
-  gl_FragColor=vec4(col*1.65,1.);
+  gl_FragColor=vec4(col,1.);
 }`;
 
+const SUN_RADIUS = EARTH_RADIUS * 50;
+const sunTexture = loadTex("2k_sun.jpg");
 const sunMaterial = new THREE.ShaderMaterial({
-  uniforms: { uTime: { value: 0.0 } },
+  uniforms: {
+    uTime: { value: 0.0 },
+    uTex: { value: sunTexture },
+  },
   vertexShader: SUN_VERT,
   fragmentShader: SUN_FRAG,
 });
 const sunMesh = new THREE.Mesh(
-  new THREE.SphereGeometry(EARTH_RADIUS * 50, 64, 48),
+  new THREE.SphereGeometry(SUN_RADIUS, 64, 48),
   sunMaterial
 );
 sunMesh.position.set(-48, 30, -62);
 scene.add(sunMesh);
+
+// Outer corona shell: a slightly larger additive sphere whose fragments fade
+// toward the limb, giving the Sun a soft glowing halo of plasma.
+const CORONA_FRAG = `
+precision mediump float;
+varying vec3 vNormal;
+varying vec3 vViewDir;
+void main(){
+  float rim=1.0-abs(dot(normalize(vNormal),normalize(vViewDir)));
+  float glow=pow(clamp(rim,0.,1.),2.4);
+  vec3 col=mix(vec3(1.0,0.32,0.02),vec3(1.0,0.62,0.18),glow);
+  gl_FragColor=vec4(col,glow*0.9);
+}`;
+const CORONA_VERT = `
+varying vec3 vNormal;
+varying vec3 vViewDir;
+void main(){
+  vNormal=normalize(normalMatrix*normal);
+  vec4 mv=modelViewMatrix*vec4(position,1.0);
+  vViewDir=-mv.xyz;
+  gl_Position=projectionMatrix*mv;
+}`;
+const corona = new THREE.Mesh(
+  new THREE.SphereGeometry(SUN_RADIUS * 1.18, 48, 32),
+  new THREE.ShaderMaterial({
+    vertexShader: CORONA_VERT,
+    fragmentShader: CORONA_FRAG,
+    transparent: true,
+    blending: THREE.AdditiveBlending,
+    side: THREE.BackSide,
+    depthWrite: false,
+  })
+);
+sunMesh.add(corona);
+
 const sunLight = new THREE.PointLight(0xfff2e6, 2.4, 0, 0.0);
 sunLight.position.copy(sunMesh.position);
 scene.add(sunLight);
