@@ -174,44 +174,29 @@ ballGroup.position.copy(roomCenter).add(ballOffset);
 // Orbiting satellite (ISS-like): a central truss + hub with big solar panels,
 // riding a tilted circular orbit around the Earth (and moving with it).
 // ---------------------------------------------------------------------------
-const hullMat = new THREE.MeshStandardMaterial({ color: 0xdde3ec, metalness: 0.5, roughness: 0.45 });
-const glowMat = new THREE.MeshBasicMaterial({ color: 0x6fd2ff });
+const bodyMat = new THREE.MeshStandardMaterial({ color: 0xc2cad4, metalness: 0.8, roughness: 0.35 });
+const panelMat = new THREE.MeshStandardMaterial({
+  color: 0x24407e,
+  metalness: 0.5,
+  roughness: 0.4,
+  emissive: 0x0b1c3d,
+  emissiveIntensity: 0.5,
+});
 
-// USS Enterprise-like ship: saucer + engineering hull + two warp nacelles.
-// Built facing -Z (its bow), which matches the orbit's travel direction.
+// ISS-like satellite: central truss + hub with big solar panels.
 const satellite = new THREE.Group();
-
-const saucer = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.08, 0.018, 28), hullMat);
-saucer.position.set(0, 0, -0.085); // forward saucer section
-satellite.add(saucer);
-
-const hull = new THREE.Mesh(new THREE.CapsuleGeometry(0.022, 0.085, 6, 12), hullMat);
-hull.rotation.x = Math.PI / 2; // lie along Z (the engineering hull)
-hull.position.set(0, -0.02, 0.02);
-satellite.add(hull);
-
-const neck = new THREE.Mesh(new THREE.BoxGeometry(0.022, 0.04, 0.014), hullMat);
-neck.position.set(0, -0.012, -0.045); // connect saucer to hull
-satellite.add(neck);
-
+satellite.add(new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.014, 0.014), bodyMat)); // truss
+const hub = new THREE.Mesh(new THREE.CylinderGeometry(0.016, 0.016, 0.06, 12), bodyMat);
+hub.rotation.z = Math.PI / 2;
+satellite.add(hub);
 for (const sx of [-1, 1]) {
-  const nacelle = new THREE.Mesh(new THREE.CapsuleGeometry(0.013, 0.1, 6, 12), hullMat);
-  nacelle.rotation.x = Math.PI / 2;
-  nacelle.position.set(sx * 0.065, 0.035, 0.05);
-  satellite.add(nacelle);
-
-  const glow = new THREE.Mesh(new THREE.SphereGeometry(0.014, 12, 10), glowMat);
-  glow.position.set(sx * 0.065, 0.035, 0.108); // glowing rear of each nacelle
-  satellite.add(glow);
-
-  const pylon = new THREE.Mesh(new THREE.BoxGeometry(0.01, 0.05, 0.03), hullMat);
-  pylon.position.set(sx * 0.033, 0.01, 0.05);
-  pylon.rotation.z = sx * 0.6;
-  satellite.add(pylon);
+  for (const off of [0.05, 0.088]) {
+    const panel = new THREE.Mesh(new THREE.BoxGeometry(0.034, 0.0015, 0.055), panelMat);
+    panel.position.set(sx * off, 0, 0);
+    satellite.add(panel);
+  }
 }
-
-satellite.position.set(EARTH_RADIUS * 2.2, 0, 0); // orbit radius from Earth center
-satellite.scale.setScalar(1.7); // a sizeable ship
+satellite.position.set(EARTH_RADIUS * 1.7, 0, 0); // orbit radius from Earth center
 
 const satOrbit = new THREE.Group();
 satOrbit.rotation.x = THREE.MathUtils.degToRad(35); // inclined orbit
@@ -350,6 +335,96 @@ function updateMeteor(dt) {
     meteor.visible = false;
     meteorActive = false;
     nextMeteorAt = elapsed + 15 + Math.random() * 15; // every ~15-30 s
+  }
+}
+
+// ---------------------------------------------------------------------------
+// USS Enterprise: flies straight across the scene like the original comet
+// (reappearing every several seconds), built facing -Z (its bow) with a faint
+// additive engine wake trailing each nacelle.
+// ---------------------------------------------------------------------------
+const shipHullMat = new THREE.MeshStandardMaterial({ color: 0xdde3ec, metalness: 0.5, roughness: 0.45 });
+const shipGlowMat = new THREE.MeshBasicMaterial({ color: 0x6fd2ff });
+
+const enterprise = new THREE.Group();
+const eSaucer = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.09, 0.02, 28), shipHullMat);
+eSaucer.position.set(0, 0, -0.1); // forward saucer section
+enterprise.add(eSaucer);
+const eHull = new THREE.Mesh(new THREE.CapsuleGeometry(0.025, 0.1, 6, 12), shipHullMat);
+eHull.rotation.x = Math.PI / 2;
+eHull.position.set(0, -0.022, 0.025);
+enterprise.add(eHull);
+const eNeck = new THREE.Mesh(new THREE.BoxGeometry(0.025, 0.045, 0.016), shipHullMat);
+eNeck.position.set(0, -0.014, -0.05);
+enterprise.add(eNeck);
+for (const sx of [-1, 1]) {
+  const nacelle = new THREE.Mesh(new THREE.CapsuleGeometry(0.015, 0.12, 6, 12), shipHullMat);
+  nacelle.rotation.x = Math.PI / 2;
+  nacelle.position.set(sx * 0.075, 0.04, 0.06);
+  enterprise.add(nacelle);
+
+  const glow = new THREE.Mesh(new THREE.SphereGeometry(0.016, 12, 10), shipGlowMat);
+  glow.position.set(sx * 0.075, 0.04, 0.128); // glowing rear of each nacelle
+  enterprise.add(glow);
+
+  const pylon = new THREE.Mesh(new THREE.BoxGeometry(0.012, 0.055, 0.035), shipHullMat);
+  pylon.position.set(sx * 0.038, 0.012, 0.06);
+  pylon.rotation.z = sx * 0.6;
+  enterprise.add(pylon);
+
+  const wake = new THREE.Mesh(
+    new THREE.ConeGeometry(0.02, 0.55, 12, 1, true),
+    new THREE.MeshBasicMaterial({
+      color: 0x7fd8ff,
+      transparent: true,
+      opacity: 0.28,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+    })
+  );
+  wake.rotation.x = Math.PI / 2; // cone tip points +Z (behind the ship)
+  wake.position.set(sx * 0.075, 0.04, 0.42); // trail behind the nacelle
+  enterprise.add(wake);
+}
+enterprise.scale.setScalar(1.4);
+enterprise.visible = false;
+scene.add(enterprise);
+
+const shipVel = new THREE.Vector3();
+const shipTmp = new THREE.Vector3();
+let shipActive = false;
+let nextShipAt = 3.0;
+
+function spawnEnterprise() {
+  const side = Math.random() < 0.5 ? -1 : 1;
+  enterprise.position.set(
+    roomCenter.x + side * (roomHalf.x + 1.2),
+    roomCenter.y + roomHalf.y * (0.2 + Math.random() * 0.9),
+    roomCenter.z + (Math.random() * 2 - 1) * roomHalf.z
+  );
+  shipVel
+    .set(-side * (0.85 + Math.random() * 0.3), -0.15 + Math.random() * 0.2, -0.3 + Math.random() * 0.6)
+    .normalize()
+    .multiplyScalar(1.7 + Math.random() * 1.0);
+  shipActive = true;
+  enterprise.visible = true;
+}
+
+function updateEnterprise(dt) {
+  if (!shipActive) {
+    if (elapsed >= nextShipAt) spawnEnterprise();
+    return;
+  }
+  enterprise.position.addScaledVector(shipVel, dt);
+  enterprise.lookAt(shipTmp.copy(enterprise.position).add(shipVel)); // -Z faces travel dir
+  const dx = enterprise.position.x - roomCenter.x;
+  const dy = enterprise.position.y - roomCenter.y;
+  const dz = enterprise.position.z - roomCenter.z;
+  if (Math.abs(dx) > roomHalf.x + 1.6 || Math.abs(dy) > roomHalf.y + 2.4 || Math.abs(dz) > roomHalf.z + 1.6) {
+    shipActive = false;
+    enterprise.visible = false;
+    nextShipAt = elapsed + 6 + Math.random() * 9;
   }
 }
 
@@ -695,6 +770,7 @@ renderer.setAnimationLoop((timestamp) => {
   elapsed += dt;
   satOrbit.rotation.y += dt * SAT_ORBIT_SPEED;
   updateMeteor(dt);
+  updateEnterprise(dt);
   updateLightning(dt);
 
   renderer.render(scene, camera);
