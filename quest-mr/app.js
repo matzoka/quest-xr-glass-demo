@@ -1575,13 +1575,13 @@ function orbitPos(center, r, ang, out) {
 
 // Mission timeline, in seconds. Staging is slow and deliberate; the long coast
 // to the Moon is the dominant leg.
-const T_LIFTOFF = 2; // full stack climbs off the pad
-const T_STAGE1 = 2; // S-IC separation
-const T_WAIT = 2; // pause between separations
-const T_STAGE2 = 2; // S-II separation
-const T_ASCENT = T_LIFTOFF + T_STAGE1 + T_WAIT + T_STAGE2; // 8 s
+const T_LIFTOFF = 1; // full stack climbs off the pad
+const T_STAGE1 = 1; // S-IC separation
+const T_WAIT = 1; // pause between separations
+const T_STAGE2 = 1; // S-II separation
+const T_ASCENT = T_LIFTOFF + T_STAGE1 + T_WAIT + T_STAGE2; // 4 s
 const T_COAST = 10; // trans-lunar coast
-const T_PITCH = 2; // pitches 90° over while still clear of the surface
+const T_PITCH = 2; // pitches over while still clear of the surface
 const T_ORBIT = 18; // low lunar orbit + LM descent
 const T_GAP = 2; // brief pause before relaunch
 const T_TOTAL = T_ASCENT + T_COAST + T_PITCH + T_ORBIT + T_GAP;
@@ -1604,7 +1604,10 @@ let apPrevValid = false;
 const NOSE_OFFSET = 0.054; // CSM center -> nose tip
 const ARRIVAL_CLEAR = 0.06; // keep the nose well clear of the surface at pitch-over
 const ORBIT_R = MOON_RADIUS + NOSE_OFFSET + ARRIVAL_CLEAR; // craft center; nose stops short of the surface
-const LAUNCH_TOP = EARTH_RADIUS + 0.63; // craft-center distance at end of ascent
+// The Earth-Moon gap here is only ~MOON_DISTANCE (≈1 unit), so launch distances
+// must stay well short of it or the coast would begin on top of the Moon.
+const PAD_CENTER = EARTH_RADIUS + 0.13; // full-stack center with the base on the pad
+const LAUNCH_TOP = EARTH_RADIUS + 0.26; // end-of-ascent center, still far short of the Moon
 const _qRad = new THREE.Quaternion();
 const _qTan = new THREE.Quaternion();
 const _qDir = new THREE.Vector3();
@@ -1648,8 +1651,8 @@ function updateApollo(dt) {
     // Launch + staging (17 s): climb off the pad, drop S-IC, wait 2 s, drop
     // S-II — leaving only the short CSM/LM spacecraft.
     saturnV.group.visible = true;
-    const climb = smooth(t / B_ASCENT) * 0.5;
-    saturnV.group.position.copy(earthWorld).addScaledVector(apDirEM, EARTH_RADIUS + 0.13 + climb);
+    const dist = THREE.MathUtils.lerp(PAD_CENTER, LAUNCH_TOP, smooth(t / B_ASCENT));
+    saturnV.group.position.copy(earthWorld).addScaledVector(apDirEM, dist);
     alignY(saturnV.group, apDirEM);
 
     if (t > T_LIFTOFF) {
