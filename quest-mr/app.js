@@ -282,11 +282,11 @@ const meteorGroup = new THREE.Group();
 ballGroup.add(meteorGroup);
 
 const meteor = new THREE.Mesh(
-  new THREE.SphereGeometry(0.028, 12, 10),
+  new THREE.SphereGeometry(0.006, 10, 8),
   new THREE.MeshBasicMaterial({ color: 0xfff1da })
 );
 const meteorTrail = new THREE.Mesh(
-  new THREE.ConeGeometry(0.045, 0.42, 14, 1, true),
+  new THREE.ConeGeometry(0.012, 0.28, 12, 1, true),
   new THREE.MeshBasicMaterial({
     color: 0xffb060,
     transparent: true,
@@ -297,13 +297,13 @@ const meteorTrail = new THREE.Mesh(
   })
 );
 meteorTrail.rotation.x = Math.PI / 2; // cone tip points +Z (behind, after lookAt at center)
-meteorTrail.position.z = 0.22; // trail streams away from the Earth
+meteorTrail.position.z = 0.15; // trail streams away from the Earth
 meteor.add(meteorTrail);
 meteor.visible = false;
 meteorGroup.add(meteor);
 
 const meteorFlash = new THREE.Mesh(
-  new THREE.SphereGeometry(0.05, 14, 12),
+  new THREE.SphereGeometry(0.026, 14, 12),
   new THREE.MeshBasicMaterial({
     color: 0xffd9a0,
     transparent: true,
@@ -492,6 +492,8 @@ async function enterXr(mode) {
     return;
   }
 
+  initAudio(); // unlock audio inside the button-click gesture (so it works on Quest)
+
   const button = mode === "immersive-ar" ? arButton : vrButton;
   const label = mode === "immersive-ar" ? "AR" : "VR";
 
@@ -575,7 +577,7 @@ function initAudio() {
   if (audioContext.state === "suspended") {
     audioContext.resume();
   }
-  unlockShipClip();
+  loadShipBuffer();
 }
 
 function playCollisionSound() {
@@ -677,39 +679,40 @@ function stopEnterpriseTheme() {
 // and it plays on the ship's entrance; otherwise the synth fanfare above is
 // used. The file is intentionally NOT bundled — provide your own to respect
 // copyright.
-let shipClipReady = false;
-const shipClip = new Audio("./assets/enterprise_theme.mp3");
-shipClip.preload = "auto";
-shipClip.addEventListener("canplaythrough", () => {
-  shipClipReady = true;
-});
-shipClip.addEventListener("error", () => {
-  shipClipReady = false; // no file (or unsupported) — fall back to the synth fanfare
-});
+// Entrance music via Web Audio. A decoded buffer played through the
+// (gesture-unlocked) AudioContext is far more reliable than HTMLAudio autoplay —
+// the HTMLAudio path stayed silent on Quest. Drop assets/enterprise_theme.mp3 to
+// use it; otherwise the synth fanfare plays.
+let shipBuffer = null;
+let shipBufferTried = false;
+let shipSource = null;
 
-// Browsers block autoplay until a user gesture. On the first tap/click/trigger
-// we "unlock" the clip by play+pause inside that gesture, so it can then
-// auto-play when the Enterprise enters (desktop preview is lenient, but real
-// browsers and Quest are strict).
-let shipClipUnlocked = false;
-function unlockShipClip() {
-  if (shipClipUnlocked) return;
-  const p = shipClip.play();
-  if (p && p.then) {
-    p.then(() => {
-      shipClip.pause();
-      shipClip.currentTime = 0;
-      shipClipUnlocked = true;
-    }).catch(() => {});
+async function loadShipBuffer() {
+  if (shipBuffer || shipBufferTried || !audioContext) return;
+  shipBufferTried = true;
+  try {
+    const res = await fetch("./assets/enterprise_theme.mp3");
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    shipBuffer = await audioContext.decodeAudioData(await res.arrayBuffer());
+  } catch (e) {
+    console.error("entrance music load failed:", e); // fall back to synth fanfare
   }
 }
 
 function playShipEntrance() {
-  if (shipClipReady) {
+  if (audioContext && audioContext.state === "running" && shipBuffer) {
     try {
-      shipClip.currentTime = 0;
-      const p = shipClip.play();
-      if (p && p.catch) p.catch(() => playEnterpriseTheme());
+      if (shipSource) {
+        try {
+          shipSource.stop();
+        } catch (e) {
+          /* ignore */
+        }
+      }
+      shipSource = audioContext.createBufferSource();
+      shipSource.buffer = shipBuffer;
+      shipSource.connect(audioContext.destination);
+      shipSource.start();
       return;
     } catch (e) {
       /* fall through to the synth fanfare */
@@ -720,12 +723,13 @@ function playShipEntrance() {
 
 function stopShipAudio() {
   stopEnterpriseTheme();
-  if (shipClip && !shipClip.paused) {
+  if (shipSource) {
     try {
-      shipClip.pause();
+      shipSource.stop();
     } catch (e) {
-      /* ignore */
+      /* already stopped */
     }
+    shipSource = null;
   }
 }
 
