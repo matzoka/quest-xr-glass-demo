@@ -100,6 +100,7 @@ const HAND_GAIN = 2.3; // how strongly hand speed maps to launch speed
 const TOUCH_PAD = 0.06; // extra reach so light touches register reliably
 
 let lastFrameTime = 0;
+let elapsed = 0; // seconds since load — drives comet / lightning timing
 let currentMode = "preview";
 const pressedKeys = new Set();
 let audioContext = null;
@@ -168,6 +169,150 @@ tiltGroup.add(earthMesh);
 tiltGroup.add(cloudMesh);
 ballGroup.add(tiltGroup);
 ballGroup.position.copy(roomCenter).add(ballOffset);
+
+// ---------------------------------------------------------------------------
+// Orbiting satellite (ISS-like): a central truss + hub with big solar panels,
+// riding a tilted circular orbit around the Earth (and moving with it).
+// ---------------------------------------------------------------------------
+const bodyMat = new THREE.MeshStandardMaterial({ color: 0xc2cad4, metalness: 0.8, roughness: 0.35 });
+const panelMat = new THREE.MeshStandardMaterial({
+  color: 0x24407e,
+  metalness: 0.5,
+  roughness: 0.4,
+  emissive: 0x0b1c3d,
+  emissiveIntensity: 0.5,
+});
+
+const satellite = new THREE.Group();
+satellite.add(new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.014, 0.014), bodyMat)); // truss
+const hub = new THREE.Mesh(new THREE.CylinderGeometry(0.016, 0.016, 0.06, 12), bodyMat);
+hub.rotation.z = Math.PI / 2;
+satellite.add(hub);
+for (const sx of [-1, 1]) {
+  for (const off of [0.05, 0.088]) {
+    const panel = new THREE.Mesh(new THREE.BoxGeometry(0.034, 0.0015, 0.055), panelMat);
+    panel.position.set(sx * off, 0, 0);
+    satellite.add(panel);
+  }
+}
+satellite.position.set(EARTH_RADIUS * 1.7, 0, 0); // orbit radius from Earth center
+
+const satOrbit = new THREE.Group();
+satOrbit.rotation.x = THREE.MathUtils.degToRad(35); // inclined orbit
+satOrbit.add(satellite);
+ballGroup.add(satOrbit);
+const SAT_ORBIT_SPEED = 0.5; // rad/s — a visible orbit
+
+// ---------------------------------------------------------------------------
+// Lightning: brief additive flashes at random points on the Earth's surface.
+// Children of earthMesh, so each flash sticks to the ground as the Earth spins.
+// ---------------------------------------------------------------------------
+const flashGeo = new THREE.SphereGeometry(0.038, 10, 8);
+const flashes = [];
+for (let i = 0; i < 4; i += 1) {
+  const mesh = new THREE.Mesh(
+    flashGeo,
+    new THREE.MeshBasicMaterial({
+      color: 0xcfeaff,
+      transparent: true,
+      opacity: 0,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+    })
+  );
+  mesh.visible = false;
+  earthMesh.add(mesh);
+  flashes.push({ mesh, life: 0, peak: 0.2 });
+}
+let nextFlashAt = 1.0;
+
+function randomSurfacePoint(target) {
+  const u = Math.random() * 2 - 1;
+  const a = Math.random() * Math.PI * 2;
+  const r = Math.sqrt(1 - u * u);
+  target.set(r * Math.cos(a), u, r * Math.sin(a)).multiplyScalar(EARTH_RADIUS * 1.012);
+}
+
+function updateLightning(dt) {
+  if (elapsed >= nextFlashAt) {
+    const slot = flashes.find((f) => f.life <= 0);
+    if (slot) {
+      randomSurfacePoint(slot.mesh.position);
+      slot.peak = 0.14 + Math.random() * 0.12;
+      slot.life = slot.peak;
+      slot.mesh.scale.setScalar(0.7 + Math.random() * 0.9);
+      slot.mesh.visible = true;
+    }
+    nextFlashAt = elapsed + 0.5 + Math.random() * 1.8;
+  }
+  for (const f of flashes) {
+    if (f.life > 0) {
+      f.life -= dt;
+      f.mesh.material.opacity = Math.max(0, f.life / f.peak);
+      if (f.life <= 0) f.mesh.visible = false;
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Comet: every so often a glowing head with a trailing tail streaks across the
+// scene, then disappears until the next pass.
+// ---------------------------------------------------------------------------
+const cometGroup = new THREE.Group();
+cometGroup.add(new THREE.Mesh(new THREE.SphereGeometry(0.045, 16, 12), new THREE.MeshBasicMaterial({ color: 0xdcefff })));
+const cometTail = new THREE.Mesh(
+  new THREE.ConeGeometry(0.07, 0.95, 18, 1, true),
+  new THREE.MeshBasicMaterial({
+    color: 0x8fd0ff,
+    transparent: true,
+    opacity: 0.5,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+    side: THREE.DoubleSide,
+  })
+);
+cometTail.rotation.x = Math.PI / 2; // cone tip points +Z (the group's "behind" after lookAt)
+cometTail.position.z = 0.5; // trail behind the head
+cometGroup.add(cometTail);
+cometGroup.visible = false;
+scene.add(cometGroup);
+
+const cometVel = new THREE.Vector3();
+const cometTmp = new THREE.Vector3();
+let cometActive = false;
+let nextCometAt = 3.0;
+
+function spawnComet() {
+  const side = Math.random() < 0.5 ? -1 : 1;
+  cometGroup.position.set(
+    roomCenter.x + side * (roomHalf.x + 1.2),
+    roomCenter.y + roomHalf.y * (0.2 + Math.random() * 0.9),
+    roomCenter.z + (Math.random() * 2 - 1) * roomHalf.z
+  );
+  cometVel
+    .set(-side * (0.85 + Math.random() * 0.3), -0.15 + Math.random() * 0.2, -0.3 + Math.random() * 0.6)
+    .normalize()
+    .multiplyScalar(2.6 + Math.random() * 1.6);
+  cometActive = true;
+  cometGroup.visible = true;
+}
+
+function updateComet(dt) {
+  if (!cometActive) {
+    if (elapsed >= nextCometAt) spawnComet();
+    return;
+  }
+  cometGroup.position.addScaledVector(cometVel, dt);
+  cometGroup.lookAt(cometTmp.copy(cometGroup.position).add(cometVel)); // -Z faces travel dir
+  const dx = cometGroup.position.x - roomCenter.x;
+  const dy = cometGroup.position.y - roomCenter.y;
+  const dz = cometGroup.position.z - roomCenter.z;
+  if (Math.abs(dx) > roomHalf.x + 1.6 || Math.abs(dy) > roomHalf.y + 2.4 || Math.abs(dz) > roomHalf.z + 1.6) {
+    cometActive = false;
+    cometGroup.visible = false;
+    nextCometAt = elapsed + 6 + Math.random() * 9;
+  }
+}
 
 statusEl.textContent = "準備完了。コントローラーで地球に触れると、その方向へ弾けます（PCはWASD/矢印/クリック）。";
 updateXrAvailability();
@@ -506,6 +651,12 @@ renderer.setAnimationLoop((timestamp) => {
   earthMesh.rotation.y += dt * EARTH_SPIN;
   cloudMesh.rotation.y += dt * CLOUD_SPIN;
   cloudMesh.material.opacity = 0.75 + Math.sin(timestamp * 0.00035) * 0.12;
+
+  // Ambient space life: orbiting satellite, occasional comet, surface lightning.
+  elapsed += dt;
+  satOrbit.rotation.y += dt * SAT_ORBIT_SPEED;
+  updateComet(dt);
+  updateLightning(dt);
 
   renderer.render(scene, camera);
 });
