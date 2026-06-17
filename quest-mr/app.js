@@ -521,8 +521,8 @@ new MTLLoader().setPath("./assets/NCC-1701/").load("untitled.mtl", (materials) =
 
 const shipVel = new THREE.Vector3();
 const shipTmp = new THREE.Vector3();
-const shipTailWorld = new THREE.Vector3();
 const shipWarpUp = new THREE.Vector3(0, 1, 0);
+const shipWarpBack = new THREE.Vector3(0, 0, 1);
 const shipTargetEmptyLeft = new THREE.Vector3(-82, 16, 72);
 const shipTargetEmptyRight = new THREE.Vector3(82, 16, 72);
 const ENTERPRISE_TAIL_OFFSET = EARTH_RADIUS * 1.15;
@@ -550,7 +550,7 @@ const enterpriseWarp = new THREE.Mesh(
   })
 );
 enterpriseWarp.visible = false;
-scene.add(enterpriseWarp);
+enterprise.add(enterpriseWarp);
 
 function spawnEnterprise() {
   const side = Math.random() < 0.5 ? -1 : 1;
@@ -591,14 +591,14 @@ function enterpriseClearOfRoomFrame() {
 }
 
 function syncEnterpriseWarp(warpLength, visualP) {
-  shipTmp.copy(shipVel).normalize();
-  shipTailWorld.set(0, 0, enterpriseTailOffset);
-  enterprise.updateWorldMatrix(true, false);
-  enterprise.localToWorld(shipTailWorld);
-  enterpriseWarp.position.copy(shipTailWorld).addScaledVector(shipTmp, -warpLength * 0.5);
-  enterpriseWarp.quaternion.setFromUnitVectors(shipWarpUp, shipTmp);
+  enterpriseWarp.position.set(0, 0, enterpriseTailOffset + warpLength * 0.5);
+  enterpriseWarp.quaternion.setFromUnitVectors(shipWarpUp, shipWarpBack);
   const warpWidth = 1 - visualP * 0.55;
   enterpriseWarp.scale.set(warpWidth, warpLength, warpWidth);
+}
+
+function orientEnterpriseAlongVelocity() {
+  enterprise.lookAt(shipTmp.copy(enterprise.position).add(shipVel));
 }
 
 function startEnterpriseWarp() {
@@ -626,7 +626,7 @@ function updateEnterprise(dt) {
     const warpLength = THREE.MathUtils.lerp(2.2, 28, p);
     shipTmp.copy(shipVel).normalize();
     enterprise.position.addScaledVector(shipTmp, shipVel.length() * (3 + p * 12) * dt);
-    enterprise.lookAt(shipTmp.copy(enterprise.position).sub(shipVel));
+    orientEnterpriseAlongVelocity();
     syncEnterpriseWarp(warpLength, visualP);
     enterpriseWarp.material.opacity = shipWarpAudioEnded ? 1 - visualP : Math.max(0.14, 1 - visualP);
     if (p >= 1 && shipWarpAudioEnded) {
@@ -640,9 +640,9 @@ function updateEnterprise(dt) {
   }
 
   enterprise.position.addScaledVector(shipVel, dt);
-  // Object3D.lookAt aims +Z at the target, so look "backward" to put the bow
-  // (-Z, the saucer) forward and the engine wake (+Z) trailing behind.
-  enterprise.lookAt(shipTmp.copy(enterprise.position).sub(shipVel));
+  // The imported model's saucer/bow is on local -Z after the model flip; look
+  // toward the velocity so local +Z remains the stern/trail side.
+  orientEnterpriseAlongVelocity();
   if (!shipEnteredRoom && enterpriseInsideRoomFrame()) shipEnteredRoom = true;
   if (shipEnteredRoom && !shipExitedRoom && enterpriseClearOfRoomFrame()) {
     shipExitedRoom = true;
