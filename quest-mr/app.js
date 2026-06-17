@@ -308,6 +308,7 @@ const cloudMesh = new THREE.Mesh(
     metalness: 0.0,
   })
 );
+cloudMesh.renderOrder = 2;
 
 function makeCityLightsTexture() {
   const rand = seededRandom(90210);
@@ -418,6 +419,33 @@ void main(){
   gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0);
 }`;
 
+const earthNightShadowMaterial = new THREE.ShaderMaterial({
+  uniforms: {
+    ...earthNightUniforms,
+  },
+  vertexShader: earthNightVert,
+  fragmentShader: `
+precision mediump float;
+uniform vec3 uSunDir;
+varying vec3 vNormal;
+void main(){
+  float lit=dot(normalize(vNormal),normalize(uSunDir));
+  float night=1.0-smoothstep(-0.22,0.16,lit);
+  float deepNight=1.0-smoothstep(-0.72,-0.08,lit);
+  float alpha=night*(0.50+deepNight*0.30);
+  if(alpha<0.01) discard;
+  gl_FragColor=vec4(0.0,0.012,0.035,alpha);
+}`,
+  transparent: true,
+  depthWrite: false,
+});
+const earthNightShadowMesh = new THREE.Mesh(
+  new THREE.SphereGeometry(EARTH_RADIUS * 1.026, 64, 48),
+  earthNightShadowMaterial
+);
+earthNightShadowMesh.renderOrder = 4;
+earthMesh.add(earthNightShadowMesh);
+
 const cityLightsMaterial = new THREE.ShaderMaterial({
   uniforms: {
     ...earthNightUniforms,
@@ -434,7 +462,7 @@ varying vec2 vUv;
 varying vec3 vNormal;
 void main(){
   float lit=dot(normalize(vNormal),normalize(uSunDir));
-  float night=smoothstep(0.08,-0.24,lit);
+  float night=1.0-smoothstep(-0.24,0.08,lit);
   vec3 city=texture2D(uCityTex,vUv).rgb;
   float strength=max(max(city.r,city.g),city.b);
   float alpha=strength*night*1.28;
@@ -449,6 +477,7 @@ const cityLightsMesh = new THREE.Mesh(
   new THREE.SphereGeometry(EARTH_RADIUS * 1.004, 64, 48),
   cityLightsMaterial
 );
+cityLightsMesh.renderOrder = 5;
 earthMesh.add(cityLightsMesh);
 
 const auroraMaterial = new THREE.ShaderMaterial({
@@ -466,7 +495,7 @@ varying vec3 vNormal;
 void main(){
   vec3 n=normalize(vNormal);
   float lit=dot(n,normalize(uSunDir));
-  float night=smoothstep(0.10,-0.18,lit);
+  float night=1.0-smoothstep(-0.18,0.10,lit);
   float lat=abs(n.y);
   float polarBand=smoothstep(0.66,0.78,lat)*(1.0-smoothstep(0.94,1.0,lat));
   float wave=0.5+0.5*sin(vUv.x*72.0+uTime*1.65+sin(vUv.y*38.0)*2.6);
@@ -486,6 +515,7 @@ const auroraMesh = new THREE.Mesh(
   new THREE.SphereGeometry(EARTH_RADIUS * 1.032, 64, 48),
   auroraMaterial
 );
+auroraMesh.renderOrder = 6;
 earthMesh.add(auroraMesh);
 
 const nightSunWorld = new THREE.Vector3();
