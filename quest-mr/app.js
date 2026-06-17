@@ -507,7 +507,9 @@ new MTLLoader().setPath("./assets/NCC-1701/").load("untitled.mtl", (materials) =
         const center = box.getCenter(new THREE.Vector3());
         obj.position.sub(center); // recenter on origin
         const maxDim = Math.max(size.x, size.y, size.z) || 1;
-        obj.scale.setScalar((EARTH_RADIUS * 2.7) / maxDim);
+        const modelScale = (EARTH_RADIUS * 2.7) / maxDim;
+        obj.scale.setScalar(modelScale);
+        enterpriseTailOffset = Math.max(ENTERPRISE_TAIL_OFFSET, size.z * modelScale * 0.5);
         obj.rotation.y = Math.PI; // flip so the bow leads the direction of travel
         enterprise.add(obj);
         console.log("Enterprise model loaded. raw size:", size.x.toFixed(2), size.y.toFixed(2), size.z.toFixed(2));
@@ -519,11 +521,13 @@ new MTLLoader().setPath("./assets/NCC-1701/").load("untitled.mtl", (materials) =
 
 const shipVel = new THREE.Vector3();
 const shipTmp = new THREE.Vector3();
+const shipTailWorld = new THREE.Vector3();
 const shipWarpUp = new THREE.Vector3(0, 1, 0);
 const shipTargetEmptyLeft = new THREE.Vector3(-82, 16, 72);
 const shipTargetEmptyRight = new THREE.Vector3(82, 16, 72);
 const ENTERPRISE_TAIL_OFFSET = EARTH_RADIUS * 1.15;
 const SHIP_WARP_DELAY_AFTER_ROOM_EXIT = 10;
+let enterpriseTailOffset = ENTERPRISE_TAIL_OFFSET;
 let shipActive = false;
 let shipWarping = false;
 let shipEnteredRoom = false;
@@ -586,11 +590,23 @@ function enterpriseClearOfRoomFrame() {
   return dx > roomHalf.x + 0.9 || dy > roomHalf.y + 0.9 || dz > roomHalf.z + 0.9;
 }
 
+function syncEnterpriseWarp(warpLength, visualP) {
+  shipTmp.copy(shipVel).normalize();
+  shipTailWorld.set(0, 0, enterpriseTailOffset);
+  enterprise.updateWorldMatrix(true, false);
+  enterprise.localToWorld(shipTailWorld);
+  enterpriseWarp.position.copy(shipTailWorld).addScaledVector(shipTmp, -warpLength * 0.5);
+  enterpriseWarp.quaternion.setFromUnitVectors(shipWarpUp, shipTmp);
+  const warpWidth = 1 - visualP * 0.55;
+  enterpriseWarp.scale.set(warpWidth, warpLength, warpWidth);
+}
+
 function startEnterpriseWarp() {
   shipWarping = true;
   shipWarpT = 0;
   shipWarpAudioEnded = true;
   enterprise.visible = true;
+  syncEnterpriseWarp(2.2, 0);
   enterpriseWarp.visible = true;
   enterpriseWarp.material.opacity = 1;
   stopShipAudio();
@@ -611,12 +627,7 @@ function updateEnterprise(dt) {
     shipTmp.copy(shipVel).normalize();
     enterprise.position.addScaledVector(shipTmp, shipVel.length() * (3 + p * 12) * dt);
     enterprise.lookAt(shipTmp.copy(enterprise.position).sub(shipVel));
-    shipTmp.copy(shipVel).normalize();
-    enterpriseWarp.position
-      .copy(enterprise.position)
-      .addScaledVector(shipTmp, -(ENTERPRISE_TAIL_OFFSET + warpLength * 0.5));
-    enterpriseWarp.quaternion.setFromUnitVectors(shipWarpUp, shipTmp);
-    enterpriseWarp.scale.set(1 - visualP * 0.55, warpLength, 1 - visualP * 0.55);
+    syncEnterpriseWarp(warpLength, visualP);
     enterpriseWarp.material.opacity = shipWarpAudioEnded ? 1 - visualP : Math.max(0.14, 1 - visualP);
     if (p >= 1 && shipWarpAudioEnded) {
       shipActive = false;
