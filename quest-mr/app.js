@@ -519,23 +519,59 @@ new MTLLoader().setPath("./assets/NCC-1701/").load("untitled.mtl", (materials) =
 
 const shipVel = new THREE.Vector3();
 const shipTmp = new THREE.Vector3();
+const shipWarpUp = new THREE.Vector3(0, 1, 0);
+const shipTargetSun = new THREE.Vector3(-72, 24, -58);
+const shipTargetSaturn = new THREE.Vector3(70, -9, -35);
 let shipActive = false;
+let shipWarping = false;
+let shipTravel = 0;
+let shipMaxTravel = 0;
+let shipWarpT = 0;
 let nextShipAt = 3.0;
+
+const enterpriseWarp = new THREE.Mesh(
+  new THREE.CylinderGeometry(0.018, 0.055, 1, 18, 1, true),
+  new THREE.MeshBasicMaterial({
+    color: 0xaeefff,
+    transparent: true,
+    opacity: 0,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+    side: THREE.DoubleSide,
+  })
+);
+enterpriseWarp.visible = false;
+scene.add(enterpriseWarp);
 
 function spawnEnterprise() {
   const side = Math.random() < 0.5 ? -1 : 1;
+  const target = side < 0 ? shipTargetSaturn : shipTargetSun;
   enterprise.position.set(
     roomCenter.x + side * (roomHalf.x + 1.2),
     roomCenter.y + roomHalf.y * (0.2 + Math.random() * 0.9),
     roomCenter.z + (Math.random() * 2 - 1) * roomHalf.z
   );
   shipVel
-    .set(-side * (0.85 + Math.random() * 0.3), -0.15 + Math.random() * 0.2, -0.3 + Math.random() * 0.6)
+    .copy(target)
+    .sub(enterprise.position)
     .normalize()
-    .multiplyScalar(0.85 + Math.random() * 0.5);
+    .multiplyScalar(2.1 + Math.random() * 0.35);
+  shipTravel = 0;
+  shipMaxTravel = enterprise.position.distanceTo(target) + 6;
+  shipWarping = false;
+  shipWarpT = 0;
   shipActive = true;
   enterprise.visible = true;
+  enterpriseWarp.visible = false;
   playShipEntrance();
+}
+
+function startEnterpriseWarp() {
+  shipWarping = true;
+  shipWarpT = 0;
+  enterprise.visible = false;
+  enterpriseWarp.visible = true;
+  enterpriseWarp.material.opacity = 1;
 }
 
 function updateEnterprise(dt) {
@@ -543,19 +579,33 @@ function updateEnterprise(dt) {
     if (elapsed >= nextShipAt) spawnEnterprise();
     return;
   }
+
+  if (shipWarping) {
+    shipWarpT += dt;
+    const p = THREE.MathUtils.clamp(shipWarpT / 0.55, 0, 1);
+    const warpLength = THREE.MathUtils.lerp(3.5, 24, p);
+    shipTmp.copy(shipVel).normalize();
+    enterpriseWarp.position.copy(enterprise.position).addScaledVector(shipTmp, warpLength * 0.45);
+    enterpriseWarp.quaternion.setFromUnitVectors(shipWarpUp, shipTmp);
+    enterpriseWarp.scale.set(1 - p * 0.55, warpLength, 1 - p * 0.55);
+    enterpriseWarp.material.opacity = 1 - p;
+    if (p >= 1) {
+      shipActive = false;
+      shipWarping = false;
+      enterpriseWarp.visible = false;
+      stopShipAudio(); // music ends with the warp-out instead of the room boundary
+      nextShipAt = elapsed + 150 + Math.random() * 90; // ~2.5-4 min between visits
+    }
+    return;
+  }
+
+  const step = shipVel.length() * dt;
   enterprise.position.addScaledVector(shipVel, dt);
+  shipTravel += step;
   // Object3D.lookAt aims +Z at the target, so look "backward" to put the bow
   // (-Z, the saucer) forward and the engine wake (+Z) trailing behind.
   enterprise.lookAt(shipTmp.copy(enterprise.position).sub(shipVel));
-  const dx = enterprise.position.x - roomCenter.x;
-  const dy = enterprise.position.y - roomCenter.y;
-  const dz = enterprise.position.z - roomCenter.z;
-  if (Math.abs(dx) > roomHalf.x + 1.6 || Math.abs(dy) > roomHalf.y + 2.4 || Math.abs(dz) > roomHalf.z + 1.6) {
-    shipActive = false;
-    enterprise.visible = false;
-    stopShipAudio(); // music stops the moment the ship leaves the scene
-    nextShipAt = elapsed + 150 + Math.random() * 90; // ~2.5-4 min between visits
-  }
+  if (shipTravel >= shipMaxTravel) startEnterpriseWarp();
 }
 
 statusEl.textContent = "準備完了。コントローラーで地球に触れると、その方向へ弾けます（PCはWASD/矢印/クリック）。";
