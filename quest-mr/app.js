@@ -589,6 +589,7 @@ function updateEnterprise(dt) {
   if (shipWarping) {
     shipWarpT += dt;
     const p = THREE.MathUtils.clamp(shipWarpT / shipWarpDuration, 0, 1);
+    const visualP = shipWarpAudioEnded ? p : Math.min(p, 0.96);
     const warpLength = THREE.MathUtils.lerp(2.2, 28, p);
     shipTmp.copy(shipVel).normalize();
     enterprise.position.addScaledVector(shipTmp, shipVel.length() * (3 + p * 12) * dt);
@@ -598,8 +599,8 @@ function updateEnterprise(dt) {
       .copy(enterprise.position)
       .addScaledVector(shipTmp, -(ENTERPRISE_TAIL_OFFSET + warpLength * 0.5));
     enterpriseWarp.quaternion.setFromUnitVectors(shipWarpUp, shipTmp);
-    enterpriseWarp.scale.set(1 - p * 0.55, warpLength, 1 - p * 0.55);
-    enterpriseWarp.material.opacity = 1 - p;
+    enterpriseWarp.scale.set(1 - visualP * 0.55, warpLength, 1 - visualP * 0.55);
+    enterpriseWarp.material.opacity = shipWarpAudioEnded ? 1 - visualP : Math.max(0.14, 1 - visualP);
     if (p >= 1 && shipWarpAudioEnded) {
       shipActive = false;
       shipWarping = false;
