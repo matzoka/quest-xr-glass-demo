@@ -2216,43 +2216,382 @@ sun.position.copy(sunMesh.position);
 sun.target.position.set(0, 0, 0);
 scene.add(sun.target);
 
-// Outer corona shell: a slightly larger additive sphere whose fragments fade
-// toward the limb, giving the Sun a soft glowing halo of plasma.
-const CORONA_FRAG = `
-precision mediump float;
-varying vec3 vNormal;
-varying vec3 vViewDir;
-void main(){
-  float rim=1.0-abs(dot(normalize(vNormal),normalize(vViewDir)));
-  float glow=pow(clamp(rim,0.,1.),2.4);
-  vec3 col=mix(vec3(1.0,0.32,0.02),vec3(1.0,0.62,0.18),glow);
-  gl_FragColor=vec4(col,glow*0.9);
-}`;
-const CORONA_VERT = `
-varying vec3 vNormal;
-varying vec3 vViewDir;
-void main(){
-  vNormal=normalize(normalMatrix*normal);
-  vec4 mv=modelViewMatrix*vec4(position,1.0);
-  vViewDir=-mv.xyz;
-  gl_Position=projectionMatrix*mv;
-}`;
-const corona = new THREE.Mesh(
-  new THREE.SphereGeometry(SUN_RADIUS * 1.18, 48, 32),
-  new THREE.ShaderMaterial({
-    vertexShader: CORONA_VERT,
-    fragmentShader: CORONA_FRAG,
-    transparent: true,
-    blending: THREE.AdditiveBlending,
-    side: THREE.BackSide,
-    depthWrite: false,
-  })
-);
-sunMesh.add(corona);
-
 const sunLight = new THREE.PointLight(0xfff2e6, 2.4, 0, 0.0);
 sunLight.position.copy(sunMesh.position);
 scene.add(sunLight);
+
+// Rare sunspots: dark, soft-edged patches that appear on the Sun's surface for
+// a while and then fade out. They are an overlay bound to the rotating Sun.
+const SOLAR_SPOT_FRAG = `
+precision mediump float;
+uniform vec4 uSpotA;
+uniform vec4 uSpotB;
+uniform float uTime;
+varying vec2 vUv;
+float spotMask(vec2 uv, vec4 spot, float seed){
+  float opacity=spot.w;
+  if(opacity<=0.001) return 0.0;
+  float du=abs(fract(uv.x-spot.x+0.5)-0.5);
+  float dv=uv.y-spot.y;
+  float d=sqrt(du*du*1.7+dv*dv);
+  float penumbra=1.0-smoothstep(spot.z*0.62,spot.z*1.25,d);
+  float umbra=1.0-smoothstep(spot.z*0.18,spot.z*0.56,d);
+  float mottled=0.72+0.28*sin((uv.x+seed)*84.0+uTime*0.35)*sin((uv.y-seed)*67.0-uTime*0.22);
+  return opacity*(penumbra*0.32+umbra*0.88)*mottled;
+}
+void main(){
+  float mask=max(spotMask(vUv,uSpotA,0.17),spotMask(vUv,uSpotB,0.53));
+  if(mask<0.01) discard;
+  vec3 col=mix(vec3(0.12,0.018,0.0),vec3(0.0,0.0,0.0),smoothstep(0.34,0.82,mask));
+  gl_FragColor=vec4(col,clamp(mask*1.05,0.0,0.96));
+}`;
+
+const solarSpotUniforms = {
+  uSpotA: { value: new THREE.Vector4(0, 0, 0, 0) },
+  uSpotB: { value: new THREE.Vector4(0, 0, 0, 0) },
+  uTime: { value: 0 },
+};
+const solarSpotMesh = new THREE.Mesh(
+  new THREE.SphereGeometry(SUN_RADIUS * 1.004, 64, 48),
+  new THREE.ShaderMaterial({
+    uniforms: solarSpotUniforms,
+    vertexShader: `
+varying vec2 vUv;
+void main(){
+  vUv=uv;
+  gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0);
+}`,
+    fragmentShader: SOLAR_SPOT_FRAG,
+    transparent: true,
+    blending: THREE.NormalBlending,
+    side: THREE.FrontSide,
+    depthWrite: false,
+    depthTest: true,
+  })
+);
+sunMesh.add(solarSpotMesh);
+
+let solarSpotActive = false;
+let solarSpotT = 0;
+let solarSpotDuration = 46;
+let nextSolarSpotAt = 70;
+const solarSpotViewLocal = new THREE.Vector3();
+const solarSpotAxisA = new THREE.Vector3();
+const solarSpotAxisB = new THREE.Vector3();
+const solarSpotDir = new THREE.Vector3();
+const solarSpotTmp = new THREE.Vector3();
+const solarSpotPole = new THREE.Vector3(0, 1, 0);
+
+function dirToSunUv(dir) {
+  const phi = Math.atan2(dir.z, -dir.x);
+  const u = THREE.MathUtils.euclideanModulo(phi, Math.PI * 2) / (Math.PI * 2);
+  const v = Math.acos(THREE.MathUtils.clamp(dir.y, -1, 1)) / Math.PI;
+  return { u, v };
+}
+
+function scheduleNextSolarSpot() {
+  nextSolarSpotAt = elapsed + 170 + Math.random() * 190;
+}
+
+function spawnSolarSpot() {
+  sunMesh.updateWorldMatrix(true, false);
+  camera.getWorldPosition(solarSpotViewLocal);
+  sunMesh.worldToLocal(solarSpotViewLocal);
+  solarSpotViewLocal.normalize();
+
+  solarSpotAxisA.crossVectors(solarSpotViewLocal, solarSpotPole);
+  if (solarSpotAxisA.lengthSq() < 1e-5) solarSpotAxisA.set(1, 0, 0);
+  solarSpotAxisA.normalize();
+  solarSpotAxisB.crossVectors(solarSpotViewLocal, solarSpotAxisA).normalize();
+  const angle = Math.random() * Math.PI * 2;
+  const offset = 0.12 + Math.random() * 0.34;
+  solarSpotDir
+    .copy(solarSpotViewLocal)
+    .multiplyScalar(1 - offset * 0.36)
+    .addScaledVector(solarSpotAxisA, Math.cos(angle) * offset)
+    .addScaledVector(solarSpotAxisB, Math.sin(angle) * offset * 0.72)
+    .normalize();
+
+  const uv = dirToSunUv(solarSpotDir);
+  const radius = 0.019 + Math.random() * 0.012;
+  solarSpotUniforms.uSpotA.value.set(uv.u, uv.v, radius, 0);
+
+  solarSpotTmp.copy(solarSpotDir).addScaledVector(solarSpotAxisA, (Math.random() - 0.5) * 0.11).addScaledVector(
+    solarSpotAxisB,
+    (Math.random() - 0.5) * 0.08
+  ).normalize();
+  const uvB = dirToSunUv(solarSpotTmp);
+  solarSpotUniforms.uSpotB.value.set(uvB.u, uvB.v, radius * (0.45 + Math.random() * 0.25), 0);
+
+  solarSpotDuration = 38 + Math.random() * 24;
+  solarSpotT = 0;
+  solarSpotActive = true;
+}
+
+function updateSolarSpots(dt) {
+  solarSpotUniforms.uTime.value = elapsed;
+  if (!solarSpotActive) {
+    if (elapsed >= nextSolarSpotAt) spawnSolarSpot();
+    return;
+  }
+
+  solarSpotT += dt;
+  const p = Math.min(1, solarSpotT / solarSpotDuration);
+  const fade = THREE.MathUtils.smoothstep(p, 0, 0.14) * (1 - THREE.MathUtils.smoothstep(p, 0.78, 1.0));
+  solarSpotUniforms.uSpotA.value.w = fade;
+  solarSpotUniforms.uSpotB.value.w = fade * 0.8;
+  if (p >= 1) {
+    solarSpotActive = false;
+    solarSpotUniforms.uSpotA.value.w = 0;
+    solarSpotUniforms.uSpotB.value.w = 0;
+    scheduleNextSolarSpot();
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Solar prominences: occasional additive plasma arcs rising from the visible
+// limb of the Sun. They stay tied to the Sun rather than flying toward Earth.
+// ---------------------------------------------------------------------------
+function makeSolarFootTexture() {
+  const canvas = document.createElement("canvas");
+  canvas.width = 128;
+  canvas.height = 128;
+  const ctx = canvas.getContext("2d");
+  const g = ctx.createRadialGradient(64, 64, 0, 64, 64, 64);
+  g.addColorStop(0.0, "rgba(255,255,255,1)");
+  g.addColorStop(0.18, "rgba(255,232,150,0.9)");
+  g.addColorStop(0.48, "rgba(255,92,16,0.35)");
+  g.addColorStop(1.0, "rgba(255,60,0,0)");
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, 128, 128);
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+
+const SOLAR_PROM_VERT = `
+varying vec2 vUv;
+void main() {
+  vUv=uv;
+  gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0);
+}`;
+const SOLAR_PROM_FRAG = `
+precision mediump float;
+uniform float uTime;
+uniform float uOpacity;
+uniform vec3 uHot;
+uniform vec3 uCool;
+varying vec2 vUv;
+void main(){
+  float along=clamp(vUv.x,0.,1.);
+  float taper=smoothstep(0.0,0.12,along)*(1.0-smoothstep(0.88,1.0,along));
+  float strand=0.5+0.5*sin(along*38.0+uTime*3.1+sin(vUv.y*6.283)*2.2);
+  float ripple=0.68+0.32*sin(along*11.0-uTime*1.7);
+  float alpha=uOpacity*taper*(0.48+0.52*strand)*ripple;
+  vec3 col=mix(uCool,uHot,smoothstep(0.18,0.9,strand));
+  gl_FragColor=vec4(col*(1.05+strand*0.55),alpha);
+}`;
+
+function makeSolarProminenceMaterial(opacityScale, hotColor, coolColor) {
+  return new THREE.ShaderMaterial({
+    uniforms: {
+      uTime: { value: 0 },
+      uOpacity: { value: 0 },
+      uHot: { value: new THREE.Color(hotColor) },
+      uCool: { value: new THREE.Color(coolColor) },
+    },
+    vertexShader: SOLAR_PROM_VERT,
+    fragmentShader: SOLAR_PROM_FRAG,
+    transparent: true,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+    depthTest: false,
+    side: THREE.DoubleSide,
+    toneMapped: false,
+    userData: { opacityScale },
+  });
+}
+
+const solarProminenceGroup = new THREE.Group();
+solarProminenceGroup.visible = false;
+sunMesh.add(solarProminenceGroup);
+
+const solarPromCoreMat = makeSolarProminenceMaterial(1.35, 0xfff8c8, 0xff5a0c);
+const solarPromGlowMat = makeSolarProminenceMaterial(0.45, 0xffd36a, 0xff2500);
+const solarPromStrandMat = makeSolarProminenceMaterial(0.7, 0xffc86e, 0xd91b00);
+const solarPromCore = new THREE.Mesh(new THREE.BufferGeometry(), solarPromCoreMat);
+const solarPromGlow = new THREE.Mesh(new THREE.BufferGeometry(), solarPromGlowMat);
+const solarPromStrandA = new THREE.Mesh(new THREE.BufferGeometry(), solarPromStrandMat);
+const solarPromStrandB = new THREE.Mesh(new THREE.BufferGeometry(), solarPromStrandMat.clone());
+solarPromStrandB.material.userData.opacityScale = 0.58;
+solarProminenceGroup.add(solarPromGlow, solarPromStrandA, solarPromStrandB, solarPromCore);
+
+const solarFootTex = makeSolarFootTexture();
+const solarFootA = new THREE.Sprite(
+  new THREE.SpriteMaterial({
+    map: solarFootTex,
+    color: 0xffb15a,
+    transparent: true,
+    opacity: 0,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+    toneMapped: false,
+  })
+);
+const solarFootB = new THREE.Sprite(solarFootA.material.clone());
+const solarApexGlow = new THREE.Sprite(solarFootA.material.clone());
+solarProminenceGroup.add(solarFootA, solarFootB, solarApexGlow);
+
+let solarProminenceActive = false;
+let solarProminenceT = 0;
+let solarProminenceDuration = 6;
+let nextSolarProminenceAt = 6;
+const solarPromPoints = [];
+const solarCameraLocal = new THREE.Vector3();
+const solarRoomLocal = new THREE.Vector3();
+const solarViewDir = new THREE.Vector3();
+const solarLimbDir = new THREE.Vector3();
+const solarTangent = new THREE.Vector3();
+const solarSide = new THREE.Vector3();
+const solarDir = new THREE.Vector3();
+const solarFootScale = new THREE.Vector3();
+
+function scheduleNextSolarProminence() {
+  nextSolarProminenceAt = elapsed + 18 + Math.random() * 22;
+}
+
+function rotateAroundAxis(vec, axis, angle) {
+  return vec.applyAxisAngle(axis, angle).normalize();
+}
+
+function spawnSolarProminence() {
+  sunMesh.updateWorldMatrix(true, false);
+  camera.getWorldPosition(solarCameraLocal);
+  sunMesh.worldToLocal(solarCameraLocal);
+  solarViewDir.copy(solarCameraLocal).normalize();
+
+  solarRoomLocal.copy(roomCenter);
+  sunMesh.worldToLocal(solarRoomLocal);
+  solarRoomLocal.normalize();
+  solarLimbDir.copy(solarRoomLocal).addScaledVector(solarViewDir, -solarRoomLocal.dot(solarViewDir));
+  if (solarLimbDir.lengthSq() < 1e-5) solarLimbDir.crossVectors(solarViewDir, _yUp);
+  if (solarLimbDir.lengthSq() < 1e-5) solarLimbDir.set(1, 0, 0);
+  solarLimbDir.normalize();
+  rotateAroundAxis(solarLimbDir, solarViewDir, (Math.random() - 0.5) * 0.45);
+  solarDir.copy(solarLimbDir).addScaledVector(solarViewDir, 0.04).normalize();
+
+  solarTangent.crossVectors(solarViewDir, solarDir);
+  if (solarTangent.lengthSq() < 1e-5) solarTangent.crossVectors(_yUp, solarDir);
+  solarTangent.normalize();
+  solarSide.crossVectors(solarDir, solarTangent).normalize();
+
+  const halfAngle = THREE.MathUtils.degToRad(11 + Math.random() * 6.0);
+  const lift = 0.23 + Math.random() * 0.15;
+  const twist = (Math.random() - 0.5) * SUN_RADIUS * 0.09;
+  solarPromPoints.length = 0;
+  for (let i = 0; i <= 24; i += 1) {
+    const p = i / 24;
+    const a = THREE.MathUtils.lerp(-halfAngle, halfAngle, p);
+    const rise = Math.sin(p * Math.PI);
+    solarDir
+      .copy(solarLimbDir)
+      .multiplyScalar(Math.cos(a))
+      .addScaledVector(solarTangent, Math.sin(a))
+      .addScaledVector(solarViewDir, 0.04)
+      .normalize();
+    const wave = Math.sin(p * Math.PI * 2.0) * twist * rise;
+    solarPromPoints.push(
+      solarDir
+        .clone()
+        .multiplyScalar(SUN_RADIUS * (1.01 + lift * rise))
+        .addScaledVector(solarSide, wave)
+    );
+  }
+
+  const strandPointsA = solarPromPoints.map((point, index) => {
+    const p = index / (solarPromPoints.length - 1);
+    const rise = Math.sin(p * Math.PI);
+    return point
+      .clone()
+      .addScaledVector(solarSide, SUN_RADIUS * (0.026 + rise * 0.055))
+      .addScaledVector(solarTangent, SUN_RADIUS * Math.sin(p * Math.PI * 2.0) * 0.018);
+  });
+  const strandPointsB = solarPromPoints.map((point, index) => {
+    const p = index / (solarPromPoints.length - 1);
+    const rise = Math.sin(p * Math.PI);
+    return point
+      .clone()
+      .addScaledVector(solarSide, -SUN_RADIUS * (0.018 + rise * 0.04))
+      .addScaledVector(solarTangent, SUN_RADIUS * Math.sin(p * Math.PI * 1.5 + 0.7) * 0.014);
+  });
+
+  const curve = new THREE.CatmullRomCurve3(solarPromPoints);
+  const strandCurveA = new THREE.CatmullRomCurve3(strandPointsA);
+  const strandCurveB = new THREE.CatmullRomCurve3(strandPointsB);
+  const coreGeo = new THREE.TubeGeometry(curve, 96, SUN_RADIUS * 0.005, 10, false);
+  const glowGeo = new THREE.TubeGeometry(curve, 96, SUN_RADIUS * 0.018, 12, false);
+  const strandGeoA = new THREE.TubeGeometry(strandCurveA, 80, SUN_RADIUS * 0.004, 8, false);
+  const strandGeoB = new THREE.TubeGeometry(strandCurveB, 80, SUN_RADIUS * 0.0032, 8, false);
+  solarPromCore.geometry.dispose();
+  solarPromGlow.geometry.dispose();
+  solarPromStrandA.geometry.dispose();
+  solarPromStrandB.geometry.dispose();
+  solarPromCore.geometry = coreGeo;
+  solarPromGlow.geometry = glowGeo;
+  solarPromStrandA.geometry = strandGeoA;
+  solarPromStrandB.geometry = strandGeoB;
+
+  solarFootScale.setScalar(SUN_RADIUS * 0.22);
+  solarFootA.position.copy(solarPromPoints[0]).normalize().multiplyScalar(SUN_RADIUS * 1.014);
+  solarFootB.position.copy(solarPromPoints[solarPromPoints.length - 1]).normalize().multiplyScalar(SUN_RADIUS * 1.014);
+  solarApexGlow.position.copy(solarPromPoints[Math.floor(solarPromPoints.length / 2)]);
+  solarFootA.scale.copy(solarFootScale);
+  solarFootB.scale.copy(solarFootScale);
+  solarApexGlow.scale.setScalar(SUN_RADIUS * 0.34);
+
+  solarProminenceDuration = 6.4 + Math.random() * 2.4;
+  solarProminenceT = 0;
+  solarProminenceGroup.visible = true;
+  solarProminenceActive = true;
+}
+
+function updateSolarProminence(dt) {
+  if (!solarProminenceActive) {
+    if (elapsed >= nextSolarProminenceAt) spawnSolarProminence();
+    return;
+  }
+
+  solarProminenceT += dt;
+  const p = Math.min(1, solarProminenceT / solarProminenceDuration);
+  const fade = THREE.MathUtils.smoothstep(p, 0, 0.18) * (1 - THREE.MathUtils.smoothstep(p, 0.72, 1.0));
+  const pulse = 0.82 + Math.sin(elapsed * 5.1) * 0.08 + Math.sin(elapsed * 9.3) * 0.04;
+  const opacity = Math.max(0, fade * pulse);
+
+  for (const mat of [solarPromCoreMat, solarPromGlowMat, solarPromStrandMat, solarPromStrandB.material]) {
+    mat.uniforms.uTime.value = elapsed;
+    mat.uniforms.uOpacity.value = opacity * mat.userData.opacityScale;
+  }
+  solarFootA.material.opacity = opacity * 0.62;
+  solarFootB.material.opacity = opacity * 0.48;
+  solarApexGlow.material.opacity = opacity * 0.22;
+  const breathing = 1 + Math.sin(elapsed * 3.6) * 0.05;
+  solarFootA.scale.copy(solarFootScale).multiplyScalar(breathing);
+  solarFootB.scale.copy(solarFootScale).multiplyScalar(0.92 + (breathing - 1) * 0.8);
+  solarApexGlow.scale.setScalar(SUN_RADIUS * 0.31 * (0.96 + breathing * 0.04));
+
+  if (p >= 1) {
+    solarProminenceActive = false;
+    solarProminenceGroup.visible = false;
+    solarPromCoreMat.uniforms.uOpacity.value = 0;
+    solarPromGlowMat.uniforms.uOpacity.value = 0;
+    solarPromStrandMat.uniforms.uOpacity.value = 0;
+    solarPromStrandB.material.uniforms.uOpacity.value = 0;
+    solarFootA.material.opacity = 0;
+    solarFootB.material.opacity = 0;
+    solarApexGlow.material.opacity = 0;
+    scheduleNextSolarProminence();
+  }
+}
 
 const SATURN_R = EARTH_RADIUS * 15;
 const saturnGroup = new THREE.Group();
@@ -2837,6 +3176,8 @@ renderer.setAnimationLoop((timestamp) => {
   updateSatelliteLighting();
   updateMeteor(dt);
   updateComet(dt);
+  updateSolarProminence(dt);
+  updateSolarSpots(dt);
   updateEnterprise(dt);
   updateLightning(dt);
 
