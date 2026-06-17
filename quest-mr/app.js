@@ -1632,6 +1632,7 @@ let klingonPending = false;
 let klingonActive = false;
 let klingonT = 0;
 let klingonPassDuration = KLINGON_PASS_DURATION_FALLBACK;
+let klingonDepartureSoundPlayed = false;
 let nextKlingonAt = KLINGON_FORCE ? 2.5 : 120 + Math.random() * 120;
 const klingonStart = new THREE.Vector3();
 const klingonEnd = new THREE.Vector3();
@@ -1777,11 +1778,13 @@ function spawnKlingonPass() {
   klingon.position.copy(klingonStart);
   orientKlingonAlongVelocity();
   klingonT = 0;
+  klingonDepartureSoundPlayed = false;
   klingonPending = false;
   klingonActive = true;
   klingon.visible = true;
   klingonFlash.visible = false;
   setKlingonOpacity(0);
+  playKlingonArrivalSound();
 }
 
 function orientKlingonAlongVelocity() {
@@ -1804,6 +1807,14 @@ function updateKlingon(dt) {
       if (audioContext && audioContext.state === "running" && klingonBufferPromise) {
         return;
       }
+      if (audioContext && audioContext.state === "running" && !isOneShotAudioReady(klingonArrivalSound)) {
+        loadOneShotAudio(klingonArrivalSound);
+        return;
+      }
+      if (audioContext && audioContext.state === "running" && !isOneShotAudioReady(klingonDepartureSound)) {
+        loadOneShotAudio(klingonDepartureSound);
+        return;
+      }
       spawnKlingonPass();
     }
     return;
@@ -1821,6 +1832,10 @@ function updateKlingon(dt) {
   klingonCloakField.visible = false;
 
   const vanish = THREE.MathUtils.smoothstep(klingonT, klingonPassDuration - 2.8, klingonPassDuration);
+  if (!klingonDepartureSoundPlayed && klingonT >= klingonPassDuration - getKlingonDepartureSoundLead()) {
+    klingonDepartureSoundPlayed = true;
+    playKlingonDepartureSound();
+  }
   const flashAlpha = vanish * (1 - THREE.MathUtils.smoothstep(klingonT, klingonPassDuration - 0.5, klingonPassDuration));
   klingonFlash.visible = flashAlpha > 0.02;
   klingonFlash.position.copy(klingon.position);
@@ -2025,6 +2040,8 @@ function initAudio() {
   loadWarpBuffer();
   loadRareOrbitBuffer();
   loadKlingonBuffer();
+  loadOneShotAudio(klingonArrivalSound);
+  loadOneShotAudio(klingonDepartureSound);
 }
 
 function playCollisionSound() {
@@ -2145,6 +2162,22 @@ let klingonBufferTried = false;
 let klingonBufferPromise = null;
 let klingonSource = null;
 let klingonAudioWanted = false;
+const klingonArrivalSound = {
+  url: "./assets/star-trek-tng-transporter.mp3",
+  label: "Klingon arrival sound",
+  buffer: null,
+  promise: null,
+  source: null,
+  failed: false,
+};
+const klingonDepartureSound = {
+  url: "./assets/star-trek-transportation.mp3",
+  label: "Klingon departure sound",
+  buffer: null,
+  promise: null,
+  source: null,
+  failed: false,
+};
 
 async function loadShipBuffer() {
   if (shipBuffer || shipBufferTried || !audioContext) return;
@@ -2214,6 +2247,78 @@ function loadKlingonBuffer() {
 
 function getKlingonPassDuration() {
   return Math.max(8, klingonBuffer?.duration || KLINGON_PASS_DURATION_FALLBACK);
+}
+
+function loadOneShotAudio(sound) {
+  if (sound.buffer || sound.failed || !audioContext) return Promise.resolve(sound.buffer);
+  if (sound.promise) return sound.promise;
+  sound.promise = fetch(sound.url)
+    .then((res) => {
+      if (!res.ok) throw new Error("HTTP " + res.status);
+      return res.arrayBuffer();
+    })
+    .then((arrayBuffer) => audioContext.decodeAudioData(arrayBuffer))
+    .then((buffer) => {
+      sound.buffer = buffer;
+      return buffer;
+    })
+    .catch((e) => {
+      sound.failed = true;
+      console.error(sound.label + " load failed:", e);
+      return null;
+    })
+    .finally(() => {
+      sound.promise = null;
+    });
+  return sound.promise;
+}
+
+function isOneShotAudioReady(sound) {
+  return !!sound.buffer || !!sound.failed;
+}
+
+function playOneShotAudio(sound, volume = 0.72) {
+  if (audioContext) {
+    if (audioContext.state === "suspended") audioContext.resume();
+    if (!sound.buffer && !sound.promise) loadOneShotAudio(sound);
+  }
+  if (!audioContext || audioContext.state !== "running" || !sound.buffer) return 0;
+  try {
+    if (sound.source) {
+      try {
+        sound.source.stop();
+      } catch (e) {
+        /* already stopped */
+      }
+    }
+    const gain = audioContext.createGain();
+    gain.gain.value = volume;
+    gain.connect(audioContext.destination);
+    sound.source = audioContext.createBufferSource();
+    sound.source.buffer = sound.buffer;
+    sound.source.connect(gain);
+    sound.source.onended = () => {
+      sound.source = null;
+      gain.disconnect();
+    };
+    sound.source.start();
+    return sound.buffer.duration || 0;
+  } catch (e) {
+    sound.source = null;
+    return 0;
+  }
+}
+
+function playKlingonArrivalSound() {
+  return playOneShotAudio(klingonArrivalSound, 0.74);
+}
+
+function playKlingonDepartureSound() {
+  return playOneShotAudio(klingonDepartureSound, 0.76);
+}
+
+function getKlingonDepartureSoundLead() {
+  return THREE.MathUtils.clamp(klingonDepartureSound.buffer?.duration || 2.8, 1.2, 5.5);
 }
 
 function playShipEntrance() {

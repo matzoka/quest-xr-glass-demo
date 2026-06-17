@@ -60,6 +60,8 @@ Quest の AR / VR セッションは **HTTPS（セキュアコンテキスト）
 - `assets/earth_clouds_2048.png` … 雲テクスチャ（同上、透過マップとして使用）
 - `assets/moon_1024.jpg` … 月テクスチャ（同上）
 - `assets/klingon_theme.mp3` … クリンゴン Negh'Var 級の通過時に再生するBGM
+- `assets/star-trek-tng-transporter.mp3` … クリンゴン Negh'Var 級の出現時に再生する効果音
+- `assets/star-trek-transportation.mp3` … クリンゴン Negh'Var 級の消滅時に再生する効果音
 - `assets/NeghVarclass/` … クリンゴン Negh'Var 級の3Dモデル一式
 - `_headers` … 静的ホスト用のヘッダー設定
 
@@ -99,3 +101,7 @@ Quest の AR / VR セッションは **HTTPS（セキュアコンテキスト）
 音声を読み込めた場合はMP3の実際の長さに合わせて通過演出の時間を決め、読み込めない場合でも
 約29秒のフォールバック尺で表示します。Enterpriseの通常/レア演出とは同時に発生しないよう、
 排他制御しています。
+
+また、出現時には **`assets/star-trek-tng-transporter.mp3`**、消滅時には
+**`assets/star-trek-transportation.mp3`** を一回再生します。消滅音は船体のフェードアウト終盤に
+重なるよう、音声の長さに応じて少し早めに鳴らします。
