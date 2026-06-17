@@ -525,12 +525,16 @@ new MTLLoader().setPath("./assets/NCC-1701/").load("untitled.mtl", (materials) =
 
 const shipVel = new THREE.Vector3();
 const shipTmp = new THREE.Vector3();
+const shipWarpStartPos = new THREE.Vector3();
+const shipWarpDir = new THREE.Vector3();
+const shipWarpSparkPos = new THREE.Vector3();
 const shipWarpUp = new THREE.Vector3(0, 1, 0);
 const shipWarpBack = new THREE.Vector3(0, 0, 1);
 const shipTargetEmptyLeft = new THREE.Vector3(-82, 16, 72);
 const shipTargetEmptyRight = new THREE.Vector3(82, 16, 72);
 const ENTERPRISE_TAIL_OFFSET = EARTH_RADIUS * 1.15;
 const ENTERPRISE_TRAIL_OVERLAP = EARTH_RADIUS * 0.3;
+const ENTERPRISE_SPARK_APPEAR_P = 0.88;
 const SHIP_WARP_DELAY_AFTER_ROOM_EXIT = 10;
 let enterpriseTailOffset = ENTERPRISE_TAIL_OFFSET;
 let shipActive = false;
@@ -557,6 +561,88 @@ const enterpriseWarp = new THREE.Mesh(
 enterpriseWarp.visible = false;
 enterprise.add(enterpriseWarp);
 
+function makeEnterpriseSparkTexture() {
+  const canvas = document.createElement("canvas");
+  canvas.width = 128;
+  canvas.height = 128;
+  const ctx = canvas.getContext("2d");
+  const g = ctx.createRadialGradient(64, 64, 0, 64, 64, 64);
+  g.addColorStop(0, "rgba(255,255,255,1)");
+  g.addColorStop(0.16, "rgba(230,245,255,0.96)");
+  g.addColorStop(0.34, "rgba(120,170,255,0.55)");
+  g.addColorStop(1, "rgba(40,90,255,0)");
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, 128, 128);
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+
+function makeEnterpriseSparkRays() {
+  const positions = [];
+  const colors = [];
+  const palette = [
+    new THREE.Color(0x8fe8ff),
+    new THREE.Color(0xffffff),
+    new THREE.Color(0x7cff7c),
+    new THREE.Color(0xfff06a),
+    new THREE.Color(0xff5959),
+    new THREE.Color(0x9c76ff),
+  ];
+  for (let i = 0; i < 42; i += 1) {
+    const a = i * 2.39996323;
+    const inner = 0.035 + (i % 4) * 0.008;
+    const outer = 0.38 + ((i * 17) % 23) * 0.018;
+    const c = Math.cos(a);
+    const s = Math.sin(a);
+    positions.push(c * inner, s * inner, 0, c * outer, s * outer, 0);
+    colors.push(1, 1, 1);
+    const col = palette[i % palette.length];
+    colors.push(col.r, col.g, col.b);
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+  geo.setAttribute("color", new THREE.Float32BufferAttribute(colors, 3));
+  return geo;
+}
+
+const enterpriseSpark = new THREE.Group();
+const enterpriseSparkHalo = new THREE.Sprite(
+  new THREE.SpriteMaterial({
+    map: makeEnterpriseSparkTexture(),
+    color: 0x7ab9ff,
+    transparent: true,
+    opacity: 0,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+  })
+);
+const enterpriseSparkCore = new THREE.Sprite(
+  new THREE.SpriteMaterial({
+    map: makeEnterpriseSparkTexture(),
+    color: 0xffffff,
+    transparent: true,
+    opacity: 0,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+  })
+);
+const enterpriseSparkRays = new THREE.LineSegments(
+  makeEnterpriseSparkRays(),
+  new THREE.LineBasicMaterial({
+    vertexColors: true,
+    transparent: true,
+    opacity: 0,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+  })
+);
+enterpriseSpark.add(enterpriseSparkHalo);
+enterpriseSpark.add(enterpriseSparkCore);
+enterpriseSpark.add(enterpriseSparkRays);
+enterpriseSpark.visible = false;
+scene.add(enterpriseSpark);
+
 function spawnEnterprise() {
   const side = Math.random() < 0.5 ? -1 : 1;
   const target = side < 0 ? shipTargetEmptyRight : shipTargetEmptyLeft;
@@ -578,6 +664,7 @@ function spawnEnterprise() {
   shipActive = true;
   enterprise.visible = true;
   enterpriseWarp.visible = false;
+  enterpriseSpark.visible = false;
   playShipEntrance();
 }
 
@@ -603,6 +690,25 @@ function syncEnterpriseWarp(warpLength, visualP) {
   enterpriseWarp.scale.set(warpWidth, warpLength, warpWidth);
 }
 
+function syncEnterpriseSpark(p, visualP) {
+  const pulse = 0.82 + Math.sin(shipWarpT * 42) * 0.18;
+  const appear = THREE.MathUtils.smoothstep(p, ENTERPRISE_SPARK_APPEAR_P, 0.97);
+  const endBoost = THREE.MathUtils.smoothstep(p, 0.92, 1.0);
+  const fade = shipWarpAudioEnded ? 1 - THREE.MathUtils.smoothstep(visualP, 0.985, 1.0) : 1;
+  const alpha = appear * fade;
+  enterpriseSpark.visible = alpha > 0.01;
+  enterpriseSpark.position.copy(shipWarpSparkPos);
+  enterpriseSpark.scale.setScalar((0.95 + endBoost * 0.75) * appear);
+  enterpriseSpark.lookAt(camera.position);
+  enterpriseSparkHalo.material.opacity = 0.64 * alpha;
+  enterpriseSparkHalo.scale.setScalar(0.9 + endBoost * 0.42);
+  enterpriseSparkCore.material.opacity = 0.98 * pulse * alpha;
+  enterpriseSparkCore.scale.setScalar(0.34 + endBoost * 0.24);
+  enterpriseSparkRays.material.opacity = 0.82 * pulse * alpha;
+  enterpriseSparkRays.rotation.z += 0.08 + p * 0.22;
+  enterpriseSparkRays.scale.setScalar(1.05 + endBoost * 0.9);
+}
+
 function orientEnterpriseAlongVelocity() {
   enterprise.lookAt(shipTmp.copy(enterprise.position).sub(shipVel));
 }
@@ -612,11 +718,19 @@ function startEnterpriseWarp() {
   shipWarpT = 0;
   shipWarpAudioEnded = true;
   enterprise.visible = true;
+  stopShipAudio();
+  shipWarpDuration = playShipWarpSound();
+  shipWarpStartPos.copy(enterprise.position);
+  shipWarpDir.copy(shipVel).normalize();
+  const predictedWarpTravel = shipVel.length() * shipWarpDuration * 9;
+  shipWarpSparkPos
+    .copy(shipWarpStartPos)
+    .addScaledVector(shipWarpDir, predictedWarpTravel - enterpriseTailOffset);
+  enterpriseSpark.visible = false;
+  syncEnterpriseSpark(0, 0);
   syncEnterpriseWarp(2.2, 0);
   enterpriseWarp.visible = true;
   enterpriseWarp.material.opacity = 1;
-  stopShipAudio();
-  shipWarpDuration = playShipWarpSound();
 }
 
 function updateEnterprise(dt) {
@@ -630,16 +744,20 @@ function updateEnterprise(dt) {
     const p = THREE.MathUtils.clamp(shipWarpT / shipWarpDuration, 0, 1);
     const visualP = shipWarpAudioEnded ? p : Math.min(p, 0.96);
     const warpLength = THREE.MathUtils.lerp(2.2, 28, p);
-    shipTmp.copy(shipVel).normalize();
-    enterprise.position.addScaledVector(shipTmp, shipVel.length() * (3 + p * 12) * dt);
+    shipTmp.copy(shipWarpDir);
+    enterprise.position
+      .copy(shipWarpStartPos)
+      .addScaledVector(shipTmp, shipVel.length() * shipWarpDuration * (3 * p + 6 * p * p));
     orientEnterpriseAlongVelocity();
     syncEnterpriseWarp(warpLength, visualP);
+    syncEnterpriseSpark(p, visualP);
     enterpriseWarp.material.opacity = shipWarpAudioEnded ? 1 - visualP : Math.max(0.14, 1 - visualP);
     if (p >= 1 && shipWarpAudioEnded) {
       shipActive = false;
       shipWarping = false;
       enterprise.visible = false;
       enterpriseWarp.visible = false;
+      enterpriseSpark.visible = false;
       nextShipAt = elapsed + 150 + Math.random() * 90; // ~2.5-4 min between visits
     }
     return;
