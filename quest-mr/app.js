@@ -172,12 +172,12 @@ tiltGroup.add(earthMesh);
 tiltGroup.add(cloudMesh);
 ballGroup.add(tiltGroup);
 
-// Moon — true SIZE ratio (~0.273x Earth, about a quarter), but the distance is
-// pulled in from the real ~60 Earth-radii so the Moon sits just beside the
-// Earth and both are framed together (like the familiar composite photos).
+// Moon — true SIZE ratio (~0.273x Earth, about a quarter), with a compressed
+// display distance. The real Moon is ~60 Earth-radii away; this demo uses 6 so
+// the Apollo sequence is readable in a small room while still feeling separated.
 const MOON_RADIUS = EARTH_RADIUS * 0.273;
-const MOON_DISTANCE = EARTH_RADIUS * 2.8;
-const MOON_ORBIT_SPEED = 0.15; // rad/s — orbits the Earth (~42 s per revolution)
+const MOON_DISTANCE = EARTH_RADIUS * 6.0;
+const MOON_ORBIT_SPEED = 0.015; // rad/s — slow enough that Apollo is not chasing a racing Moon
 const moon = new THREE.Mesh(
   new THREE.SphereGeometry(MOON_RADIUS, 48, 32),
   new THREE.MeshStandardMaterial({ map: loadTex("moon_1024.jpg"), roughness: 1.0, metalness: 0.0 })
@@ -1329,10 +1329,10 @@ addPlanet("2k_venus_atmosphere.jpg", EARTH_RADIUS * 1.0, new THREE.Vector3(-5.6,
 addPlanet("2k_jupiter.jpg", EARTH_RADIUS * 20, new THREE.Vector3(-42, 6, 26), 3.1, 0.22);
 
 // ---------------------------------------------------------------------------
-// Apollo 11 mission. A Saturn V launches from the Earth, coasts to the Moon,
-// the Command/Service Module ("母艦") settles into lunar orbit, and the Lunar
-// Module separates and descends to the surface — looping every ~48 s. A lunar
-// lander and a US flag are planted permanently on the Moon's surface.
+// Apollo 11-inspired mission. The scale and timing are still compressed for the
+// demo, but the sequence follows a more natural flow: launch/staging, a curved
+// translunar coast, lunar orbit insertion, LM separation, powered descent, and
+// touchdown at the same site where the surface lander/flag appear.
 // ---------------------------------------------------------------------------
 const _yUp = new THREE.Vector3(0, 1, 0);
 const _alignTmp = new THREE.Vector3();
@@ -1354,15 +1354,15 @@ const matDark = new THREE.MeshStandardMaterial({ color: 0x2a2d33, roughness: 0.6
 const matGold = new THREE.MeshStandardMaterial({ color: 0xc8a24a, roughness: 0.4, metalness: 0.6, emissive: 0x3a2c08, emissiveIntensity: 0.3 });
 const matSilver = new THREE.MeshStandardMaterial({ color: 0xc7ccd2, roughness: 0.3, metalness: 0.8 });
 
-// Saturn V: a 3-stage stack (+Y up). The surviving spacecraft (short S-IVB +
-// CSM + escape tower) sits near the local origin; the first/second stages hang
-// below and are dropped during ascent. Returns the parts so the mission can
-// stage them, just like the real Apollo 11 launch.
+// Saturn V: a 3-stage stack (+Y up). This is the launch vehicle only; once the
+// translunar coast begins, a separate docked CSM+LM model represents the crewed
+// spacecraft after launch escape tower jettison and spacecraft extraction.
 function buildSaturnV() {
   const group = new THREE.Group();
   const R = 0.014;
 
-  // Surviving spacecraft (this is all that coasts to the Moon).
+  // Upper stack visible during launch; the separate CSM+LM model takes over
+  // after ascent so the escape tower does not ride all the way to the Moon.
   const top = new THREE.Group();
   const sivb = new THREE.Mesh(new THREE.CylinderGeometry(R * 0.85, R, 0.02, 18), matWhite);
   sivb.position.y = -0.008;
@@ -1527,9 +1527,17 @@ function buildFlag() {
 }
 
 // Flying mission craft live in world space and are positioned each frame.
+const SPACECRAFT_SCALE = 0.68;
+const LM_SCALE = SPACECRAFT_SCALE * 0.72;
 const saturnV = buildSaturnV();
 const csm = buildCSM();
+csm.scale.setScalar(SPACECRAFT_SCALE);
+const lmDocked = buildLM(matSilver);
+lmDocked.scale.setScalar(0.72);
+lmDocked.position.y = -0.078; // docked below the service module until LM separation
+csm.add(lmDocked);
 const lmFlying = buildLM(matSilver);
+lmFlying.scale.setScalar(LM_SCALE);
 saturnV.group.visible = false;
 csm.visible = false;
 lmFlying.visible = false;
@@ -1537,22 +1545,21 @@ scene.add(saturnV.group);
 scene.add(csm);
 scene.add(lmFlying);
 
-// Permanent surface objects ride the Moon (children of `moon`), so they stay
-// stuck to the surface as the Moon spins and orbits. Scaled up a touch so they
-// read clearly from across the room.
-const SURF_SCALE = 1.4;
-const landerUp = new THREE.Vector3(0.35, 0.82, 0.45).normalize();
-const flagUp = new THREE.Vector3(0.6, 0.74, 0.3).normalize();
+// Surface site appears only after touchdown. It is kept in world space and
+// repositioned relative to the current Moon center each frame so the landing
+// point stays continuous with the descending LM.
+const SURF_SCALE = LM_SCALE;
+const surfaceSite = new THREE.Group();
+surfaceSite.visible = false;
 const surfaceLander = buildLM(matSilver);
 surfaceLander.scale.setScalar(SURF_SCALE);
-surfaceLander.position.copy(landerUp).multiplyScalar(MOON_RADIUS * 0.99);
-alignY(surfaceLander, landerUp);
-moon.add(surfaceLander);
+surfaceLander.position.y = 0.0205 * SURF_SCALE + 0.001;
+surfaceSite.add(surfaceLander);
 const flag = buildFlag();
-flag.scale.setScalar(SURF_SCALE);
-flag.position.copy(flagUp).multiplyScalar(MOON_RADIUS * 0.99);
-alignY(flag, flagUp);
-moon.add(flag);
+flag.scale.setScalar(SPACECRAFT_SCALE);
+flag.position.set(0.045, 0.001, 0.014);
+surfaceSite.add(flag);
+scene.add(surfaceSite);
 
 // Lunar orbit, defined fresh each frame so angle 0 always sits on the Moon's
 // Earth-facing (near) side. The incoming craft therefore arrives at the near
@@ -1573,41 +1580,52 @@ function orbitPos(center, r, ang, out) {
     .addScaledVector(inPlane2, Math.sin(ang) * r);
 }
 
-// Mission timeline, in seconds. Staging is slow and deliberate; the long coast
-// to the Moon is the dominant leg.
-const T_LIFTOFF = 1; // full stack climbs off the pad
-const T_STAGE1 = 1; // S-IC separation
-const T_WAIT = 1; // pause between separations
-const T_STAGE2 = 1; // S-II separation
-const T_ASCENT = T_LIFTOFF + T_STAGE1 + T_WAIT + T_STAGE2; // 4 s
-const T_COAST = 10; // trans-lunar coast
-const T_PITCH = 2; // pitches over while still clear of the surface
-const T_ORBIT = 18; // low lunar orbit + LM descent
-const T_GAP = 2; // brief pause before relaunch
+// Mission timeline, in seconds. These are compressed, but the coast and lunar
+// operations dominate the loop instead of the launch jumping straight to the
+// Moon.
+const T_LIFTOFF = 3; // clear the pad before first-stage separation starts
+const T_STAGE1 = 5; // S-IC falls away
+const T_WAIT = 1; // short interstage coast
+const T_STAGE2 = 4; // S-II falls away; S-IVB continues the final push
+const T_ASCENT = T_LIFTOFF + T_STAGE1 + T_WAIT + T_STAGE2; // 13 s
+const T_COAST = 22; // curved translunar coast
+const T_PITCH = 4; // lunar orbit insertion / pitch to tangent
+const T_ORBIT = 28; // low lunar orbit, LM separation, and powered descent
+const T_GAP = 3; // brief pause before relaunch
 const T_TOTAL = T_ASCENT + T_COAST + T_PITCH + T_ORBIT + T_GAP;
 const B_ASCENT = T_ASCENT;
 const B_COAST = B_ASCENT + T_COAST;
 const B_PITCH = B_COAST + T_PITCH;
 const B_ORBIT = B_PITCH + T_ORBIT;
-const STAGE2_START = T_LIFTOFF + T_STAGE1 + T_WAIT; // 11 s
+const STAGE2_START = T_LIFTOFF + T_STAGE1 + T_WAIT; // 9 s
 
 let missionT = 0;
 const earthWorld = new THREE.Vector3();
 const moonWorld = new THREE.Vector3();
 const apA = new THREE.Vector3();
 const apB = new THREE.Vector3();
+const apC = new THREE.Vector3();
 const apDirEM = new THREE.Vector3();
 const apTangent = new THREE.Vector3();
 const apSurfUp = new THREE.Vector3();
 const apPrev = new THREE.Vector3();
+const transferCtrl = new THREE.Vector3();
+const landingSiteUpWorld = new THREE.Vector3();
+const descentStart = new THREE.Vector3();
+const descentEnd = new THREE.Vector3();
 let apPrevValid = false;
-const NOSE_OFFSET = 0.054; // CSM center -> nose tip
-const ARRIVAL_CLEAR = 0.06; // keep the nose well clear of the surface at pitch-over
+const NOSE_OFFSET = 0.054 * SPACECRAFT_SCALE; // CSM center -> nose tip
+const ARRIVAL_CLEAR = 0.01; // keep the nose clear of the surface at pitch-over
 const ORBIT_R = MOON_RADIUS + NOSE_OFFSET + ARRIVAL_CLEAR; // craft center; nose stops short of the surface
-// The Earth-Moon gap here is only ~MOON_DISTANCE (≈1 unit), so launch distances
-// must stay well short of it or the coast would begin on top of the Moon.
+// The Earth-Moon distance is visually compressed, so launch distances stay well
+// short of the Moon and the coast covers most of the transfer.
 const PAD_CENTER = EARTH_RADIUS + 0.13; // full-stack center with the base on the pad
-const LAUNCH_TOP = EARTH_RADIUS + 0.26; // end-of-ascent center, still far short of the Moon
+const LAUNCH_TOP = EARTH_RADIUS + 0.28; // end-of-ascent center, still far short of the Moon
+const LANDING_START_P = 0.44; // fraction of lunar-orbit phase before LM separation
+const LANDING_DURATION_P = 0.38;
+const LM_TOUCHDOWN_CENTER = MOON_RADIUS + 0.0205 * LM_SCALE + 0.001; // center height so LM feet sit on the surface
+let landingSiteLocked = false;
+let apolloLanded = false;
 const _qRad = new THREE.Quaternion();
 const _qTan = new THREE.Quaternion();
 const _qDir = new THREE.Vector3();
@@ -1616,6 +1634,35 @@ function quatAlignY(dir, out) {
   if (_qDir.lengthSq() < 1e-9) return;
   _qDir.normalize();
   out.setFromUnitVectors(_yUp, _qDir);
+}
+
+function transferPoint(a, c, b, p, out) {
+  const q = 1 - p;
+  return out
+    .copy(a)
+    .multiplyScalar(q * q)
+    .addScaledVector(c, 2 * q * p)
+    .addScaledVector(b, p * p);
+}
+
+function transferDerivative(a, c, b, p, out) {
+  return out
+    .copy(c)
+    .sub(a)
+    .multiplyScalar(2 * (1 - p))
+    .addScaledVector(apC.copy(b).sub(c), 2 * p);
+}
+
+function hideApolloSurfaceSite() {
+  surfaceSite.visible = false;
+  apolloLanded = false;
+  landingSiteLocked = false;
+}
+
+function placeApolloSurfaceSite(upWorld) {
+  surfaceSite.visible = true;
+  surfaceSite.position.copy(moonWorld).addScaledVector(upWorld, MOON_RADIUS + 0.002);
+  alignY(surfaceSite, upWorld);
 }
 
 // Restore the dropped stages for the next launch.
@@ -1633,6 +1680,7 @@ function updateApollo(dt) {
   if (missionT >= T_TOTAL) {
     missionT -= T_TOTAL;
     apPrevValid = false;
+    hideApolloSurfaceSite();
     resetSaturnV();
   }
   const t = missionT;
@@ -1646,23 +1694,24 @@ function updateApollo(dt) {
   saturnV.plume.visible = false;
   csm.visible = false;
   lmFlying.visible = false;
+  lmDocked.visible = true;
 
   if (t < B_ASCENT) {
-    // Launch + staging (17 s): climb off the pad, drop S-IC, wait 2 s, drop
-    // S-II — leaving only the short CSM/LM spacecraft.
+    // Launch + staging: climb off the pad, drop S-IC, briefly coast, then drop
+    // S-II while the upper stack continues toward the transfer point.
     saturnV.group.visible = true;
     const dist = THREE.MathUtils.lerp(PAD_CENTER, LAUNCH_TOP, smooth(t / B_ASCENT));
     saturnV.group.position.copy(earthWorld).addScaledVector(apDirEM, dist);
     alignY(saturnV.group, apDirEM);
 
     if (t > T_LIFTOFF) {
-      const sp = smooth((t - T_LIFTOFF) / T_STAGE1); // S-IC drops over 6 s
+      const sp = smooth((t - T_LIFTOFF) / T_STAGE1);
       saturnV.stage1.position.y = -0.095 - sp * 0.5;
       saturnV.stage1.scale.setScalar(1 - sp * 0.7);
       if (sp >= 1) saturnV.stage1.visible = false;
     }
     if (t > STAGE2_START) {
-      const sp = smooth((t - STAGE2_START) / T_STAGE2); // S-II drops over 6 s
+      const sp = smooth((t - STAGE2_START) / T_STAGE2);
       saturnV.stage2.position.y = -0.04 - sp * 0.5;
       saturnV.stage2.scale.setScalar(1 - sp * 0.7);
       if (sp >= 1) saturnV.stage2.visible = false;
@@ -1687,22 +1736,22 @@ function updateApollo(dt) {
     apPrev.copy(saturnV.group.position);
     apPrevValid = true;
   } else if (t < B_COAST) {
-    // Trans-lunar coast (longest leg): the CSM glides nose-first to the Moon's
-    // near side and stops where its nose just grazes the surface.
+    // Translunar coast: a shallow curved transfer arc instead of a straight
+    // line. The CSM+LM stays docked and points along the instantaneous path.
     const p = (t - B_ASCENT) / T_COAST;
+    const sp = smooth(p);
     csm.visible = true;
     apA.copy(earthWorld).addScaledVector(apDirEM, LAUNCH_TOP);
     orbitPos(moonWorld, ORBIT_R, 0, apB); // near-side arrival point
-    csm.position.lerpVectors(apA, apB, smooth(p));
-    if (apPrevValid) {
-      apTangent.copy(csm.position).sub(apPrev);
-      alignY(csm, apTangent);
-    }
+    transferCtrl.copy(apA).add(apB).multiplyScalar(0.5).addScaledVector(ORBIT_AXIS, apA.distanceTo(apB) * 0.24);
+    transferPoint(apA, transferCtrl, apB, sp, csm.position);
+    transferDerivative(apA, transferCtrl, apB, sp, apTangent);
+    alignY(csm, apTangent);
     apPrev.copy(csm.position);
     apPrevValid = true;
   } else if (t < B_PITCH) {
-    // Still clear of the surface, the craft pitches over from "pointing at the
-    // Moon" to lying tangent along the orbit, ending in the orbit's heading.
+    // Lunar orbit insertion: the docked spacecraft pitches from an inbound
+    // radial attitude to a tangent lunar-orbit attitude.
     const p = (t - B_COAST) / T_PITCH;
     csm.visible = true;
     orbitPos(moonWorld, ORBIT_R, 0, apA);
@@ -1714,32 +1763,44 @@ function updateApollo(dt) {
     csm.quaternion.slerpQuaternions(_qRad, _qTan, smooth(p));
     apPrevValid = false;
   } else if (t < B_ORBIT) {
-    // Low lunar orbit: the CSM ("母艦") circles just above the surface, starting
-    // tangent at angle 0 so its heading flows straight on from the pitch-over.
+    // Lunar orbit: the CSM ("母艦") circles while the docked LM waits for a
+    // descent opportunity. Once separated, the LM descends to the exact surface
+    // point that becomes the visible landing site.
     const p = (t - B_PITCH) / T_ORBIT;
     csm.visible = true;
-    const ang = -p * Math.PI * 3; // ~1.5 revolutions, reversed direction
+    const ang = -p * Math.PI * 2.4; // a little over one orbit, reversed direction
     orbitPos(moonWorld, ORBIT_R, ang, apA);
     csm.position.copy(apA);
     orbitPos(moonWorld, ORBIT_R, ang - 0.01, apB); // next point along the reversed motion
     apTangent.copy(apB).sub(apA);
     alignY(csm, apTangent);
 
-    if (p > 0.25) {
-      const dp = (p - 0.25) / 0.5;
-      if (dp < 1) {
-        // LM separates and drops straight down to the surface below the orbit.
-        lmFlying.visible = true;
-        apSurfUp.copy(apA).sub(moonWorld).normalize();
-        apB.copy(moonWorld).addScaledVector(apSurfUp, MOON_RADIUS + 0.004);
-        lmFlying.position.lerpVectors(apA, apB, smooth(dp));
-        alignY(lmFlying, apSurfUp);
+    if (p > LANDING_START_P) {
+      lmDocked.visible = false;
+      if (!landingSiteLocked) {
+        landingSiteUpWorld.copy(apA).sub(moonWorld).normalize();
+        landingSiteLocked = true;
       }
-      // dp >= 1: landed — the permanent surfaceLander stands in for it.
+      const dp = (p - LANDING_START_P) / LANDING_DURATION_P;
+      if (dp < 1) {
+        // LM separates from the CSM and follows a short powered descent along
+        // the local radius. It remains stylized, but it no longer teleports to a
+        // pre-existing lander.
+        lmFlying.visible = true;
+        apSurfUp.copy(landingSiteUpWorld);
+        descentStart.copy(moonWorld).addScaledVector(apSurfUp, ORBIT_R);
+        descentEnd.copy(moonWorld).addScaledVector(apSurfUp, LM_TOUCHDOWN_CENTER);
+        lmFlying.position.lerpVectors(descentStart, descentEnd, smooth(dp));
+        alignY(lmFlying, apSurfUp);
+      } else {
+        apolloLanded = true;
+      }
     }
     apPrevValid = false;
   }
-  // t >= B_ORBIT: brief reset gap before the next launch.
+  // t >= B_ORBIT: brief reset gap before the next launch; keep the landed site
+  // visible until the mission loop restarts.
+  if (apolloLanded && landingSiteLocked) placeApolloSurfaceSite(landingSiteUpWorld);
 }
 
 renderer.setAnimationLoop((timestamp) => {
