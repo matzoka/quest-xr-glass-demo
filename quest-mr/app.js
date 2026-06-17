@@ -527,6 +527,8 @@ let shipWarping = false;
 let shipTravel = 0;
 let shipMaxTravel = 0;
 let shipWarpT = 0;
+let shipWarpDuration = 0.75;
+let shipWarpAudioEnded = true;
 let nextShipAt = 3.0;
 
 const enterpriseWarp = new THREE.Mesh(
@@ -569,9 +571,12 @@ function spawnEnterprise() {
 function startEnterpriseWarp() {
   shipWarping = true;
   shipWarpT = 0;
+  shipWarpAudioEnded = true;
   enterprise.visible = false;
   enterpriseWarp.visible = true;
   enterpriseWarp.material.opacity = 1;
+  stopShipAudio();
+  shipWarpDuration = playShipWarpSound();
 }
 
 function updateEnterprise(dt) {
@@ -582,18 +587,17 @@ function updateEnterprise(dt) {
 
   if (shipWarping) {
     shipWarpT += dt;
-    const p = THREE.MathUtils.clamp(shipWarpT / 0.55, 0, 1);
+    const p = THREE.MathUtils.clamp(shipWarpT / shipWarpDuration, 0, 1);
     const warpLength = THREE.MathUtils.lerp(3.5, 24, p);
     shipTmp.copy(shipVel).normalize();
     enterpriseWarp.position.copy(enterprise.position).addScaledVector(shipTmp, warpLength * 0.45);
     enterpriseWarp.quaternion.setFromUnitVectors(shipWarpUp, shipTmp);
     enterpriseWarp.scale.set(1 - p * 0.55, warpLength, 1 - p * 0.55);
     enterpriseWarp.material.opacity = 1 - p;
-    if (p >= 1) {
+    if (p >= 1 && shipWarpAudioEnded) {
       shipActive = false;
       shipWarping = false;
       enterpriseWarp.visible = false;
-      stopShipAudio(); // music ends with the warp-out instead of the room boundary
       nextShipAt = elapsed + 150 + Math.random() * 90; // ~2.5-4 min between visits
     }
     return;
@@ -738,6 +742,7 @@ function initAudio() {
     audioContext.resume();
   }
   loadShipBuffer();
+  loadWarpBuffer();
 }
 
 function playCollisionSound() {
@@ -846,6 +851,9 @@ function stopEnterpriseTheme() {
 let shipBuffer = null;
 let shipBufferTried = false;
 let shipSource = null;
+let warpBuffer = null;
+let warpBufferTried = false;
+let warpSource = null;
 
 async function loadShipBuffer() {
   if (shipBuffer || shipBufferTried || !audioContext) return;
@@ -856,6 +864,18 @@ async function loadShipBuffer() {
     shipBuffer = await audioContext.decodeAudioData(await res.arrayBuffer());
   } catch (e) {
     console.error("entrance music load failed:", e); // fall back to synth fanfare
+  }
+}
+
+async function loadWarpBuffer() {
+  if (warpBuffer || warpBufferTried || !audioContext) return;
+  warpBufferTried = true;
+  try {
+    const res = await fetch("./assets/warp.mp3");
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    warpBuffer = await audioContext.decodeAudioData(await res.arrayBuffer());
+  } catch (e) {
+    console.error("warp sound load failed:", e);
   }
 }
 
@@ -883,6 +903,38 @@ function playShipEntrance() {
     }
   }
   playEnterpriseTheme();
+}
+
+function playShipWarpSound() {
+  if (audioContext) {
+    if (audioContext.state === "suspended") audioContext.resume();
+    if (!warpBuffer && !warpBufferTried) loadWarpBuffer();
+  }
+  if (audioContext && audioContext.state === "running" && warpBuffer) {
+    try {
+      if (warpSource) {
+        try {
+          warpSource.stop();
+        } catch (e) {
+          /* ignore */
+        }
+      }
+      shipWarpAudioEnded = false;
+      warpSource = audioContext.createBufferSource();
+      warpSource.buffer = warpBuffer;
+      warpSource.connect(audioContext.destination);
+      warpSource.onended = () => {
+        shipWarpAudioEnded = true;
+        warpSource = null;
+      };
+      warpSource.start();
+      return Math.max(0.35, warpBuffer.duration || 0.75);
+    } catch (e) {
+      /* use visual fallback */
+    }
+  }
+  shipWarpAudioEnded = true;
+  return 0.75;
 }
 
 function stopShipAudio() {
