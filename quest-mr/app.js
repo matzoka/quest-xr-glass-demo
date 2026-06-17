@@ -435,6 +435,56 @@ const enterprise = new THREE.Group();
 enterprise.visible = false;
 scene.add(enterprise);
 
+function getMaterialTextureName(material) {
+  const image = material?.map?.image;
+  const src = image?.currentSrc || image?.src || "";
+  return src.split(/[\\/]/).pop().toLowerCase();
+}
+
+function tuneEnterpriseMaterial(material) {
+  if (!material) return;
+  const name = (material.name || "").toLowerCase();
+  const textureName = getMaterialTextureName(material);
+  const darkDecal =
+    name.includes("image8") ||
+    name.includes("image9") ||
+    textureName.includes("nccimage8") ||
+    textureName.includes("nccimage9");
+
+  material.side = THREE.DoubleSide;
+  if (material.color) material.color.set(0xffffff);
+  if (material.specular) material.specular.set(0x555555);
+  if ("shininess" in material) material.shininess = Math.max(material.shininess || 0, 18);
+  if (material.emissive) material.emissive.set(0x111111);
+
+  if (material.map) {
+    material.map.colorSpace = THREE.SRGBColorSpace;
+    material.map.anisotropy = maxAnisotropy;
+  }
+
+  if (darkDecal) {
+    material.map = null;
+    if (material.color) material.color.set(0xe6e7e2);
+    if (material.emissive) material.emissive.set(0x181818);
+    material.transparent = false;
+  }
+
+  if (material.emissive) {
+    if (name.includes("image6") || textureName.includes("nccimage6")) material.emissive.set(0xff2020);
+    if (name.includes("image7") || textureName.includes("nccimage7")) material.emissive.set(0x20ff20);
+    if (
+      name.includes("light") ||
+      name.includes("image5") ||
+      textureName.includes("ncclight") ||
+      textureName.includes("nccimage5")
+    ) {
+      material.emissive.set(0xffb45a);
+    }
+  }
+
+  material.needsUpdate = true;
+}
+
 // Load the detailed USS Enterprise model (OBJ + MTL + textures in
 // assets/NCC-1701/), center it, scale to a target length, and add it to the
 // `enterprise` group that flies across the scene.
@@ -449,9 +499,7 @@ new MTLLoader().setPath("./assets/NCC-1701/").load("untitled.mtl", (materials) =
         obj.traverse((child) => {
           if (child.isMesh) {
             const mats = Array.isArray(child.material) ? child.material : [child.material];
-            mats.forEach((m) => {
-              if (m && m.map) m.map.anisotropy = maxAnisotropy;
-            });
+            mats.forEach(tuneEnterpriseMaterial);
           }
         });
         const box = new THREE.Box3().setFromObject(obj);
