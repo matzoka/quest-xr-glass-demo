@@ -1557,7 +1557,12 @@ surfaceLander.position.y = 0.0205 * SURF_SCALE + 0.001;
 surfaceSite.add(surfaceLander);
 const flag = buildFlag();
 flag.scale.setScalar(SPACECRAFT_SCALE);
-flag.position.set(0.045, -0.002, 0.014);
+const FLAG_OFFSET_X = 0.045;
+const FLAG_OFFSET_Z = 0.014;
+const flagSag =
+  Math.sqrt(Math.max(0, MOON_RADIUS * MOON_RADIUS - FLAG_OFFSET_X * FLAG_OFFSET_X - FLAG_OFFSET_Z * FLAG_OFFSET_Z)) -
+  MOON_RADIUS;
+flag.position.set(FLAG_OFFSET_X, flagSag - 0.001, FLAG_OFFSET_Z);
 surfaceSite.add(flag);
 scene.add(surfaceSite);
 
