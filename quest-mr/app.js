@@ -504,13 +504,17 @@ new MTLLoader().setPath("./assets/NCC-1701/").load("untitled.mtl", (materials) =
         });
         const box = new THREE.Box3().setFromObject(obj);
         const size = box.getSize(new THREE.Vector3());
-        const center = box.getCenter(new THREE.Vector3());
-        obj.position.sub(center); // recenter on origin
         const maxDim = Math.max(size.x, size.y, size.z) || 1;
         const modelScale = (EARTH_RADIUS * 2.7) / maxDim;
         obj.scale.setScalar(modelScale);
-        enterpriseTailOffset = Math.max(ENTERPRISE_TAIL_OFFSET, size.z * modelScale * 0.5);
         obj.rotation.y = Math.PI; // flip so the bow leads the direction of travel
+        obj.updateMatrixWorld(true);
+        const fittedBox = new THREE.Box3().setFromObject(obj);
+        const fittedCenter = fittedBox.getCenter(new THREE.Vector3());
+        obj.position.sub(fittedCenter); // recenter after scale/rotation are applied
+        obj.updateMatrixWorld(true);
+        const centeredSize = new THREE.Box3().setFromObject(obj).getSize(new THREE.Vector3());
+        enterpriseTailOffset = Math.max(ENTERPRISE_TAIL_OFFSET, centeredSize.z * 0.5);
         enterprise.add(obj);
         console.log("Enterprise model loaded. raw size:", size.x.toFixed(2), size.y.toFixed(2), size.z.toFixed(2));
       },
@@ -526,6 +530,7 @@ const shipWarpBack = new THREE.Vector3(0, 0, 1);
 const shipTargetEmptyLeft = new THREE.Vector3(-82, 16, 72);
 const shipTargetEmptyRight = new THREE.Vector3(82, 16, 72);
 const ENTERPRISE_TAIL_OFFSET = EARTH_RADIUS * 1.15;
+const ENTERPRISE_TRAIL_OVERLAP = EARTH_RADIUS * 0.3;
 const SHIP_WARP_DELAY_AFTER_ROOM_EXIT = 10;
 let enterpriseTailOffset = ENTERPRISE_TAIL_OFFSET;
 let shipActive = false;
@@ -591,7 +596,8 @@ function enterpriseClearOfRoomFrame() {
 }
 
 function syncEnterpriseWarp(warpLength, visualP) {
-  enterpriseWarp.position.set(0, 0, enterpriseTailOffset + warpLength * 0.5);
+  const trailRoot = enterpriseTailOffset - ENTERPRISE_TRAIL_OVERLAP;
+  enterpriseWarp.position.set(0, 0, trailRoot + warpLength * 0.5);
   enterpriseWarp.quaternion.setFromUnitVectors(shipWarpUp, shipWarpBack);
   const warpWidth = 1 - visualP * 0.55;
   enterpriseWarp.scale.set(warpWidth, warpLength, warpWidth);
