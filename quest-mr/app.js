@@ -535,6 +535,8 @@ const shipTargetEmptyRight = new THREE.Vector3(82, 16, 72);
 const ENTERPRISE_TAIL_OFFSET = EARTH_RADIUS * 1.15;
 const ENTERPRISE_TRAIL_OVERLAP = EARTH_RADIUS * 0.3;
 const ENTERPRISE_SPARK_APPEAR_P = 0.88;
+const SHIP_WARP_START_SPEED_FACTOR = 1.35;
+const SHIP_WARP_ACCEL_FACTOR = 6.3;
 const SHIP_WARP_DELAY_AFTER_ROOM_EXIT = 10;
 let enterpriseTailOffset = ENTERPRISE_TAIL_OFFSET;
 let shipActive = false;
@@ -709,6 +711,10 @@ function syncEnterpriseSpark(p, visualP) {
   enterpriseSparkRays.scale.setScalar(1.05 + endBoost * 0.9);
 }
 
+function enterpriseWarpTravelFactor(p) {
+  return SHIP_WARP_START_SPEED_FACTOR * p + 0.5 * SHIP_WARP_ACCEL_FACTOR * p * p;
+}
+
 function orientEnterpriseAlongVelocity() {
   enterprise.lookAt(shipTmp.copy(enterprise.position).sub(shipVel));
 }
@@ -722,7 +728,7 @@ function startEnterpriseWarp() {
   shipWarpDuration = playShipWarpSound();
   shipWarpStartPos.copy(enterprise.position);
   shipWarpDir.copy(shipVel).normalize();
-  const predictedWarpTravel = shipVel.length() * shipWarpDuration * 9;
+  const predictedWarpTravel = shipVel.length() * shipWarpDuration * enterpriseWarpTravelFactor(1);
   shipWarpSparkPos
     .copy(shipWarpStartPos)
     .addScaledVector(shipWarpDir, predictedWarpTravel - enterpriseTailOffset);
@@ -747,7 +753,7 @@ function updateEnterprise(dt) {
     shipTmp.copy(shipWarpDir);
     enterprise.position
       .copy(shipWarpStartPos)
-      .addScaledVector(shipTmp, shipVel.length() * shipWarpDuration * (3 * p + 6 * p * p));
+      .addScaledVector(shipTmp, shipVel.length() * shipWarpDuration * enterpriseWarpTravelFactor(p));
     orientEnterpriseAlongVelocity();
     syncEnterpriseWarp(warpLength, visualP);
     syncEnterpriseSpark(p, visualP);
