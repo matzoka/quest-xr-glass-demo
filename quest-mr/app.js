@@ -1190,20 +1190,51 @@ const shipTargetEmptyLeft = new THREE.Vector3(-82, 16, 72);
 const shipTargetEmptyRight = new THREE.Vector3(82, 16, 72);
 const ENTERPRISE_TAIL_OFFSET = EARTH_RADIUS * 1.15;
 const ENTERPRISE_TRAIL_OVERLAP = EARTH_RADIUS * 0.3;
+const ENTERPRISE_LOCAL_WARP_TRAIL_SCALE = 1 / 3;
 const ENTERPRISE_SPARK_APPEAR_P = 0.88;
 const SHIP_WARP_START_SPEED_FACTOR = 1.35;
 const SHIP_WARP_ACCEL_FACTOR = 6.3;
 const SHIP_WARP_DELAY_AFTER_ROOM_EXIT = 10;
+const ENTERPRISE_MODE_NORMAL = "normal";
+const ENTERPRISE_MODE_RARE_ORBIT = "rareOrbit";
+const ENTERPRISE_RARE_CHANCE = 0.14;
+const ENTERPRISE_FORCE_RARE = new URLSearchParams(window.location.search).has("enterpriseRare");
+const ENTERPRISE_RARE_APPROACH = "approach";
+const ENTERPRISE_RARE_ORBIT = "orbit";
+const ENTERPRISE_RARE_DEPART = "depart";
+const ENTERPRISE_RARE_LAPS = 5;
+const ENTERPRISE_RARE_ORBIT_RADIUS = EARTH_RADIUS * 3.05;
+const ENTERPRISE_RARE_APPROACH_SPEED = 0.82;
+const ENTERPRISE_RARE_ORBIT_SPEED = 1.36;
+const ENTERPRISE_RARE_DEPART_SPEED = 1.12;
+const ENTERPRISE_RARE_EXIT_WARP_SPEED = 2.15;
+const ENTERPRISE_RARE_EMPTY_DIR = new THREE.Vector3(0.28, 0.32, 1).normalize();
 let enterpriseTailOffset = ENTERPRISE_TAIL_OFFSET;
 let shipActive = false;
 let shipWarping = false;
+let shipMode = ENTERPRISE_MODE_NORMAL;
+let shipRarePhase = ENTERPRISE_RARE_APPROACH;
+let shipRareOrbitAngle = 0;
 let shipEnteredRoom = false;
 let shipExitedRoom = false;
 let shipAfterRoomT = 0;
 let shipWarpT = 0;
 let shipWarpDuration = 0.75;
 let shipWarpAudioEnded = true;
+let shipWarpTrailScale = 1;
 let nextShipAt = 3.0;
+const shipRareEarthCenter = new THREE.Vector3();
+const shipRareApproachTarget = new THREE.Vector3();
+const shipRareOrbitU = new THREE.Vector3();
+const shipRareOrbitV = new THREE.Vector3();
+const shipRareOrbitAxis = new THREE.Vector3(0.18, 0.82, 0.28).normalize();
+const shipRareWarpDir = new THREE.Vector3();
+const shipRareDelta = new THREE.Vector3();
+const shipRareNextPos = new THREE.Vector3();
+const shipRarePrevPos = new THREE.Vector3();
+const shipRareViewDir = new THREE.Vector3();
+const shipRareViewRight = new THREE.Vector3();
+const shipRareViewUp = new THREE.Vector3();
 
 const enterpriseWarp = new THREE.Mesh(
   new THREE.CylinderGeometry(0.018, 0.055, 1, 18, 1, true),
@@ -1301,9 +1332,60 @@ enterpriseSpark.add(enterpriseSparkRays);
 enterpriseSpark.visible = false;
 scene.add(enterpriseSpark);
 
-function spawnEnterprise() {
+function resetEnterpriseVisitState() {
+  shipEnteredRoom = false;
+  shipExitedRoom = false;
+  shipAfterRoomT = 0;
+  shipWarping = false;
+  shipWarpT = 0;
+  shipActive = true;
+  enterprise.visible = true;
+  enterpriseWarp.visible = false;
+  enterpriseSpark.visible = false;
+}
+
+function finishEnterpriseVisit() {
+  shipActive = false;
+  shipWarping = false;
+  stopRareOrbitAudio();
+  enterprise.visible = false;
+  enterpriseWarp.visible = false;
+  enterpriseSpark.visible = false;
+  shipMode = ENTERPRISE_MODE_NORMAL;
+  nextShipAt = elapsed + 150 + Math.random() * 90; // ~2.5-4 min between visits
+}
+
+function getEnterpriseEarthCenter(out) {
+  return out.copy(ballGroup.position);
+}
+
+function setRareApproachTarget() {
+  getEnterpriseEarthCenter(shipRareEarthCenter);
+  shipRareApproachTarget.copy(shipRareEarthCenter).addScaledVector(shipRareOrbitU, ENTERPRISE_RARE_ORBIT_RADIUS);
+}
+
+function setRareDepartCourse() {
+  getEnterpriseEarthCenter(shipRareEarthCenter);
+  shipRareViewDir.copy(shipRareEarthCenter).sub(camera.position);
+  if (shipRareViewDir.lengthSq() < 1e-5) shipRareViewDir.set(0, 0, -1);
+  shipRareViewDir.normalize();
+
+  shipRareViewRight.crossVectors(shipRareViewDir, worldUp);
+  if (shipRareViewRight.lengthSq() < 1e-5) shipRareViewRight.set(1, 0, 0);
+  shipRareViewRight.normalize();
+  shipRareViewUp.crossVectors(shipRareViewRight, shipRareViewDir).normalize();
+
+  shipRareWarpDir
+    .copy(shipRareViewRight)
+    .addScaledVector(shipRareViewUp, -0.05)
+    .addScaledVector(shipRareViewDir, -0.28)
+    .normalize();
+}
+
+function spawnEnterpriseNormal() {
   const side = Math.random() < 0.5 ? -1 : 1;
   const target = side < 0 ? shipTargetEmptyRight : shipTargetEmptyLeft;
+  shipMode = ENTERPRISE_MODE_NORMAL;
   enterprise.position.set(
     roomCenter.x + side * (roomHalf.x + 1.2),
     roomCenter.y + roomHalf.y * (0.05 + Math.random() * 0.75),
@@ -1314,16 +1396,37 @@ function spawnEnterprise() {
     .sub(enterprise.position)
     .normalize()
     .multiplyScalar(2.1 + Math.random() * 0.35);
-  shipEnteredRoom = false;
-  shipExitedRoom = false;
-  shipAfterRoomT = 0;
-  shipWarping = false;
-  shipWarpT = 0;
-  shipActive = true;
-  enterprise.visible = true;
-  enterpriseWarp.visible = false;
-  enterpriseSpark.visible = false;
+  resetEnterpriseVisitState();
   playShipEntrance();
+}
+
+function spawnEnterpriseRareOrbit() {
+  shipMode = ENTERPRISE_MODE_RARE_ORBIT;
+  shipRarePhase = ENTERPRISE_RARE_APPROACH;
+  shipRareOrbitAngle = 0;
+  getEnterpriseEarthCenter(shipRareEarthCenter);
+  shipRareOrbitU.copy(ENTERPRISE_RARE_EMPTY_DIR).projectOnPlane(shipRareOrbitAxis);
+  if (shipRareOrbitU.lengthSq() < 1e-5) shipRareOrbitU.set(1, 0, 0);
+  shipRareOrbitU.normalize();
+  shipRareOrbitV.crossVectors(shipRareOrbitAxis, shipRareOrbitU).normalize();
+  shipRareWarpDir.copy(shipRareOrbitV);
+
+  enterprise.position
+    .copy(shipRareEarthCenter)
+    .addScaledVector(shipRareOrbitU, roomHalf.x + 4.2)
+    .addScaledVector(shipRareOrbitAxis, 0.75);
+  setRareApproachTarget();
+  shipVel.copy(shipRareApproachTarget).sub(enterprise.position).normalize().multiplyScalar(ENTERPRISE_RARE_APPROACH_SPEED);
+  resetEnterpriseVisitState();
+  playShipEntrance();
+}
+
+function spawnEnterprise() {
+  if (ENTERPRISE_FORCE_RARE || Math.random() < ENTERPRISE_RARE_CHANCE) {
+    spawnEnterpriseRareOrbit();
+  } else {
+    spawnEnterpriseNormal();
+  }
 }
 
 function enterpriseInsideRoomFrame() {
@@ -1341,11 +1444,12 @@ function enterpriseClearOfRoomFrame() {
 }
 
 function syncEnterpriseWarp(warpLength, visualP) {
+  const scaledWarpLength = warpLength * shipWarpTrailScale;
   const trailRoot = enterpriseTailOffset - ENTERPRISE_TRAIL_OVERLAP;
-  enterpriseWarp.position.set(0, 0, trailRoot + warpLength * 0.5);
+  enterpriseWarp.position.set(0, 0, trailRoot + scaledWarpLength * 0.5);
   enterpriseWarp.quaternion.setFromUnitVectors(shipWarpUp, shipWarpBack);
   const warpWidth = 1 - visualP * 0.55;
-  enterpriseWarp.scale.set(warpWidth, warpLength, warpWidth);
+  enterpriseWarp.scale.set(warpWidth, scaledWarpLength, warpWidth);
 }
 
 function syncEnterpriseSpark(p, visualP) {
@@ -1384,6 +1488,7 @@ function startEnterpriseWarp() {
   shipWarpDuration = playShipWarpSound();
   shipWarpStartPos.copy(enterprise.position);
   shipWarpDir.copy(shipVel).normalize();
+  shipWarpTrailScale = enterpriseInsideRoomFrame() ? ENTERPRISE_LOCAL_WARP_TRAIL_SCALE : 1;
   const predictedWarpTravel = shipVel.length() * shipWarpDuration * enterpriseWarpTravelFactor(1);
   shipWarpSparkPos
     .copy(shipWarpStartPos)
@@ -1393,6 +1498,68 @@ function startEnterpriseWarp() {
   syncEnterpriseWarp(2.2, 0);
   enterpriseWarp.visible = true;
   enterpriseWarp.material.opacity = 1;
+}
+
+function updateEnterpriseRareOrbit(dt) {
+  if (shipRarePhase === ENTERPRISE_RARE_APPROACH) {
+    setRareApproachTarget();
+    shipRareDelta.copy(shipRareApproachTarget).sub(enterprise.position);
+    const dist = shipRareDelta.length();
+    if (dist <= ENTERPRISE_RARE_APPROACH_SPEED * dt) {
+      enterprise.position.copy(shipRareApproachTarget);
+      shipRarePhase = ENTERPRISE_RARE_ORBIT;
+      shipRareOrbitAngle = 0;
+      shipVel.copy(shipRareOrbitV).multiplyScalar(ENTERPRISE_RARE_ORBIT_RADIUS * ENTERPRISE_RARE_ORBIT_SPEED);
+      playRareOrbitAudio();
+    } else {
+      shipVel.copy(shipRareDelta).normalize().multiplyScalar(ENTERPRISE_RARE_APPROACH_SPEED);
+      enterprise.position.addScaledVector(shipVel, dt);
+    }
+    orientEnterpriseAlongVelocity();
+    return;
+  }
+
+  if (shipRarePhase === ENTERPRISE_RARE_ORBIT) {
+    shipRarePrevPos.copy(enterprise.position);
+    getEnterpriseEarthCenter(shipRareEarthCenter);
+    shipRareOrbitAngle += ENTERPRISE_RARE_ORBIT_SPEED * dt;
+    const maxAngle = Math.PI * 2 * ENTERPRISE_RARE_LAPS;
+    const angle = Math.min(shipRareOrbitAngle, maxAngle);
+    const c = Math.cos(angle);
+    const s = Math.sin(angle);
+    shipRareNextPos
+      .copy(shipRareEarthCenter)
+      .addScaledVector(shipRareOrbitU, c * ENTERPRISE_RARE_ORBIT_RADIUS)
+      .addScaledVector(shipRareOrbitV, s * ENTERPRISE_RARE_ORBIT_RADIUS);
+    enterprise.position.copy(shipRareNextPos);
+
+    if (shipRareOrbitAngle >= maxAngle) {
+      stopRareOrbitAudio();
+      shipRarePhase = ENTERPRISE_RARE_DEPART;
+      setRareDepartCourse();
+      shipVel.copy(shipRareWarpDir).multiplyScalar(ENTERPRISE_RARE_DEPART_SPEED);
+      orientEnterpriseAlongVelocity();
+      return;
+    }
+
+    shipVel.copy(enterprise.position).sub(shipRarePrevPos);
+    if (shipVel.lengthSq() < 1e-6) {
+      shipVel.copy(shipRareOrbitU).multiplyScalar(-s).addScaledVector(shipRareOrbitV, c);
+    }
+    shipVel.normalize().multiplyScalar(ENTERPRISE_RARE_ORBIT_RADIUS * ENTERPRISE_RARE_ORBIT_SPEED);
+    orientEnterpriseAlongVelocity();
+    return;
+  }
+
+  if (shipRarePhase === ENTERPRISE_RARE_DEPART) {
+    enterprise.position.addScaledVector(shipVel, dt);
+    orientEnterpriseAlongVelocity();
+    if (enterpriseClearOfRoomFrame()) {
+      shipVel.copy(shipRareWarpDir).multiplyScalar(ENTERPRISE_RARE_EXIT_WARP_SPEED);
+      orientEnterpriseAlongVelocity();
+      startEnterpriseWarp();
+    }
+  }
 }
 
 function updateEnterprise(dt) {
@@ -1415,13 +1582,13 @@ function updateEnterprise(dt) {
     syncEnterpriseSpark(p, visualP);
     enterpriseWarp.material.opacity = shipWarpAudioEnded ? 1 - visualP : Math.max(0.14, 1 - visualP);
     if (p >= 1 && shipWarpAudioEnded) {
-      shipActive = false;
-      shipWarping = false;
-      enterprise.visible = false;
-      enterpriseWarp.visible = false;
-      enterpriseSpark.visible = false;
-      nextShipAt = elapsed + 150 + Math.random() * 90; // ~2.5-4 min between visits
+      finishEnterpriseVisit();
     }
+    return;
+  }
+
+  if (shipMode === ENTERPRISE_MODE_RARE_ORBIT) {
+    updateEnterpriseRareOrbit(dt);
     return;
   }
 
@@ -1574,6 +1741,7 @@ function initAudio() {
   }
   loadShipBuffer();
   loadWarpBuffer();
+  loadRareOrbitBuffer();
 }
 
 function playCollisionSound() {
@@ -1685,6 +1853,10 @@ let shipSource = null;
 let warpBuffer = null;
 let warpBufferTried = false;
 let warpSource = null;
+let rareOrbitBuffer = null;
+let rareOrbitBufferTried = false;
+let rareOrbitSource = null;
+let rareOrbitAudioWanted = false;
 
 async function loadShipBuffer() {
   if (shipBuffer || shipBufferTried || !audioContext) return;
@@ -1707,6 +1879,21 @@ async function loadWarpBuffer() {
     warpBuffer = await audioContext.decodeAudioData(await res.arrayBuffer());
   } catch (e) {
     console.error("warp sound load failed:", e);
+  }
+}
+
+async function loadRareOrbitBuffer() {
+  if (rareOrbitBuffer || rareOrbitBufferTried || !audioContext) return;
+  rareOrbitBufferTried = true;
+  try {
+    const res = await fetch("./assets/star-trek-viewer.mp3");
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    rareOrbitBuffer = await audioContext.decodeAudioData(await res.arrayBuffer());
+    if (rareOrbitAudioWanted && !rareOrbitSource && shipMode === ENTERPRISE_MODE_RARE_ORBIT && shipRarePhase === ENTERPRISE_RARE_ORBIT) {
+      playRareOrbitAudio();
+    }
+  } catch (e) {
+    console.error("rare orbit audio load failed:", e);
   }
 }
 
@@ -1768,8 +1955,41 @@ function playShipWarpSound() {
   return 0.75;
 }
 
+function playRareOrbitAudio() {
+  rareOrbitAudioWanted = true;
+  if (audioContext) {
+    if (audioContext.state === "suspended") audioContext.resume();
+    if (!rareOrbitBuffer && !rareOrbitBufferTried) loadRareOrbitBuffer();
+  }
+  if (!audioContext || audioContext.state !== "running" || !rareOrbitBuffer || rareOrbitSource) return;
+  try {
+    rareOrbitSource = audioContext.createBufferSource();
+    rareOrbitSource.buffer = rareOrbitBuffer;
+    rareOrbitSource.loop = true;
+    rareOrbitSource.connect(audioContext.destination);
+    rareOrbitSource.onended = () => {
+      rareOrbitSource = null;
+    };
+    rareOrbitSource.start();
+  } catch (e) {
+    rareOrbitSource = null;
+  }
+}
+
+function stopRareOrbitAudio() {
+  rareOrbitAudioWanted = false;
+  if (!rareOrbitSource) return;
+  try {
+    rareOrbitSource.stop();
+  } catch (e) {
+    /* already stopped */
+  }
+  rareOrbitSource = null;
+}
+
 function stopShipAudio() {
   stopEnterpriseTheme();
+  stopRareOrbitAudio();
   if (shipSource) {
     try {
       shipSource.stop();
