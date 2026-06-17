@@ -598,7 +598,7 @@ function syncEnterpriseWarp(warpLength, visualP) {
 }
 
 function orientEnterpriseAlongVelocity() {
-  enterprise.lookAt(shipTmp.copy(enterprise.position).add(shipVel));
+  enterprise.lookAt(shipTmp.copy(enterprise.position).sub(shipVel));
 }
 
 function startEnterpriseWarp() {
@@ -640,8 +640,8 @@ function updateEnterprise(dt) {
   }
 
   enterprise.position.addScaledVector(shipVel, dt);
-  // The imported model's saucer/bow is on local -Z after the model flip; look
-  // toward the velocity so local +Z remains the stern/trail side.
+  // Object3D.lookAt aims +Z at the target, so look "backward" to put the bow
+  // (-Z, the saucer) forward and keep local +Z as the stern/trail side.
   orientEnterpriseAlongVelocity();
   if (!shipEnteredRoom && enterpriseInsideRoomFrame()) shipEnteredRoom = true;
   if (shipEnteredRoom && !shipExitedRoom && enterpriseClearOfRoomFrame()) {
