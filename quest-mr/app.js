@@ -1562,9 +1562,283 @@ function updateEnterpriseRareOrbit(dt) {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Klingon Negh'Var: a rare, heavy background pass with cloak-style fades.
+// ---------------------------------------------------------------------------
+const klingon = new THREE.Group();
+klingon.visible = false;
+scene.add(klingon);
+
+const klingonCloakField = new THREE.Mesh(
+  new THREE.IcosahedronGeometry(1, 2),
+  new THREE.MeshBasicMaterial({
+    color: 0x54ff9b,
+    transparent: true,
+    opacity: 0,
+    wireframe: true,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+  })
+);
+klingonCloakField.visible = false;
+klingon.add(klingonCloakField);
+
+const klingonFlash = new THREE.Group();
+const klingonFlashHalo = new THREE.Sprite(
+  new THREE.SpriteMaterial({
+    map: makeEnterpriseSparkTexture(),
+    color: 0x53ff92,
+    transparent: true,
+    opacity: 0,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+  })
+);
+const klingonFlashCore = new THREE.Sprite(
+  new THREE.SpriteMaterial({
+    map: makeEnterpriseSparkTexture(),
+    color: 0xd8ffe8,
+    transparent: true,
+    opacity: 0,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+  })
+);
+const klingonFlashRays = new THREE.LineSegments(
+  makeEnterpriseSparkRays(),
+  new THREE.LineBasicMaterial({
+    color: 0x62ffae,
+    transparent: true,
+    opacity: 0,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+  })
+);
+klingonFlash.add(klingonFlashHalo);
+klingonFlash.add(klingonFlashCore);
+klingonFlash.add(klingonFlashRays);
+klingonFlash.visible = false;
+scene.add(klingonFlash);
+
+const KLINGON_FORCE = new URLSearchParams(window.location.search).has("klingon");
+const KLINGON_FADE_IN = 4.2;
+const KLINGON_FADE_OUT = 5.4;
+const KLINGON_PASS_DURATION = 30;
+const KLINGON_TARGET_LENGTH = EARTH_RADIUS * 4.25;
+let klingonModelLoaded = false;
+let klingonModelLoading = false;
+let klingonPending = false;
+let klingonActive = false;
+let klingonT = 0;
+let nextKlingonAt = KLINGON_FORCE ? 2.5 : 120 + Math.random() * 120;
+const klingonStart = new THREE.Vector3();
+const klingonEnd = new THREE.Vector3();
+const klingonVel = new THREE.Vector3();
+const klingonTmp = new THREE.Vector3();
+const klingonMaterials = [];
+
+function scheduleNextKlingon() {
+  nextKlingonAt = elapsed + 220 + Math.random() * 180;
+}
+
+function tuneKlingonMaterial(material) {
+  if (!material) return;
+  const name = (material.name || "").toLowerCase();
+  const textureName = getMaterialTextureName(material);
+
+  material.side = THREE.DoubleSide;
+  material.transparent = true;
+  material.opacity = 0;
+  if (material.color) {
+    if (name.includes("red") || textureName.includes("red")) {
+      material.color.set(0xffd0c6);
+    } else if (name.includes("yellow") || textureName.includes("yellow")) {
+      material.color.set(0xffe0a8);
+    } else if (name.includes("white") || textureName.includes("white") || name.includes("light") || textureName.includes("light")) {
+      material.color.set(0xd9fff0);
+    } else {
+      material.color.set(0x87927d);
+    }
+  }
+  if (material.specular) material.specular.set(0x263326);
+  if ("shininess" in material) material.shininess = Math.max(material.shininess || 0, 22);
+
+  if (material.map) {
+    material.map.colorSpace = THREE.SRGBColorSpace;
+    material.map.anisotropy = maxAnisotropy;
+  }
+
+  if (material.emissive) {
+    material.emissive.set(0x071208);
+    if (name.includes("red") || textureName.includes("red")) material.emissive.set(0xff2518);
+    if (name.includes("yellow") || textureName.includes("yellow")) material.emissive.set(0xffc238);
+    if (name.includes("white") || textureName.includes("white")) material.emissive.set(0xbfffe1);
+    if (name.includes("light") || textureName.includes("light")) material.emissive.set(0x45ff8f);
+  }
+  if ("emissiveIntensity" in material) {
+    material.emissiveIntensity =
+      name.includes("light") || name.includes("red") || name.includes("white") || name.includes("yellow") ? 1.65 : 0.42;
+  }
+  material.needsUpdate = true;
+}
+
+function setKlingonOpacity(alpha) {
+  const clamped = THREE.MathUtils.clamp(alpha, 0, 1);
+  for (const material of klingonMaterials) {
+    material.opacity = clamped;
+    material.transparent = clamped < 0.995;
+    material.needsUpdate = true;
+  }
+}
+
+function loadKlingonModel() {
+  if (klingonModelLoaded || klingonModelLoading) return;
+  klingonModelLoading = true;
+  new MTLLoader().setPath("./assets/NeghVarclass/").load(
+    "neghvar.mtl",
+    (materials) => {
+      materials.preload();
+      new OBJLoader()
+        .setMaterials(materials)
+        .setPath("./assets/NeghVarclass/")
+        .load(
+          "neghvar.obj",
+          (obj) => {
+            obj.traverse((child) => {
+              if (child.isMesh) {
+                const mats = Array.isArray(child.material) ? child.material : [child.material];
+                mats.forEach((material) => {
+                  tuneKlingonMaterial(material);
+                  if (!klingonMaterials.includes(material)) klingonMaterials.push(material);
+                });
+              }
+            });
+
+            const box = new THREE.Box3().setFromObject(obj);
+            const size = box.getSize(new THREE.Vector3());
+            const maxDim = Math.max(size.x, size.y, size.z) || 1;
+            obj.scale.setScalar(KLINGON_TARGET_LENGTH / maxDim);
+            obj.updateMatrixWorld(true);
+            const fittedBox = new THREE.Box3().setFromObject(obj);
+            const fittedCenter = fittedBox.getCenter(new THREE.Vector3());
+            obj.position.sub(fittedCenter);
+            obj.updateMatrixWorld(true);
+            const centeredSize = new THREE.Box3().setFromObject(obj).getSize(new THREE.Vector3());
+            klingonCloakField.scale.set(centeredSize.x * 0.58, centeredSize.y * 0.9, centeredSize.z * 0.58);
+            klingon.add(obj);
+            klingonModelLoaded = true;
+            klingonModelLoading = false;
+            setKlingonOpacity(0);
+            console.log(
+              "Klingon Negh'Var model loaded. raw size:",
+              size.x.toFixed(2),
+              size.y.toFixed(2),
+              size.z.toFixed(2)
+            );
+          },
+          undefined,
+          (err) => {
+            klingonModelLoading = false;
+            klingonPending = false;
+            scheduleNextKlingon();
+            console.error("Klingon model load failed:", err);
+          }
+        );
+    },
+    undefined,
+    (err) => {
+      klingonModelLoading = false;
+      klingonPending = false;
+      scheduleNextKlingon();
+      console.error("Klingon material load failed:", err);
+    }
+  );
+}
+
+function spawnKlingonPass() {
+  const side = Math.random() < 0.5 ? -1 : 1;
+  klingonStart.set(
+    roomCenter.x + side * (roomHalf.x + 8.5),
+    roomCenter.y + roomHalf.y * 0.34,
+    roomCenter.z - roomHalf.z * 0.96
+  );
+  klingonEnd.set(
+    roomCenter.x - side * (roomHalf.x + 9.6),
+    roomCenter.y + roomHalf.y * 0.1,
+    roomCenter.z - roomHalf.z * 0.62
+  );
+  klingonVel.copy(klingonEnd).sub(klingonStart).multiplyScalar(1 / KLINGON_PASS_DURATION);
+  klingon.position.copy(klingonStart);
+  orientKlingonAlongVelocity();
+  klingonT = 0;
+  klingonPending = false;
+  klingonActive = true;
+  klingon.visible = true;
+  klingonFlash.visible = false;
+  setKlingonOpacity(0);
+}
+
+function orientKlingonAlongVelocity() {
+  // The Negh'Var model is longest along local +Z, so +Z is treated as the bow.
+  klingon.lookAt(klingonTmp.copy(klingon.position).add(klingonVel));
+}
+
+function updateKlingon(dt) {
+  if (!klingonActive) {
+    if ((elapsed >= nextKlingonAt || klingonPending) && !shipActive) {
+      if (!klingonModelLoaded) {
+        klingonPending = true;
+        loadKlingonModel();
+        return;
+      }
+      spawnKlingonPass();
+    }
+    return;
+  }
+
+  klingonT += dt;
+  const p = THREE.MathUtils.clamp(klingonT / KLINGON_PASS_DURATION, 0, 1);
+  const fadeIn = THREE.MathUtils.smoothstep(klingonT, 0, KLINGON_FADE_IN);
+  const fadeOut = 1 - THREE.MathUtils.smoothstep(klingonT, KLINGON_PASS_DURATION - KLINGON_FADE_OUT, KLINGON_PASS_DURATION);
+  const alpha = fadeIn * fadeOut;
+  klingon.position.lerpVectors(klingonStart, klingonEnd, p);
+  orientKlingonAlongVelocity();
+  setKlingonOpacity(alpha);
+
+  const cloakIn = 1 - THREE.MathUtils.smoothstep(klingonT, 0.2, KLINGON_FADE_IN + 0.8);
+  const cloakOut = THREE.MathUtils.smoothstep(klingonT, KLINGON_PASS_DURATION - KLINGON_FADE_OUT, KLINGON_PASS_DURATION);
+  const cloakAlpha = Math.max(cloakIn, cloakOut) * 0.58;
+  klingonCloakField.visible = cloakAlpha > 0.02;
+  klingonCloakField.material.opacity = cloakAlpha;
+  klingonCloakField.rotation.x += dt * 0.22;
+  klingonCloakField.rotation.y += dt * (0.45 + cloakAlpha * 0.7);
+
+  const vanish = THREE.MathUtils.smoothstep(klingonT, KLINGON_PASS_DURATION - 2.8, KLINGON_PASS_DURATION);
+  const flashAlpha = vanish * (1 - THREE.MathUtils.smoothstep(klingonT, KLINGON_PASS_DURATION - 0.5, KLINGON_PASS_DURATION));
+  klingonFlash.visible = flashAlpha > 0.02;
+  klingonFlash.position.copy(klingon.position);
+  klingonFlash.lookAt(camera.position);
+  klingonFlashHalo.material.opacity = 0.52 * flashAlpha;
+  klingonFlashHalo.scale.setScalar(0.85 + vanish * 0.7);
+  klingonFlashCore.material.opacity = 0.78 * flashAlpha;
+  klingonFlashCore.scale.setScalar(0.34 + vanish * 0.28);
+  klingonFlashRays.material.opacity = 0.68 * flashAlpha;
+  klingonFlashRays.rotation.z += 0.12 + vanish * 0.25;
+  klingonFlashRays.scale.setScalar(0.9 + vanish * 0.95);
+
+  if (p >= 1) {
+    klingonActive = false;
+    klingon.visible = false;
+    klingonFlash.visible = false;
+    klingonCloakField.visible = false;
+    setKlingonOpacity(0);
+    scheduleNextKlingon();
+  }
+}
+
 function updateEnterprise(dt) {
   if (!shipActive) {
-    if (elapsed >= nextShipAt) spawnEnterprise();
+    if (elapsed >= nextShipAt && !klingonActive && !klingonPending) spawnEnterprise();
     return;
   }
 
@@ -3398,6 +3672,7 @@ renderer.setAnimationLoop((timestamp) => {
   updateComet(dt);
   updateSolarProminence(dt);
   updateSolarSpots(dt);
+  updateKlingon(dt);
   updateEnterprise(dt);
   updateLightning(dt);
 
