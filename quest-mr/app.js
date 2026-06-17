@@ -494,28 +494,28 @@ const meteorGroup = new THREE.Group();
 ballGroup.add(meteorGroup);
 
 const meteor = new THREE.Mesh(
-  new THREE.SphereGeometry(0.006, 10, 8),
+  new THREE.SphereGeometry(0.0025, 10, 8),
   new THREE.MeshBasicMaterial({ color: 0xfff1da })
 );
 const meteorTrail = new THREE.Mesh(
-  new THREE.ConeGeometry(0.012, 0.28, 12, 1, true),
+  new THREE.ConeGeometry(0.0045, 0.13, 12, 1, true),
   new THREE.MeshBasicMaterial({
     color: 0xffb060,
     transparent: true,
-    opacity: 0.7,
+    opacity: 0.62,
     blending: THREE.AdditiveBlending,
     depthWrite: false,
     side: THREE.DoubleSide,
   })
 );
-meteorTrail.rotation.x = Math.PI / 2; // cone tip points +Z (behind, after lookAt at center)
-meteorTrail.position.z = 0.15; // trail streams away from the Earth
+meteorTrail.rotation.x = Math.PI / 2; // cone tip points along local +Z, away from the impact path
+meteorTrail.position.z = 0.07; // trail streams away from the Earth
 meteor.add(meteorTrail);
 meteor.visible = false;
 meteorGroup.add(meteor);
 
 const meteorFlash = new THREE.Mesh(
-  new THREE.SphereGeometry(0.026, 14, 12),
+  new THREE.SphereGeometry(0.011, 14, 12),
   new THREE.MeshBasicMaterial({
     color: 0xffd9a0,
     transparent: true,
@@ -528,6 +528,7 @@ meteorFlash.visible = false;
 meteorGroup.add(meteorFlash);
 
 const METEOR_DIR = new THREE.Vector3(0.45, 1.0, 0.35).normalize(); // fixed incoming direction
+const METEOR_TRAIL_AXIS = new THREE.Vector3(0, 0, 1); // meteor trail extends along local +Z
 const METEOR_START = 1.15; // distance from Earth center where it appears
 const METEOR_SPEED = 1.1;
 const METEOR_FLASH_TIME = 0.35;
@@ -537,9 +538,11 @@ let nextMeteorAt = 5.0;
 
 function spawnMeteor() {
   meteor.position.copy(METEOR_DIR).multiplyScalar(METEOR_START);
-  // Aim +Z up to space so the bow (-Z) faces the Earth center it falls toward,
-  // and the burning trail (+Z) streams up behind it.
-  meteor.lookAt(shipTmp.copy(meteor.position).add(METEOR_DIR));
+  // The meteor moves inward along -METEOR_DIR, so the glowing trail must stream
+  // outward along +METEOR_DIR. Set that local axis explicitly; Object3D.lookAt
+  // would depend on the object's -Z convention and can make the trail appear to
+  // approach from an impossible angle.
+  meteor.quaternion.setFromUnitVectors(METEOR_TRAIL_AXIS, METEOR_DIR);
   meteor.visible = true;
   meteorActive = true;
 }
@@ -549,7 +552,7 @@ function updateMeteor(dt) {
     meteorFlashLife -= dt;
     const k = Math.max(0, meteorFlashLife / METEOR_FLASH_TIME);
     meteorFlash.material.opacity = k;
-    meteorFlash.scale.setScalar(1 + (1 - k) * 3); // expanding burst
+    meteorFlash.scale.setScalar(1 + (1 - k) * 1.8); // small expanding burst
     if (meteorFlashLife <= 0) meteorFlash.visible = false;
   }
   if (!meteorActive) {
