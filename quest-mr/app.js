@@ -1222,7 +1222,7 @@ let shipWarpT = 0;
 let shipWarpDuration = 0.75;
 let shipWarpAudioEnded = true;
 let shipWarpTrailScale = 1;
-let nextShipAt = 3.0;
+let nextShipAt = new URLSearchParams(window.location.search).has("klingon") ? Number.POSITIVE_INFINITY : 3.0;
 const shipRareEarthCenter = new THREE.Vector3();
 const shipRareApproachTarget = new THREE.Vector3();
 const shipRareOrbitU = new THREE.Vector3();
@@ -1563,7 +1563,7 @@ function updateEnterpriseRareOrbit(dt) {
 }
 
 // ---------------------------------------------------------------------------
-// Klingon Negh'Var: a rare, heavy background pass with cloak-style fades.
+// Klingon K't'inga: a rare, heavy background pass with cloak-style fades.
 // ---------------------------------------------------------------------------
 const klingon = new THREE.Group();
 klingon.visible = false;
@@ -1625,7 +1625,10 @@ const KLINGON_FORCE = new URLSearchParams(window.location.search).has("klingon")
 const KLINGON_FADE_IN = 4.2;
 const KLINGON_FADE_OUT = 5.4;
 const KLINGON_PASS_DURATION_FALLBACK = 29;
-const KLINGON_TARGET_LENGTH = EARTH_RADIUS * 4.25;
+const KLINGON_TARGET_LENGTH = EARTH_RADIUS * 5.75;
+const KLINGON_ASSET_PATH = "./assets/KtingaClass/";
+const KLINGON_MTL_FILE = "ktinga.mtl";
+const KLINGON_OBJ_FILE = "ktinga.obj";
 let klingonModelLoaded = false;
 let klingonModelLoading = false;
 let klingonPending = false;
@@ -1644,10 +1647,30 @@ function scheduleNextKlingon() {
   nextKlingonAt = elapsed + 220 + Math.random() * 180;
 }
 
+// Gently lift the hull out of pure black so the Klingon reads against MR
+// passthrough, without crushing the texture detail at the top end.
+function keepKlingonHullReadable(material) {
+  material.onBeforeCompile = (shader) => {
+    shader.fragmentShader = shader.fragmentShader.replace(
+      "#include <dithering_fragment>",
+      "gl_FragColor.rgb = clamp(gl_FragColor.rgb, vec3(0.05, 0.07, 0.06) * gl_FragColor.a, gl_FragColor.a * vec3(1.0));\n#include <dithering_fragment>"
+    );
+  };
+  material.customProgramCacheKey = () => "klingon-hull-readable-v2";
+}
+
+// Tune the Klingon hull materials in place: keep the K't'inga textures and
+// only adjust shading so the pale hull stays readable while true light accents
+// glow. White hull panels are not treated as lamps on this model.
 function tuneKlingonMaterial(material) {
-  if (!material) return;
+  if (!material) return new THREE.MeshStandardMaterial({ color: 0x31433a });
   const name = (material.name || "").toLowerCase();
   const textureName = getMaterialTextureName(material);
+  const isRed = name.includes("red") || textureName.includes("red");
+  const isGreen = name.includes("green") || textureName.includes("green");
+  const isOrange = name.includes("orange") || textureName.includes("orange");
+  const isEngine = name.includes("engine") || textureName.includes("engine");
+  const isGlowAccent = isEngine || isGreen || isOrange || isRed;
 
   material.side = THREE.DoubleSide;
   material.transparent = true;
@@ -1655,37 +1678,31 @@ function tuneKlingonMaterial(material) {
   if ("wireframe" in material) material.wireframe = false;
   material.depthTest = true;
   material.depthWrite = true;
-  if (material.color) {
-    if (name.includes("red") || textureName.includes("red")) {
-      material.color.set(0xffd0c6);
-    } else if (name.includes("yellow") || textureName.includes("yellow")) {
-      material.color.set(0xffe0a8);
-    } else if (name.includes("white") || textureName.includes("white") || name.includes("light") || textureName.includes("light")) {
-      material.color.set(0xd9fff0);
-    } else {
-      material.color.set(0x87927d);
-    }
-  }
-  if (material.specular) material.specular.set(0x263326);
-  if ("shininess" in material) material.shininess = Math.max(material.shininess || 0, 22);
+  if (material.color) material.color.set(0xffffff); // let the texture supply the color
 
   if (material.map) {
     material.map.colorSpace = THREE.SRGBColorSpace;
     material.map.anisotropy = maxAnisotropy;
   }
 
+  if (material.specular) material.specular.set(0x222a24);
+  if ("shininess" in material) material.shininess = Math.max(material.shininess || 0, 22);
+
   if (material.emissive) {
-    material.emissive.set(0x071208);
-    if (name.includes("red") || textureName.includes("red")) material.emissive.set(0xff2518);
-    if (name.includes("yellow") || textureName.includes("yellow")) material.emissive.set(0xffc238);
-    if (name.includes("white") || textureName.includes("white")) material.emissive.set(0xbfffe1);
-    if (name.includes("light") || textureName.includes("light")) material.emissive.set(0x45ff8f);
+    material.emissive.set(0x0a140d);
+    if (material.emissiveMap) material.emissive.set(0xffffff);
+    if (isEngine || isOrange) material.emissive.set(0xff7a22);
+    else if (isGreen) material.emissive.set(0x45ff8f);
+    else if (isRed) material.emissive.set(0xff2518);
   }
   if ("emissiveIntensity" in material) {
-    material.emissiveIntensity =
-      name.includes("light") || name.includes("red") || name.includes("white") || name.includes("yellow") ? 1.65 : 0.42;
+    material.emissiveIntensity = isGlowAccent ? 1.15 : 0.18;
   }
+
+  keepKlingonHullReadable(material);
+  material.userData.klingonColorHex = textureName || material.name || "hull";
   material.needsUpdate = true;
+  return material;
 }
 
 function setKlingonOpacity(alpha) {
@@ -1700,23 +1717,39 @@ function setKlingonOpacity(alpha) {
 function loadKlingonModel() {
   if (klingonModelLoaded || klingonModelLoading) return;
   klingonModelLoading = true;
-  new MTLLoader().setPath("./assets/NeghVarclass/").load(
-    "neghvar.mtl",
+  new MTLLoader().setPath(KLINGON_ASSET_PATH).load(
+    KLINGON_MTL_FILE,
     (materials) => {
       materials.preload();
       new OBJLoader()
         .setMaterials(materials)
-        .setPath("./assets/NeghVarclass/")
+        .setPath(KLINGON_ASSET_PATH)
         .load(
-          "neghvar.obj",
+          KLINGON_OBJ_FILE,
           (obj) => {
+            let tunedMeshCount = 0;
+            let tunedMaterialCount = 0;
+            let hiddenLineCount = 0;
+            const tunedColorCounts = {};
             obj.traverse((child) => {
               if (child.isMesh) {
+                tunedMeshCount++;
                 const mats = Array.isArray(child.material) ? child.material : [child.material];
-                mats.forEach((material) => {
-                  tuneKlingonMaterial(material);
+                const tunedMats = mats.map((material) => tuneKlingonMaterial(material));
+                child.material = Array.isArray(child.material) ? tunedMats : tunedMats[0];
+                tunedMats.forEach((material) => {
+                  tunedMaterialCount++;
+                  const colorKey = material.userData.klingonColorHex || "unknown";
+                  tunedColorCounts[colorKey] = (tunedColorCounts[colorKey] || 0) + 1;
                   if (!klingonMaterials.includes(material)) klingonMaterials.push(material);
                 });
+              } else if (child.isLine) {
+                // Some OBJ exports carry loose-edge `l` elements that OBJLoader
+                // turns into LineSegments. They are not part of the hull tuning or
+                // the opacity fade, so they render as always-on bright "wireframe"
+                // lines. Hide them.
+                child.visible = false;
+                hiddenLineCount++;
               }
             });
 
@@ -1736,10 +1769,16 @@ function loadKlingonModel() {
             klingonModelLoading = false;
             setKlingonOpacity(0);
             console.log(
-              "Klingon Negh'Var model loaded. raw size:",
+              "Klingon K't'inga model loaded. raw size:",
               size.x.toFixed(2),
               size.y.toFixed(2),
-              size.z.toFixed(2)
+              size.z.toFixed(2),
+              "meshes/materials:",
+              tunedMeshCount,
+              tunedMaterialCount,
+              "hiddenLines:",
+              hiddenLineCount,
+              tunedColorCounts
             );
           },
           undefined,
@@ -1764,14 +1803,14 @@ function loadKlingonModel() {
 function spawnKlingonPass() {
   const side = Math.random() < 0.5 ? -1 : 1;
   klingonStart.set(
-    roomCenter.x + side * (roomHalf.x + 8.5),
-    roomCenter.y + roomHalf.y * 0.34,
-    roomCenter.z - roomHalf.z * 0.96
+    roomCenter.x + side * (roomHalf.x + 7.2),
+    roomCenter.y + roomHalf.y * 0.42,
+    roomCenter.z - roomHalf.z * 0.62
   );
   klingonEnd.set(
-    roomCenter.x - side * (roomHalf.x + 9.6),
-    roomCenter.y + roomHalf.y * 0.1,
-    roomCenter.z - roomHalf.z * 0.62
+    roomCenter.x - side * (roomHalf.x + 8.2),
+    roomCenter.y + roomHalf.y * 0.16,
+    roomCenter.z - roomHalf.z * 0.38
   );
   klingonPassDuration = playKlingonTheme();
   klingonVel.copy(klingonEnd).sub(klingonStart).multiplyScalar(1 / klingonPassDuration);
@@ -1788,7 +1827,9 @@ function spawnKlingonPass() {
 }
 
 function orientKlingonAlongVelocity() {
-  // Object3D.lookAt points local -Z at the target; this OBJ's bow is local +Z.
+  // The K't'inga's bow is the long-neck command head. In this OBJ, the loaded
+  // forward axis is opposite Object3D.lookAt's visible travel direction, so
+  // target a point behind the ship to keep the bow leading the pass.
   klingon.lookAt(klingonTmp.copy(klingon.position).sub(klingonVel));
 }
 

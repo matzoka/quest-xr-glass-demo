@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>K't'inga インスペクター</title>
+    <style>
+      html, body { margin: 0; height: 100%; background: #0a0d12; color: #d8e0e6; font-family: system-ui, sans-serif; overflow: hidden; }
+      #c { display: block; width: 100vw; height: 100vh; }
+      #hud {
+        position: fixed; top: 12px; left: 12px; max-width: 320px;
+        background: rgba(12, 16, 22, 0.72); border: 1px solid rgba(120, 150, 170, 0.25);
+        border-radius: 10px; padding: 12px 14px; font-size: 13px; line-height: 1.5; backdrop-filter: blur(6px);
+      }
+      #hud h1 { font-size: 14px; margin: 0 0 6px; }
+      #hud .info { color: #9fb4c2; font-size: 12px; white-space: pre-line; }
+      #hud .row { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
+      button {
+        background: #1c2530; color: #d8e0e6; border: 1px solid rgba(140, 170, 190, 0.3);
+        border-radius: 7px; padding: 6px 10px; font-size: 12px; cursor: pointer;
+      }
+      button.active { background: #2f4150; border-color: #6fa0c0; }
+      #status { color: #ffcf6a; }
+    </style>
+  </head>
+  <body>
+    <canvas id="c"></canvas>
+    <div id="hud">
+      <h1>K't'inga インスペクター</h1>
+      <div class="info">ドラッグ=回転 / ホイール=ズーム / 右ドラッグ=パン</div>
+      <div id="status">モデル読み込み中…</div>
+      <div class="row">
+        <button id="spin" class="active">自動回転: ON</button>
+        <button id="wire">ワイヤフレーム</button>
+        <button id="grid" class="active">グリッド</button>
+        <button id="lines">遊離線: 非表示</button>
+      </div>
+      <div class="row">
+        <button id="top">真上</button>
+        <button id="front">正面(機首)</button>
+        <button id="side">真横</button>
+        <button id="iso">斜め</button>
+      </div>
+    </div>
+    <script type="importmap">
+      {
+        "imports": {
+          "three": "https://cdn.jsdelivr.net/npm/three@0.165.0/build/three.module.js",
+          "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/"
+        }
+      }
+    </script>
+    <script type="module" src="./inspect.js"></script>
+  </body>
+</html>
