@@ -626,12 +626,18 @@ ballGroup.position.copy(roomCenter).add(ballOffset);
 // Orbiting satellite (ISS-like): a central truss + hub with big solar panels,
 // riding a tilted circular orbit around the Earth (and moving with it).
 // ---------------------------------------------------------------------------
-const bodyMat = new THREE.MeshStandardMaterial({ color: 0xc2cad4, metalness: 0.8, roughness: 0.35 });
+const satelliteBodyDayColor = new THREE.Color(0xc2cad4);
+const satelliteBodyNightColor = new THREE.Color(0x030507);
+const satellitePanelDayColor = new THREE.Color(0x24407e);
+const satellitePanelNightColor = new THREE.Color(0x000205);
+const satellitePanelDayEmissive = new THREE.Color(0x0b1c3d);
+const satellitePanelNightEmissive = new THREE.Color(0x000000);
+const bodyMat = new THREE.MeshStandardMaterial({ color: satelliteBodyDayColor.clone(), metalness: 0.8, roughness: 0.35 });
 const panelMat = new THREE.MeshStandardMaterial({
-  color: 0x24407e,
+  color: satellitePanelDayColor.clone(),
   metalness: 0.5,
   roughness: 0.4,
-  emissive: 0x0b1c3d,
+  emissive: satellitePanelDayEmissive.clone(),
   emissiveIntensity: 0.5,
 });
 
@@ -656,6 +662,9 @@ satOrbit.rotation.x = THREE.MathUtils.degToRad(35); // inclined orbit
 satOrbit.add(satellite);
 ballGroup.add(satOrbit);
 const SAT_ORBIT_SPEED = 0.8; // rad/s — a clearly visible orbit, even while the Earth moves
+const satelliteWorld = new THREE.Vector3();
+const satelliteLocal = new THREE.Vector3();
+const satelliteSunLocal = new THREE.Vector3();
 
 // ---------------------------------------------------------------------------
 // Lightning: brief additive flashes at random points on the Earth's surface.
@@ -825,6 +834,21 @@ function chooseVisibleNightUp(out) {
   return out.copy(meteorSunLocal).negate().addScaledVector(meteorCameraLocal, 0.75).normalize();
 }
 
+function updateSatelliteLighting() {
+  getSunDirInBallFrame(satelliteSunLocal);
+  satellite.getWorldPosition(satelliteWorld);
+  satelliteLocal.copy(satelliteWorld);
+  ballGroup.worldToLocal(satelliteLocal);
+  if (satelliteLocal.lengthSq() < 1e-6) return;
+  satelliteLocal.normalize();
+  const lit = satelliteLocal.dot(satelliteSunLocal);
+  const daylight = THREE.MathUtils.smoothstep(lit, -0.16, 0.22);
+  bodyMat.color.copy(satelliteBodyNightColor).lerp(satelliteBodyDayColor, daylight);
+  panelMat.color.copy(satellitePanelNightColor).lerp(satellitePanelDayColor, daylight);
+  panelMat.emissive.copy(satellitePanelNightEmissive).lerp(satellitePanelDayEmissive, daylight);
+  panelMat.emissiveIntensity = daylight * 0.5;
+}
+
 function scheduleNextMeteor() {
   nextMeteorAt = elapsed + METEOR_MIN_INTERVAL + Math.random() * (METEOR_MAX_INTERVAL - METEOR_MIN_INTERVAL);
 }
@@ -913,7 +937,153 @@ function updateMeteor(dt) {
 }
 
 // ---------------------------------------------------------------------------
-// USS Enterprise: flies straight across the scene like the original comet
+// Distant comet: a rare background pass with a long tail. It is not aimed at
+// the Earth and lives in world space, far behind the room.
+// ---------------------------------------------------------------------------
+function makeCometHeadTexture() {
+  const canvas = document.createElement("canvas");
+  canvas.width = 64;
+  canvas.height = 64;
+  const ctx = canvas.getContext("2d");
+  const g = ctx.createRadialGradient(32, 32, 0, 32, 32, 32);
+  g.addColorStop(0.0, "rgba(255,255,255,1)");
+  g.addColorStop(0.25, "rgba(210,245,255,0.85)");
+  g.addColorStop(0.62, "rgba(110,190,255,0.28)");
+  g.addColorStop(1.0, "rgba(70,130,255,0)");
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, 64, 64);
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+
+function makeCometTailTexture() {
+  const canvas = document.createElement("canvas");
+  canvas.width = 512;
+  canvas.height = 96;
+  const ctx = canvas.getContext("2d");
+  const img = ctx.createImageData(canvas.width, canvas.height);
+  for (let y = 0; y < canvas.height; y += 1) {
+    const v = (y + 0.5) / canvas.height - 0.5;
+    const widthFade = Math.exp(-(v * v) / 0.035);
+    for (let x = 0; x < canvas.width; x += 1) {
+      const u = x / (canvas.width - 1);
+      const tailFade = Math.pow(1 - u, 1.7);
+      const alpha = Math.round(235 * tailFade * widthFade);
+      const i = (y * canvas.width + x) * 4;
+      img.data[i] = 145 + Math.round(90 * tailFade);
+      img.data[i + 1] = 210 + Math.round(45 * tailFade);
+      img.data[i + 2] = 255;
+      img.data[i + 3] = alpha;
+    }
+  }
+  ctx.putImageData(img, 0, 0);
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+
+const comet = new THREE.Group();
+const cometTail = new THREE.Mesh(
+  new THREE.PlaneGeometry(1, 1),
+  new THREE.MeshBasicMaterial({
+    map: makeCometTailTexture(),
+    color: 0xc8efff,
+    transparent: true,
+    opacity: 0,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+    side: THREE.DoubleSide,
+  })
+);
+const COMET_TAIL_LENGTH = 28;
+const COMET_TAIL_WIDTH = 2.7;
+cometTail.position.x = COMET_TAIL_LENGTH * 0.5;
+cometTail.scale.set(COMET_TAIL_LENGTH, COMET_TAIL_WIDTH, 1);
+comet.add(cometTail);
+const cometHead = new THREE.Sprite(
+  new THREE.SpriteMaterial({
+    map: makeCometHeadTexture(),
+    color: 0xeaffff,
+    transparent: true,
+    opacity: 0,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+  })
+);
+cometHead.scale.set(1.45, 1.45, 1);
+comet.add(cometHead);
+comet.visible = false;
+scene.add(comet);
+
+let cometActive = false;
+let cometT = 0;
+let cometDuration = 18;
+let nextCometAt = 12;
+const cometStart = new THREE.Vector3();
+const cometEnd = new THREE.Vector3();
+const cometMoveDir = new THREE.Vector3();
+const cometTailDir = new THREE.Vector3();
+const cometViewDir = new THREE.Vector3();
+const cometPlaneY = new THREE.Vector3();
+const cometPlaneZ = new THREE.Vector3();
+const cometBasis = new THREE.Matrix4();
+
+function scheduleNextComet() {
+  nextCometAt = elapsed + 95 + Math.random() * 115;
+}
+
+function spawnComet() {
+  const side = Math.random() < 0.5 ? -1 : 1;
+  const z = roomCenter.z - 54 - Math.random() * 28;
+  const y = roomCenter.y + 14 + Math.random() * 14;
+  cometStart.set(roomCenter.x + side * (roomHalf.x + 42 + Math.random() * 20), y, z);
+  cometEnd.set(
+    roomCenter.x - side * (roomHalf.x + 54 + Math.random() * 24),
+    y - 8 - Math.random() * 12,
+    z + (Math.random() - 0.5) * 18
+  );
+  cometMoveDir.copy(cometEnd).sub(cometStart).normalize();
+  cometTailDir.copy(cometMoveDir).negate();
+  comet.position.copy(cometStart);
+  cometDuration = 20 + Math.random() * 8;
+  cometT = 0;
+  comet.visible = true;
+  cometActive = true;
+}
+
+function updateComet(dt) {
+  if (!cometActive) {
+    if (elapsed >= nextCometAt) spawnComet();
+    return;
+  }
+  cometT += dt;
+  const p = Math.min(1, cometT / cometDuration);
+  const fade = THREE.MathUtils.smoothstep(p, 0, 0.12) * (1 - THREE.MathUtils.smoothstep(p, 0.86, 1.0));
+  comet.position.lerpVectors(cometStart, cometEnd, p);
+  cometViewDir.copy(camera.position).sub(comet.position).normalize();
+  cometPlaneY.crossVectors(cometViewDir, cometTailDir);
+  if (cometPlaneY.lengthSq() < 1e-5) cometPlaneY.crossVectors(camera.up, cometTailDir);
+  cometPlaneY.normalize();
+  cometPlaneZ.crossVectors(cometTailDir, cometPlaneY).normalize();
+  if (cometPlaneZ.dot(cometViewDir) < 0) {
+    cometPlaneY.negate();
+    cometPlaneZ.negate();
+  }
+  cometBasis.makeBasis(cometTailDir, cometPlaneY, cometPlaneZ);
+  comet.quaternion.setFromRotationMatrix(cometBasis);
+  cometTail.material.opacity = 0.78 * fade;
+  cometHead.material.opacity = 0.9 * fade;
+  cometHead.scale.setScalar(1.18 + Math.sin(cometT * 4.2) * 0.08);
+  if (p >= 1) {
+    comet.visible = false;
+    cometActive = false;
+    scheduleNextComet();
+  }
+}
+
+// ---------------------------------------------------------------------------
+// USS Enterprise: flies across deep space on a clear non-collision course
 // (reappearing every several seconds), built facing -Z (its bow) with a faint
 // additive engine wake trailing each nacelle.
 // ---------------------------------------------------------------------------
@@ -2660,10 +2830,13 @@ renderer.setAnimationLoop((timestamp) => {
   updateEarthNightSide(elapsed);
   updateApollo(dt);
 
-  // Ambient space life: orbiting satellite, occasional comet, surface lightning.
+  // Ambient space life: orbiting satellite, shooting stars, distant comet, surface lightning.
   elapsed += dt;
   satOrbit.rotation.y += dt * SAT_ORBIT_SPEED;
+  satOrbit.updateWorldMatrix(true, true);
+  updateSatelliteLighting();
   updateMeteor(dt);
+  updateComet(dt);
   updateEnterprise(dt);
   updateLightning(dt);
 
