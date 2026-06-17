@@ -309,6 +309,197 @@ const cloudMesh = new THREE.Mesh(
   })
 );
 
+function makeCityLightsTexture() {
+  const rand = seededRandom(90210);
+  const canvas = document.createElement("canvas");
+  canvas.width = 1024;
+  canvas.height = 512;
+  const ctx = canvas.getContext("2d");
+
+  function latLonToCanvas(lat, lon) {
+    return {
+      x: ((lon + 180) / 360) * canvas.width,
+      y: ((90 - lat) / 180) * canvas.height,
+    };
+  }
+
+  function drawCluster(lat, lon, strength, count) {
+    const origin = latLonToCanvas(lat, lon);
+    for (let i = 0; i < count; i += 1) {
+      const angle = rand() * Math.PI * 2;
+      const dist = Math.pow(rand(), 1.85) * (4 + strength * 15);
+      const x = (origin.x + Math.cos(angle) * dist + canvas.width) % canvas.width;
+      const y = THREE.MathUtils.clamp(origin.y + Math.sin(angle) * dist * 0.58, 0, canvas.height);
+      const radius = 0.35 + rand() * (0.45 + strength * 0.9);
+      const alpha = 0.18 + rand() * (0.34 + strength * 0.24);
+      const green = 178 + Math.floor(rand() * 58);
+      const blue = 88 + Math.floor(rand() * 70);
+      ctx.fillStyle = `rgba(255,${green},${blue},${alpha})`;
+      ctx.beginPath();
+      ctx.arc(x, y, radius, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+
+  function drawUrbanBelt(lat, lonA, lonB, strength, count) {
+    for (let i = 0; i < count; i += 1) {
+      const t = rand();
+      const lon = THREE.MathUtils.lerp(lonA, lonB, t);
+      drawCluster(lat + (rand() - 0.5) * 6, lon + (rand() - 0.5) * 4, strength * (0.45 + rand() * 0.55), 3);
+    }
+  }
+
+  const cities = [
+    [35.7, 139.7, 1.0, 95],
+    [34.7, 135.5, 0.72, 45],
+    [37.6, 127.0, 0.85, 55],
+    [31.2, 121.5, 1.0, 90],
+    [39.9, 116.4, 0.9, 70],
+    [22.3, 114.2, 0.72, 48],
+    [1.35, 103.8, 0.62, 38],
+    [28.6, 77.2, 0.88, 78],
+    [19.1, 72.9, 0.8, 66],
+    [25.2, 55.3, 0.64, 52],
+    [30.0, 31.2, 0.7, 58],
+    [41.0, 29.0, 0.62, 48],
+    [55.8, 37.6, 0.78, 58],
+    [51.5, -0.1, 0.78, 62],
+    [48.9, 2.3, 0.76, 70],
+    [52.5, 13.4, 0.62, 54],
+    [40.4, -3.7, 0.52, 42],
+    [41.9, 12.5, 0.52, 42],
+    [40.7, -74.0, 1.0, 100],
+    [41.9, -87.6, 0.68, 55],
+    [34.05, -118.25, 0.86, 72],
+    [37.77, -122.42, 0.56, 38],
+    [19.4, -99.1, 0.76, 66],
+    [-23.55, -46.63, 0.85, 74],
+    [-34.6, -58.4, 0.58, 46],
+    [-33.9, 151.2, 0.56, 40],
+    [-26.2, 28.0, 0.46, 32],
+    [6.5, 3.4, 0.44, 35],
+  ];
+
+  drawUrbanBelt(50.8, -7, 30, 0.72, 68); // western and central Europe
+  drawUrbanBelt(36.5, 116, 123, 0.72, 38); // east China coast
+  drawUrbanBelt(38.0, -82, -71, 0.68, 45); // northeastern US
+  drawUrbanBelt(33.0, -98, -78, 0.42, 35); // southern US
+  drawUrbanBelt(23.0, 72, 88, 0.52, 34); // northern India
+  for (const [lat, lon, strength, count] of cities) drawCluster(lat, lon, strength, count);
+
+  ctx.globalCompositeOperation = "lighter";
+  for (let i = 0; i < 900; i += 1) {
+    const x = rand() * canvas.width;
+    const y = rand() * canvas.height;
+    if (rand() < 0.68 && (y < 105 || y > 405)) continue;
+    const alpha = 0.05 + rand() * 0.18;
+    ctx.fillStyle = `rgba(255,210,135,${alpha})`;
+    ctx.fillRect(x, y, 0.55 + rand() * 0.8, 0.55 + rand() * 0.8);
+  }
+
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.anisotropy = maxAnisotropy;
+  tex.needsUpdate = true;
+  return tex;
+}
+
+const earthNightSunDir = new THREE.Vector3(0, 0, 1);
+const earthNightUniforms = {
+  uSunDir: { value: earthNightSunDir },
+};
+
+const earthNightVert = `
+varying vec2 vUv;
+varying vec3 vNormal;
+void main(){
+  vUv=uv;
+  vNormal=normalize(normal);
+  gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0);
+}`;
+
+const cityLightsMaterial = new THREE.ShaderMaterial({
+  uniforms: {
+    ...earthNightUniforms,
+    uCityTex: { value: makeCityLightsTexture() },
+    uIntensity: { value: 2.35 },
+  },
+  vertexShader: earthNightVert,
+  fragmentShader: `
+precision mediump float;
+uniform sampler2D uCityTex;
+uniform vec3 uSunDir;
+uniform float uIntensity;
+varying vec2 vUv;
+varying vec3 vNormal;
+void main(){
+  float lit=dot(normalize(vNormal),normalize(uSunDir));
+  float night=smoothstep(0.08,-0.24,lit);
+  vec3 city=texture2D(uCityTex,vUv).rgb;
+  float strength=max(max(city.r,city.g),city.b);
+  float alpha=strength*night*1.28;
+  if(alpha<0.01) discard;
+  gl_FragColor=vec4(city*night*uIntensity,alpha);
+}`,
+  transparent: true,
+  blending: THREE.AdditiveBlending,
+  depthWrite: false,
+});
+const cityLightsMesh = new THREE.Mesh(
+  new THREE.SphereGeometry(EARTH_RADIUS * 1.004, 64, 48),
+  cityLightsMaterial
+);
+earthMesh.add(cityLightsMesh);
+
+const auroraMaterial = new THREE.ShaderMaterial({
+  uniforms: {
+    ...earthNightUniforms,
+    uTime: { value: 0.0 },
+  },
+  vertexShader: earthNightVert,
+  fragmentShader: `
+precision mediump float;
+uniform vec3 uSunDir;
+uniform float uTime;
+varying vec2 vUv;
+varying vec3 vNormal;
+void main(){
+  vec3 n=normalize(vNormal);
+  float lit=dot(n,normalize(uSunDir));
+  float night=smoothstep(0.10,-0.18,lit);
+  float lat=abs(n.y);
+  float polarBand=smoothstep(0.66,0.78,lat)*(1.0-smoothstep(0.94,1.0,lat));
+  float wave=0.5+0.5*sin(vUv.x*72.0+uTime*1.65+sin(vUv.y*38.0)*2.6);
+  float ribbon=smoothstep(0.42,0.98,wave);
+  float shimmer=0.68+0.32*sin(uTime*3.4+vUv.x*19.0+vUv.y*7.0);
+  float alpha=polarBand*night*(0.16+0.56*ribbon)*shimmer;
+  if(alpha<0.01) discard;
+  vec3 color=mix(vec3(0.25,1.0,0.48),vec3(0.35,0.86,1.0),ribbon);
+  gl_FragColor=vec4(color*alpha*1.75,alpha);
+}`,
+  transparent: true,
+  blending: THREE.AdditiveBlending,
+  side: THREE.DoubleSide,
+  depthWrite: false,
+});
+const auroraMesh = new THREE.Mesh(
+  new THREE.SphereGeometry(EARTH_RADIUS * 1.032, 64, 48),
+  auroraMaterial
+);
+earthMesh.add(auroraMesh);
+
+const nightSunWorld = new THREE.Vector3();
+const nightSunLocal = new THREE.Vector3();
+function updateEarthNightSide(timeSeconds) {
+  earthMesh.updateWorldMatrix(true, false);
+  sunMesh.getWorldPosition(nightSunWorld);
+  nightSunLocal.copy(nightSunWorld);
+  earthMesh.worldToLocal(nightSunLocal);
+  nightSunLocal.normalize();
+  earthNightSunDir.copy(nightSunLocal);
+  auroraMaterial.uniforms.uTime.value = timeSeconds;
+}
+
 // Tilt the spin axis ~23.4 degrees like the real Earth.
 const tiltGroup = new THREE.Group();
 tiltGroup.rotation.z = THREE.MathUtils.degToRad(23.4);
@@ -1703,6 +1894,9 @@ const sunMesh = new THREE.Mesh(
 );
 sunMesh.position.set(-48, 30, -62);
 scene.add(sunMesh);
+sun.position.copy(sunMesh.position);
+sun.target.position.set(0, 0, 0);
+scene.add(sun.target);
 
 // Outer corona shell: a slightly larger additive sphere whose fragments fade
 // toward the limb, giving the Sun a soft glowing halo of plasma.
@@ -2315,6 +2509,7 @@ renderer.setAnimationLoop((timestamp) => {
   // Refresh world matrices so the Apollo mission can read the live Moon
   // position (the Moon both orbits the Earth and the Earth roams the room).
   ballGroup.updateWorldMatrix(true, true);
+  updateEarthNightSide(elapsed);
   updateApollo(dt);
 
   // Ambient space life: orbiting satellite, occasional comet, surface lightning.
