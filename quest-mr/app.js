@@ -117,6 +117,139 @@ const tmpRight = new THREE.Vector3();
 const worldUp = new THREE.Vector3(0, 1, 0);
 
 // ---------------------------------------------------------------------------
+// Deep-space backdrop: distant stars plus a soft galaxy band. It is kept as
+// normal scene geometry so the Earth, Moon, and ships can still occlude it.
+// ---------------------------------------------------------------------------
+function seededRandom(seed) {
+  let s = seed >>> 0;
+  return () => {
+    s = (s * 1664525 + 1013904223) >>> 0;
+    return s / 4294967296;
+  };
+}
+
+function makeStarTexture() {
+  const canvas = document.createElement("canvas");
+  canvas.width = 32;
+  canvas.height = 32;
+  const ctx = canvas.getContext("2d");
+  const g = ctx.createRadialGradient(16, 16, 0, 16, 16, 16);
+  g.addColorStop(0, "rgba(255,255,255,1)");
+  g.addColorStop(0.22, "rgba(210,230,255,0.92)");
+  g.addColorStop(0.55, "rgba(130,170,255,0.24)");
+  g.addColorStop(1, "rgba(90,130,255,0)");
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, 32, 32);
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+
+function makeGalaxyTexture() {
+  const rand = seededRandom(71701);
+  const canvas = document.createElement("canvas");
+  canvas.width = 1024;
+  canvas.height = 512;
+  const ctx = canvas.getContext("2d");
+
+  const core = ctx.createRadialGradient(360, 220, 10, 360, 220, 380);
+  core.addColorStop(0, "rgba(255,235,220,0.52)");
+  core.addColorStop(0.22, "rgba(190,170,255,0.24)");
+  core.addColorStop(0.62, "rgba(70,115,255,0.08)");
+  core.addColorStop(1, "rgba(20,35,80,0)");
+  ctx.fillStyle = core;
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  ctx.save();
+  ctx.translate(canvas.width * 0.5, canvas.height * 0.52);
+  ctx.rotate(-0.18);
+  for (let i = 0; i < 4200; i += 1) {
+    const x = (rand() - 0.5) * canvas.width * 1.15;
+    const spread = 14 + Math.pow(rand(), 2.2) * 105;
+    const y = (rand() - rand()) * spread;
+    const warm = rand() < 0.42;
+    const alpha = 0.08 + rand() * 0.32;
+    const r = rand() < 0.985 ? 0.35 + rand() * 1.05 : 1.8 + rand() * 2.2;
+    ctx.fillStyle = warm
+      ? `rgba(255,220,185,${alpha})`
+      : `rgba(${185 + rand() * 70},${205 + rand() * 45},255,${alpha})`;
+    ctx.beginPath();
+    ctx.arc(x, y, r, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.restore();
+
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+
+function makeStarPoints(count, radius, size, opacity, seed) {
+  const rand = seededRandom(seed);
+  const positions = [];
+  const colors = [];
+  const palette = [
+    new THREE.Color(0xffffff),
+    new THREE.Color(0xcbdcff),
+    new THREE.Color(0xffe7c8),
+    new THREE.Color(0xbfdfff),
+  ];
+
+  for (let i = 0; i < count; i += 1) {
+    const z = rand() * 2 - 1;
+    const a = rand() * Math.PI * 2;
+    const r = Math.sqrt(1 - z * z);
+    const d = radius * (0.86 + rand() * 0.14);
+    positions.push(Math.cos(a) * r * d, z * d, Math.sin(a) * r * d);
+    const c = palette[Math.floor(rand() * palette.length)];
+    const twinkle = 0.55 + rand() * 0.45;
+    colors.push(c.r * twinkle, c.g * twinkle, c.b * twinkle);
+  }
+
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+  geo.setAttribute("color", new THREE.Float32BufferAttribute(colors, 3));
+
+  const mat = new THREE.PointsMaterial({
+    map: makeStarTexture(),
+    size,
+    sizeAttenuation: false,
+    transparent: true,
+    opacity,
+    vertexColors: true,
+    depthWrite: false,
+    blending: THREE.AdditiveBlending,
+  });
+
+  return new THREE.Points(geo, mat);
+}
+
+const spaceBackdrop = new THREE.Group();
+spaceBackdrop.position.copy(roomCenter);
+spaceBackdrop.add(makeStarPoints(3300, 185, 1.15, 0.84, 12077));
+spaceBackdrop.add(makeStarPoints(260, 178, 2.45, 0.98, 87103));
+spaceBackdrop.add(makeStarPoints(45, 172, 3.6, 0.96, 34129));
+
+const galaxyBand = new THREE.Sprite(
+  new THREE.SpriteMaterial({
+    map: makeGalaxyTexture(),
+    color: 0xffffff,
+    transparent: true,
+    opacity: 0.78,
+    depthWrite: false,
+    blending: THREE.AdditiveBlending,
+  })
+);
+galaxyBand.position.set(-42, 18, -112);
+galaxyBand.scale.set(118, 48, 1);
+spaceBackdrop.add(galaxyBand);
+scene.add(spaceBackdrop);
+
+function updateSpaceBackdropMode() {
+  spaceBackdrop.visible = currentMode !== "ar";
+}
+
+// ---------------------------------------------------------------------------
 // Earth: a textured sphere spinning slowly on a tilted axis, wrapped in a
 // slightly larger cloud shell that drifts at its own speed. Textures come from
 // the three.js sample set via CDN to keep things simple.
@@ -852,6 +985,7 @@ async function enterXr(mode) {
       exitButton.visible = false;
       resetButton.visible = false;
       currentMode = "preview";
+      updateSpaceBackdropMode();
       statusEl.textContent = `${label} を終了しました。もう一度入るには VR/AR を選んでください。`;
       updateXrAvailability();
     });
@@ -860,10 +994,12 @@ async function enterXr(mode) {
       scene.background = null;
       floor.visible = false;
       currentMode = "ar";
+      updateSpaceBackdropMode();
     } else {
       scene.background = new THREE.Color(0x07090c);
       floor.visible = true;
       currentMode = "vr";
+      updateSpaceBackdropMode();
     }
 
     await renderer.xr.setSession(session);
@@ -2156,6 +2292,8 @@ renderer.setAnimationLoop((timestamp) => {
   cloudMesh.material.opacity = 0.75 + Math.sin(timestamp * 0.00035) * 0.12;
   moon.rotation.y += dt * 0.04;
   moonOrbit.rotation.y += dt * MOON_ORBIT_SPEED;
+  spaceBackdrop.rotation.y += dt * 0.0018;
+  spaceBackdrop.rotation.x = Math.sin(elapsed * 0.018) * 0.012;
   updatePlane(dt);
   sunMaterial.uniforms.uTime.value = elapsed;
   sunMesh.rotation.y += dt * 0.03;
