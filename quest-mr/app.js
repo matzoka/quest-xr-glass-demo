@@ -1534,7 +1534,7 @@ const csm = buildCSM();
 csm.scale.setScalar(SPACECRAFT_SCALE);
 const lmDocked = buildLM(matSilver);
 lmDocked.scale.setScalar(0.72);
-lmDocked.position.y = -0.078; // docked below the service module until LM separation
+lmDocked.position.y = 0.067; // LM leads the docked stack, touching the CSM nose
 csm.add(lmDocked);
 const lmFlying = buildLM(matSilver);
 lmFlying.scale.setScalar(LM_SCALE);
@@ -1557,7 +1557,7 @@ surfaceLander.position.y = 0.0205 * SURF_SCALE + 0.001;
 surfaceSite.add(surfaceLander);
 const flag = buildFlag();
 flag.scale.setScalar(SPACECRAFT_SCALE);
-flag.position.set(0.045, 0.001, 0.014);
+flag.position.set(0.045, -0.002, 0.014);
 surfaceSite.add(flag);
 scene.add(surfaceSite);
 
@@ -1661,7 +1661,7 @@ function hideApolloSurfaceSite() {
 
 function placeApolloSurfaceSite(upWorld) {
   surfaceSite.visible = true;
-  surfaceSite.position.copy(moonWorld).addScaledVector(upWorld, MOON_RADIUS + 0.002);
+  surfaceSite.position.copy(moonWorld).addScaledVector(upWorld, MOON_RADIUS);
   alignY(surfaceSite, upWorld);
 }
 
