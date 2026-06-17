@@ -1623,13 +1623,14 @@ scene.add(klingonFlash);
 const KLINGON_FORCE = new URLSearchParams(window.location.search).has("klingon");
 const KLINGON_FADE_IN = 4.2;
 const KLINGON_FADE_OUT = 5.4;
-const KLINGON_PASS_DURATION = 30;
+const KLINGON_PASS_DURATION_FALLBACK = 29;
 const KLINGON_TARGET_LENGTH = EARTH_RADIUS * 4.25;
 let klingonModelLoaded = false;
 let klingonModelLoading = false;
 let klingonPending = false;
 let klingonActive = false;
 let klingonT = 0;
+let klingonPassDuration = KLINGON_PASS_DURATION_FALLBACK;
 let nextKlingonAt = KLINGON_FORCE ? 2.5 : 120 + Math.random() * 120;
 const klingonStart = new THREE.Vector3();
 const klingonEnd = new THREE.Vector3();
@@ -1767,7 +1768,8 @@ function spawnKlingonPass() {
     roomCenter.y + roomHalf.y * 0.1,
     roomCenter.z - roomHalf.z * 0.62
   );
-  klingonVel.copy(klingonEnd).sub(klingonStart).multiplyScalar(1 / KLINGON_PASS_DURATION);
+  klingonPassDuration = playKlingonTheme();
+  klingonVel.copy(klingonEnd).sub(klingonStart).multiplyScalar(1 / klingonPassDuration);
   klingon.position.copy(klingonStart);
   orientKlingonAlongVelocity();
   klingonT = 0;
@@ -1791,30 +1793,37 @@ function updateKlingon(dt) {
         loadKlingonModel();
         return;
       }
+      if (audioContext && audioContext.state === "running" && !klingonBuffer && !klingonBufferTried) {
+        loadKlingonBuffer();
+        return;
+      }
+      if (audioContext && audioContext.state === "running" && klingonBufferPromise) {
+        return;
+      }
       spawnKlingonPass();
     }
     return;
   }
 
   klingonT += dt;
-  const p = THREE.MathUtils.clamp(klingonT / KLINGON_PASS_DURATION, 0, 1);
+  const p = THREE.MathUtils.clamp(klingonT / klingonPassDuration, 0, 1);
   const fadeIn = THREE.MathUtils.smoothstep(klingonT, 0, KLINGON_FADE_IN);
-  const fadeOut = 1 - THREE.MathUtils.smoothstep(klingonT, KLINGON_PASS_DURATION - KLINGON_FADE_OUT, KLINGON_PASS_DURATION);
+  const fadeOut = 1 - THREE.MathUtils.smoothstep(klingonT, klingonPassDuration - KLINGON_FADE_OUT, klingonPassDuration);
   const alpha = fadeIn * fadeOut;
   klingon.position.lerpVectors(klingonStart, klingonEnd, p);
   orientKlingonAlongVelocity();
   setKlingonOpacity(alpha);
 
   const cloakIn = 1 - THREE.MathUtils.smoothstep(klingonT, 0.2, KLINGON_FADE_IN + 0.8);
-  const cloakOut = THREE.MathUtils.smoothstep(klingonT, KLINGON_PASS_DURATION - KLINGON_FADE_OUT, KLINGON_PASS_DURATION);
+  const cloakOut = THREE.MathUtils.smoothstep(klingonT, klingonPassDuration - KLINGON_FADE_OUT, klingonPassDuration);
   const cloakAlpha = Math.max(cloakIn, cloakOut) * 0.58;
   klingonCloakField.visible = cloakAlpha > 0.02;
   klingonCloakField.material.opacity = cloakAlpha;
   klingonCloakField.rotation.x += dt * 0.22;
   klingonCloakField.rotation.y += dt * (0.45 + cloakAlpha * 0.7);
 
-  const vanish = THREE.MathUtils.smoothstep(klingonT, KLINGON_PASS_DURATION - 2.8, KLINGON_PASS_DURATION);
-  const flashAlpha = vanish * (1 - THREE.MathUtils.smoothstep(klingonT, KLINGON_PASS_DURATION - 0.5, KLINGON_PASS_DURATION));
+  const vanish = THREE.MathUtils.smoothstep(klingonT, klingonPassDuration - 2.8, klingonPassDuration);
+  const flashAlpha = vanish * (1 - THREE.MathUtils.smoothstep(klingonT, klingonPassDuration - 0.5, klingonPassDuration));
   klingonFlash.visible = flashAlpha > 0.02;
   klingonFlash.position.copy(klingon.position);
   klingonFlash.lookAt(camera.position);
@@ -1832,6 +1841,7 @@ function updateKlingon(dt) {
     klingonFlash.visible = false;
     klingonCloakField.visible = false;
     setKlingonOpacity(0);
+    stopKlingonTheme();
     scheduleNextKlingon();
   }
 }
@@ -2016,6 +2026,7 @@ function initAudio() {
   loadShipBuffer();
   loadWarpBuffer();
   loadRareOrbitBuffer();
+  loadKlingonBuffer();
 }
 
 function playCollisionSound() {
@@ -2131,6 +2142,11 @@ let rareOrbitBuffer = null;
 let rareOrbitBufferTried = false;
 let rareOrbitSource = null;
 let rareOrbitAudioWanted = false;
+let klingonBuffer = null;
+let klingonBufferTried = false;
+let klingonBufferPromise = null;
+let klingonSource = null;
+let klingonAudioWanted = false;
 
 async function loadShipBuffer() {
   if (shipBuffer || shipBufferTried || !audioContext) return;
@@ -2169,6 +2185,37 @@ async function loadRareOrbitBuffer() {
   } catch (e) {
     console.error("rare orbit audio load failed:", e);
   }
+}
+
+function loadKlingonBuffer() {
+  if (klingonBuffer || !audioContext) return Promise.resolve(klingonBuffer);
+  if (klingonBufferPromise) return klingonBufferPromise;
+  klingonBufferTried = true;
+  klingonBufferPromise = fetch("./assets/klingon_theme.mp3")
+    .then((res) => {
+      if (!res.ok) throw new Error("HTTP " + res.status);
+      return res.arrayBuffer();
+    })
+    .then((arrayBuffer) => audioContext.decodeAudioData(arrayBuffer))
+    .then((buffer) => {
+      klingonBuffer = buffer;
+      if (klingonAudioWanted && klingonActive && !klingonSource) {
+        playKlingonTheme();
+      }
+      return buffer;
+    })
+    .catch((e) => {
+      console.error("Klingon theme load failed:", e);
+      return null;
+    })
+    .finally(() => {
+      klingonBufferPromise = null;
+    });
+  return klingonBufferPromise;
+}
+
+function getKlingonPassDuration() {
+  return Math.max(8, klingonBuffer?.duration || KLINGON_PASS_DURATION_FALLBACK);
 }
 
 function playShipEntrance() {
@@ -2259,6 +2306,45 @@ function stopRareOrbitAudio() {
     /* already stopped */
   }
   rareOrbitSource = null;
+}
+
+function playKlingonTheme() {
+  klingonAudioWanted = true;
+  if (audioContext) {
+    if (audioContext.state === "suspended") audioContext.resume();
+    if (!klingonBuffer && !klingonBufferPromise) loadKlingonBuffer();
+  }
+  if (!audioContext || audioContext.state !== "running" || !klingonBuffer) return getKlingonPassDuration();
+  try {
+    if (klingonSource) {
+      try {
+        klingonSource.stop();
+      } catch (e) {
+        /* already stopped */
+      }
+    }
+    klingonSource = audioContext.createBufferSource();
+    klingonSource.buffer = klingonBuffer;
+    klingonSource.connect(audioContext.destination);
+    klingonSource.onended = () => {
+      klingonSource = null;
+    };
+    klingonSource.start();
+  } catch (e) {
+    klingonSource = null;
+  }
+  return getKlingonPassDuration();
+}
+
+function stopKlingonTheme() {
+  klingonAudioWanted = false;
+  if (!klingonSource) return;
+  try {
+    klingonSource.stop();
+  } catch (e) {
+    /* already stopped */
+  }
+  klingonSource = null;
 }
 
 function stopShipAudio() {
