@@ -145,8 +145,8 @@ function makeStarTexture() {
   return tex;
 }
 
-function makeGalaxyTexture() {
-  const rand = seededRandom(71701);
+function makeGalaxyTexture(seed = 71701) {
+  const rand = seededRandom(seed);
   const canvas = document.createElement("canvas");
   canvas.width = 1024;
   canvas.height = 512;
@@ -230,19 +230,30 @@ spaceBackdrop.add(makeStarPoints(3300, 185, 1.15, 0.84, 12077));
 spaceBackdrop.add(makeStarPoints(260, 178, 2.45, 0.98, 87103));
 spaceBackdrop.add(makeStarPoints(45, 172, 3.6, 0.96, 34129));
 
-const galaxyBand = new THREE.Sprite(
-  new THREE.SpriteMaterial({
-    map: makeGalaxyTexture(),
-    color: 0xffffff,
-    transparent: true,
-    opacity: 0.78,
-    depthWrite: false,
-    blending: THREE.AdditiveBlending,
-  })
-);
-galaxyBand.position.set(-42, 18, -112);
-galaxyBand.scale.set(118, 48, 1);
-spaceBackdrop.add(galaxyBand);
+function addGalaxyBand(position, width, height, opacity, rotationZ, seed) {
+  const galaxy = new THREE.Mesh(
+    new THREE.PlaneGeometry(width, height),
+    new THREE.MeshBasicMaterial({
+      map: makeGalaxyTexture(seed),
+      color: 0xffffff,
+      transparent: true,
+      opacity,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+      blending: THREE.AdditiveBlending,
+    })
+  );
+  galaxy.position.copy(position);
+  galaxy.rotation.z = rotationZ;
+  spaceBackdrop.add(galaxy);
+  return galaxy;
+}
+
+addGalaxyBand(new THREE.Vector3(-70, 22, -180), 170, 70, 0.78, 0.0, 71701);
+addGalaxyBand(new THREE.Vector3(78, 38, -225), 62, 24, 0.44, -0.38, 36017);
+addGalaxyBand(new THREE.Vector3(108, -34, -245), 48, 18, 0.34, 0.28, 90163);
+addGalaxyBand(new THREE.Vector3(-132, -28, -238), 42, 16, 0.32, -0.18, 52121);
+addGalaxyBand(new THREE.Vector3(8, 62, -260), 34, 12, 0.28, 0.52, 14741);
 scene.add(spaceBackdrop);
 
 function updateSpaceBackdropMode() {
@@ -2292,8 +2303,6 @@ renderer.setAnimationLoop((timestamp) => {
   cloudMesh.material.opacity = 0.75 + Math.sin(timestamp * 0.00035) * 0.12;
   moon.rotation.y += dt * 0.04;
   moonOrbit.rotation.y += dt * MOON_ORBIT_SPEED;
-  spaceBackdrop.rotation.y += dt * 0.0018;
-  spaceBackdrop.rotation.x = Math.sin(elapsed * 0.018) * 0.012;
   updatePlane(dt);
   sunMaterial.uniforms.uTime.value = elapsed;
   sunMesh.rotation.y += dt * 0.03;
