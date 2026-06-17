@@ -709,8 +709,8 @@ function updateLightning(dt) {
 }
 
 // ---------------------------------------------------------------------------
-// Shooting star: every so often a small meteor falls toward the Earth from a
-// fixed direction and burns up in a bright flash as it reaches the surface.
+// Shooting stars: most meteors skim the upper atmosphere at a shallow angle and
+// burn out before reaching the ground. Only a rare event reaches the surface.
 // Lives in ballGroup's frame, so the Earth's center is the local origin.
 // ---------------------------------------------------------------------------
 const meteorGroup = new THREE.Group();
@@ -718,7 +718,13 @@ ballGroup.add(meteorGroup);
 
 const meteor = new THREE.Mesh(
   new THREE.SphereGeometry(0.0025, 10, 8),
-  new THREE.MeshBasicMaterial({ color: 0xfff1da })
+  new THREE.MeshBasicMaterial({
+    color: 0xfff1da,
+    transparent: true,
+    opacity: 0,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+  })
 );
 const meteorTrail = new THREE.Mesh(
   new THREE.ConeGeometry(0.0045, 0.13, 12, 1, true),
@@ -731,8 +737,8 @@ const meteorTrail = new THREE.Mesh(
     side: THREE.DoubleSide,
   })
 );
-meteorTrail.rotation.x = Math.PI / 2; // cone tip points along local +Z, away from the impact path
-meteorTrail.position.z = 0.07; // trail streams away from the Earth
+meteorTrail.rotation.x = Math.PI / 2; // cone tip points along local +Z, behind the incoming path
+meteorTrail.position.z = 0.07; // trail streams behind the meteor
 meteor.add(meteorTrail);
 meteor.visible = false;
 meteorGroup.add(meteor);
@@ -750,22 +756,128 @@ const meteorFlash = new THREE.Mesh(
 meteorFlash.visible = false;
 meteorGroup.add(meteorFlash);
 
-const METEOR_DIR = new THREE.Vector3(0.45, 1.0, 0.35).normalize(); // fixed incoming direction
 const METEOR_TRAIL_AXIS = new THREE.Vector3(0, 0, 1); // meteor trail extends along local +Z
-const METEOR_START = 1.15; // distance from Earth center where it appears
-const METEOR_SPEED = 1.1;
+const METEOR_IMPACT_DIR = new THREE.Vector3(0.45, 1.0, 0.35).normalize(); // original rare surface-impact path
+const METEOR_IMPACT_START_R = 1.15;
+const METEOR_BURN_SPEED = 0.42;
+const METEOR_IMPACT_SPEED = 1.1;
+const METEOR_BURN_END_R = EARTH_RADIUS * 1.13;
+const METEOR_IMPACT_END_R = EARTH_RADIUS * 1.02;
+const METEOR_BURN_PATH_LEN = EARTH_RADIUS * 1.45;
+const METEOR_IMPACT_CHANCE = 0.08;
+const METEOR_MIN_INTERVAL = 18;
+const METEOR_MAX_INTERVAL = 36;
 const METEOR_FLASH_TIME = 0.35;
+const METEOR_BURN_FLASH_TIME = 0.24;
+const METEOR_KIND_BURN = "burn";
+const METEOR_KIND_IMPACT = "impact";
 let meteorActive = false;
+let meteorKind = METEOR_KIND_BURN;
+let meteorProgress = 0;
+let meteorPathLength = 1;
+let meteorSpeed = METEOR_BURN_SPEED;
 let meteorFlashLife = 0;
+let meteorFlashDuration = METEOR_FLASH_TIME;
+let meteorFlashBaseScale = 1;
+let meteorFlashExpand = 1.8;
 let nextMeteorAt = 5.0;
+const meteorStart = new THREE.Vector3();
+const meteorEnd = new THREE.Vector3();
+const meteorMoveDir = new THREE.Vector3();
+const meteorTrailDir = new THREE.Vector3();
+const meteorUp = new THREE.Vector3();
+const meteorTangent = new THREE.Vector3();
+const meteorRandomDir = new THREE.Vector3();
+const meteorSunWorld = new THREE.Vector3();
+const meteorSunLocal = new THREE.Vector3();
+const meteorCameraWorld = new THREE.Vector3();
+const meteorCameraLocal = new THREE.Vector3();
+
+function randomUnitVector(out) {
+  const z = Math.random() * 2 - 1;
+  const a = Math.random() * Math.PI * 2;
+  const r = Math.sqrt(Math.max(0, 1 - z * z));
+  return out.set(Math.cos(a) * r, z, Math.sin(a) * r);
+}
+
+function getSunDirInBallFrame(out) {
+  sunMesh.getWorldPosition(meteorSunWorld);
+  out.copy(meteorSunWorld);
+  ballGroup.worldToLocal(out);
+  return out.normalize();
+}
+
+function getCameraDirInBallFrame(out) {
+  camera.getWorldPosition(meteorCameraWorld);
+  out.copy(meteorCameraWorld);
+  ballGroup.worldToLocal(out);
+  if (out.lengthSq() < 1e-6) out.set(0, 0, 1);
+  return out.normalize();
+}
+
+function chooseVisibleNightUp(out) {
+  getSunDirInBallFrame(meteorSunLocal);
+  getCameraDirInBallFrame(meteorCameraLocal);
+  for (let i = 0; i < 80; i += 1) {
+    randomUnitVector(out);
+    if (out.dot(meteorSunLocal) < -0.08 && out.dot(meteorCameraLocal) > 0.08) return out;
+  }
+  return out.copy(meteorSunLocal).negate().addScaledVector(meteorCameraLocal, 0.75).normalize();
+}
+
+function scheduleNextMeteor() {
+  nextMeteorAt = elapsed + METEOR_MIN_INTERVAL + Math.random() * (METEOR_MAX_INTERVAL - METEOR_MIN_INTERVAL);
+}
+
+function triggerMeteorFlash(position, isImpact) {
+  meteorFlash.position.copy(position);
+  meteorFlash.scale.setScalar(isImpact ? 1 : 0.55);
+  meteorFlash.material.color.set(isImpact ? 0xffd9a0 : 0xbfefff);
+  meteorFlash.material.opacity = isImpact ? 1 : 0.78;
+  meteorFlash.visible = true;
+  meteorFlashLife = isImpact ? METEOR_FLASH_TIME : METEOR_BURN_FLASH_TIME;
+  meteorFlashDuration = meteorFlashLife;
+  meteorFlashBaseScale = isImpact ? 1 : 0.55;
+  meteorFlashExpand = isImpact ? 1.8 : 1.05;
+}
 
 function spawnMeteor() {
-  meteor.position.copy(METEOR_DIR).multiplyScalar(METEOR_START);
-  // The meteor moves inward along -METEOR_DIR, so the glowing trail must stream
-  // outward along +METEOR_DIR. Set that local axis explicitly; Object3D.lookAt
-  // would depend on the object's -Z convention and can make the trail appear to
-  // approach from an impossible angle.
-  meteor.quaternion.setFromUnitVectors(METEOR_TRAIL_AXIS, METEOR_DIR);
+  meteorKind = Math.random() < METEOR_IMPACT_CHANCE ? METEOR_KIND_IMPACT : METEOR_KIND_BURN;
+  meteorProgress = 0;
+
+  if (meteorKind === METEOR_KIND_IMPACT) {
+    meteorStart.copy(METEOR_IMPACT_DIR).multiplyScalar(METEOR_IMPACT_START_R);
+    meteorEnd.copy(METEOR_IMPACT_DIR).multiplyScalar(METEOR_IMPACT_END_R);
+    meteorMoveDir.copy(METEOR_IMPACT_DIR).negate();
+    meteorPathLength = meteorStart.distanceTo(meteorEnd);
+    meteorSpeed = METEOR_IMPACT_SPEED;
+    meteor.material.color.set(0xfff1da);
+    meteorTrail.material.color.set(0xffb060);
+  } else {
+    chooseVisibleNightUp(meteorUp);
+    meteorTangent.crossVectors(meteorCameraLocal, meteorUp);
+    if (meteorTangent.lengthSq() < 1e-5) {
+      randomUnitVector(meteorRandomDir);
+      meteorTangent.crossVectors(meteorRandomDir, meteorUp);
+    }
+    meteorTangent.normalize();
+    if (Math.random() < 0.5) meteorTangent.negate();
+    meteorEnd.copy(meteorUp).multiplyScalar(METEOR_BURN_END_R);
+    meteorMoveDir.copy(meteorTangent).multiplyScalar(0.98).addScaledVector(meteorUp, -0.22).normalize();
+    meteorPathLength = METEOR_BURN_PATH_LEN;
+    meteorSpeed = METEOR_BURN_SPEED;
+    meteor.material.color.set(0xeaffff);
+    meteorTrail.material.color.set(0xffd08a);
+    meteorStart.copy(meteorEnd).addScaledVector(meteorMoveDir, -meteorPathLength);
+  }
+
+  meteor.position.copy(meteorStart);
+  meteorTrailDir.copy(meteorMoveDir).negate();
+  meteor.quaternion.setFromUnitVectors(METEOR_TRAIL_AXIS, meteorTrailDir);
+  meteor.material.opacity = 0;
+  meteorTrail.material.opacity = 0;
+  meteor.scale.setScalar(meteorKind === METEOR_KIND_IMPACT ? 1.0 : 0.85);
+  meteorTrail.scale.setScalar(meteorKind === METEOR_KIND_IMPACT ? 1.0 : 1.35);
   meteor.visible = true;
   meteorActive = true;
 }
@@ -773,26 +885,30 @@ function spawnMeteor() {
 function updateMeteor(dt) {
   if (meteorFlashLife > 0) {
     meteorFlashLife -= dt;
-    const k = Math.max(0, meteorFlashLife / METEOR_FLASH_TIME);
+    const k = Math.max(0, meteorFlashLife / meteorFlashDuration);
     meteorFlash.material.opacity = k;
-    meteorFlash.scale.setScalar(1 + (1 - k) * 1.8); // small expanding burst
+    meteorFlash.scale.setScalar(meteorFlashBaseScale + (1 - k) * meteorFlashExpand);
     if (meteorFlashLife <= 0) meteorFlash.visible = false;
   }
   if (!meteorActive) {
     if (elapsed >= nextMeteorAt) spawnMeteor();
     return;
   }
-  meteor.position.addScaledVector(METEOR_DIR, -METEOR_SPEED * dt);
-  if (meteor.position.length() <= EARTH_RADIUS * 1.02) {
-    // Impact: burst of light at the surface point; the meteor burns up.
-    meteorFlash.position.copy(METEOR_DIR).multiplyScalar(EARTH_RADIUS * 1.02);
-    meteorFlash.scale.setScalar(1);
-    meteorFlash.material.opacity = 1;
-    meteorFlash.visible = true;
-    meteorFlashLife = METEOR_FLASH_TIME;
+  meteorProgress = Math.min(1, meteorProgress + (meteorSpeed * dt) / meteorPathLength);
+  meteor.position.copy(meteorStart).addScaledVector(meteorMoveDir, meteorPathLength * meteorProgress);
+  const fadeIn = THREE.MathUtils.smoothstep(meteorProgress, 0, 0.16);
+  const fadeOut = 1 - THREE.MathUtils.smoothstep(meteorProgress, 0.82, 1.0);
+  const glow = fadeIn * fadeOut;
+  const burnBoost = meteorKind === METEOR_KIND_BURN ? 0.65 + 0.35 * THREE.MathUtils.smoothstep(meteorProgress, 0.48, 0.82) : 1;
+  meteor.material.opacity = (meteorKind === METEOR_KIND_BURN ? 0.9 : 0.82) * glow * burnBoost;
+  meteorTrail.material.opacity = (meteorKind === METEOR_KIND_BURN ? 0.86 : 0.58) * glow * burnBoost;
+  meteor.scale.setScalar((meteorKind === METEOR_KIND_BURN ? 0.85 : 1.0) + meteorProgress * 0.5);
+
+  if (meteorProgress >= 1) {
+    triggerMeteorFlash(meteorEnd, meteorKind === METEOR_KIND_IMPACT);
     meteor.visible = false;
     meteorActive = false;
-    nextMeteorAt = elapsed + 15 + Math.random() * 15; // every ~15-30 s
+    scheduleNextMeteor();
   }
 }
 
