@@ -522,6 +522,7 @@ const shipTmp = new THREE.Vector3();
 const shipWarpUp = new THREE.Vector3(0, 1, 0);
 const shipTargetSun = new THREE.Vector3(-72, 24, -58);
 const shipTargetSaturn = new THREE.Vector3(70, -9, -35);
+const ENTERPRISE_TAIL_OFFSET = EARTH_RADIUS * 1.15;
 let shipActive = false;
 let shipWarping = false;
 let shipTravel = 0;
@@ -572,7 +573,7 @@ function startEnterpriseWarp() {
   shipWarping = true;
   shipWarpT = 0;
   shipWarpAudioEnded = true;
-  enterprise.visible = false;
+  enterprise.visible = true;
   enterpriseWarp.visible = true;
   enterpriseWarp.material.opacity = 1;
   stopShipAudio();
@@ -588,15 +589,21 @@ function updateEnterprise(dt) {
   if (shipWarping) {
     shipWarpT += dt;
     const p = THREE.MathUtils.clamp(shipWarpT / shipWarpDuration, 0, 1);
-    const warpLength = THREE.MathUtils.lerp(3.5, 24, p);
+    const warpLength = THREE.MathUtils.lerp(2.2, 28, p);
     shipTmp.copy(shipVel).normalize();
-    enterpriseWarp.position.copy(enterprise.position).addScaledVector(shipTmp, warpLength * 0.45);
+    enterprise.position.addScaledVector(shipTmp, shipVel.length() * (3 + p * 12) * dt);
+    enterprise.lookAt(shipTmp.copy(enterprise.position).sub(shipVel));
+    shipTmp.copy(shipVel).normalize();
+    enterpriseWarp.position
+      .copy(enterprise.position)
+      .addScaledVector(shipTmp, -(ENTERPRISE_TAIL_OFFSET + warpLength * 0.5));
     enterpriseWarp.quaternion.setFromUnitVectors(shipWarpUp, shipTmp);
     enterpriseWarp.scale.set(1 - p * 0.55, warpLength, 1 - p * 0.55);
     enterpriseWarp.material.opacity = 1 - p;
     if (p >= 1 && shipWarpAudioEnded) {
       shipActive = false;
       shipWarping = false;
+      enterprise.visible = false;
       enterpriseWarp.visible = false;
       nextShipAt = elapsed + 150 + Math.random() * 90; // ~2.5-4 min between visits
     }
