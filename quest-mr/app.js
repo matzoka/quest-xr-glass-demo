@@ -310,12 +310,13 @@ const cloudMesh = new THREE.Mesh(
 );
 cloudMesh.renderOrder = 2;
 
-function makeCityLightsTexture() {
-  const rand = seededRandom(90210);
+function makeMajorCityLightsTexture() {
   const canvas = document.createElement("canvas");
-  canvas.width = 1024;
-  canvas.height = 512;
+  canvas.width = 2048;
+  canvas.height = 1024;
   const ctx = canvas.getContext("2d");
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.globalCompositeOperation = "lighter";
 
   function latLonToCanvas(lat, lon) {
     return {
@@ -324,79 +325,77 @@ function makeCityLightsTexture() {
     };
   }
 
-  function drawCluster(lat, lon, strength, count) {
-    const origin = latLonToCanvas(lat, lon);
-    for (let i = 0; i < count; i += 1) {
-      const angle = rand() * Math.PI * 2;
-      const dist = Math.pow(rand(), 1.85) * (4 + strength * 15);
-      const x = (origin.x + Math.cos(angle) * dist + canvas.width) % canvas.width;
-      const y = THREE.MathUtils.clamp(origin.y + Math.sin(angle) * dist * 0.58, 0, canvas.height);
-      const radius = 0.35 + rand() * (0.45 + strength * 0.9);
-      const alpha = 0.18 + rand() * (0.34 + strength * 0.24);
-      const green = 178 + Math.floor(rand() * 58);
-      const blue = 88 + Math.floor(rand() * 70);
-      ctx.fillStyle = `rgba(255,${green},${blue},${alpha})`;
-      ctx.beginPath();
-      ctx.arc(x, y, radius, 0, Math.PI * 2);
-      ctx.fill();
-    }
+  function drawGlowAt(x, y, radius, strength) {
+    const glow = ctx.createRadialGradient(x, y, 0, x, y, radius);
+    glow.addColorStop(0.0, `rgba(255,236,170,${0.72 * strength})`);
+    glow.addColorStop(0.28, `rgba(255,196,82,${0.36 * strength})`);
+    glow.addColorStop(0.70, `rgba(255,150,38,${0.12 * strength})`);
+    glow.addColorStop(1.0, "rgba(255,120,24,0)");
+    ctx.fillStyle = glow;
+    ctx.beginPath();
+    ctx.arc(x, y, radius, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.fillStyle = `rgba(255,246,205,${0.86 * strength})`;
+    ctx.beginPath();
+    ctx.arc(x, y, Math.max(0.75, radius * 0.13), 0, Math.PI * 2);
+    ctx.fill();
   }
 
-  function drawUrbanBelt(lat, lonA, lonB, strength, count) {
-    for (let i = 0; i < count; i += 1) {
-      const t = rand();
-      const lon = THREE.MathUtils.lerp(lonA, lonB, t);
-      drawCluster(lat + (rand() - 0.5) * 6, lon + (rand() - 0.5) * 4, strength * (0.45 + rand() * 0.55), 3);
+  function drawCity(lat, lon, strength = 0.65, radius = 4.0) {
+    const p = latLonToCanvas(lat, lon);
+    for (const offset of [0, -canvas.width, canvas.width]) {
+      drawGlowAt(p.x + offset, p.y, radius, strength);
     }
   }
 
   const cities = [
-    [35.7, 139.7, 1.0, 95],
-    [34.7, 135.5, 0.72, 45],
-    [37.6, 127.0, 0.85, 55],
-    [31.2, 121.5, 1.0, 90],
-    [39.9, 116.4, 0.9, 70],
-    [22.3, 114.2, 0.72, 48],
-    [1.35, 103.8, 0.62, 38],
-    [28.6, 77.2, 0.88, 78],
-    [19.1, 72.9, 0.8, 66],
-    [25.2, 55.3, 0.64, 52],
-    [30.0, 31.2, 0.7, 58],
-    [41.0, 29.0, 0.62, 48],
-    [55.8, 37.6, 0.78, 58],
-    [51.5, -0.1, 0.78, 62],
-    [48.9, 2.3, 0.76, 70],
-    [52.5, 13.4, 0.62, 54],
-    [40.4, -3.7, 0.52, 42],
-    [41.9, 12.5, 0.52, 42],
-    [40.7, -74.0, 1.0, 100],
-    [41.9, -87.6, 0.68, 55],
-    [34.05, -118.25, 0.86, 72],
-    [37.77, -122.42, 0.56, 38],
-    [19.4, -99.1, 0.76, 66],
-    [-23.55, -46.63, 0.85, 74],
-    [-34.6, -58.4, 0.58, 46],
-    [-33.9, 151.2, 0.56, 40],
-    [-26.2, 28.0, 0.46, 32],
-    [6.5, 3.4, 0.44, 35],
+    // East Asia
+    [35.68, 139.76, 0.9, 6.8], [34.69, 135.50, 0.62, 4.8], [35.18, 136.91, 0.48, 3.7],
+    [37.57, 126.98, 0.75, 5.4], [39.90, 116.41, 0.72, 5.4], [31.23, 121.47, 0.86, 6.2],
+    [23.13, 113.26, 0.76, 5.8], [22.32, 114.17, 0.58, 4.4], [25.03, 121.56, 0.52, 3.8],
+    [14.60, 120.98, 0.58, 4.5], [13.76, 100.50, 0.58, 4.4], [10.82, 106.63, 0.46, 3.5],
+    [1.35, 103.82, 0.58, 4.2], [-6.21, 106.85, 0.64, 4.9],
+
+    // South and Central Asia
+    [28.61, 77.21, 0.82, 6.0], [19.08, 72.88, 0.68, 5.0], [22.57, 88.36, 0.55, 4.0],
+    [23.81, 90.41, 0.66, 4.8], [24.86, 67.01, 0.58, 4.4], [31.55, 74.34, 0.52, 4.0],
+    [35.69, 51.39, 0.5, 3.9],
+
+    // Middle East and Africa
+    [25.20, 55.27, 0.48, 3.8], [24.71, 46.68, 0.42, 3.2], [30.04, 31.24, 0.66, 4.9],
+    [41.01, 28.98, 0.62, 4.6], [6.52, 3.38, 0.5, 3.8], [-1.29, 36.82, 0.34, 2.8],
+    [-26.20, 28.05, 0.42, 3.3], [-33.93, 18.42, 0.34, 2.8],
+
+    // Europe
+    [55.76, 37.62, 0.68, 5.1], [51.51, -0.13, 0.68, 5.1], [48.86, 2.35, 0.68, 5.1],
+    [52.52, 13.40, 0.48, 3.7], [52.37, 4.90, 0.42, 3.2], [50.85, 4.35, 0.38, 3.0],
+    [50.94, 6.96, 0.48, 3.7], [48.14, 11.58, 0.36, 2.8], [45.46, 9.19, 0.46, 3.5],
+    [41.90, 12.50, 0.42, 3.2], [40.42, -3.70, 0.48, 3.7], [41.38, 2.17, 0.4, 3.0],
+    [38.72, -9.14, 0.34, 2.8], [52.23, 21.01, 0.4, 3.1], [48.21, 16.37, 0.34, 2.7],
+    [37.98, 23.73, 0.34, 2.7], [59.33, 18.07, 0.32, 2.6], [55.68, 12.57, 0.32, 2.6],
+
+    // North America
+    [40.71, -74.01, 0.86, 6.4], [42.36, -71.06, 0.48, 3.7], [39.95, -75.16, 0.44, 3.4],
+    [38.90, -77.04, 0.48, 3.7], [43.65, -79.38, 0.5, 3.8], [45.50, -73.57, 0.38, 3.0],
+    [41.88, -87.63, 0.62, 4.8], [42.33, -83.05, 0.42, 3.2], [33.75, -84.39, 0.44, 3.4],
+    [25.76, -80.19, 0.44, 3.4], [32.78, -96.80, 0.48, 3.7], [29.76, -95.37, 0.44, 3.4],
+    [39.74, -104.99, 0.34, 2.7], [33.45, -112.07, 0.42, 3.2], [47.61, -122.33, 0.4, 3.1],
+    [37.77, -122.42, 0.44, 3.4], [34.05, -118.24, 0.68, 5.1], [32.72, -117.16, 0.34, 2.7],
+    [36.17, -115.14, 0.34, 2.7], [19.43, -99.13, 0.66, 5.0], [25.69, -100.32, 0.4, 3.1],
+    [20.67, -103.35, 0.38, 2.9],
+
+    // South America
+    [4.71, -74.07, 0.42, 3.2], [-12.05, -77.04, 0.42, 3.2], [-33.45, -70.66, 0.42, 3.2],
+    [-34.60, -58.38, 0.52, 4.0], [-23.55, -46.63, 0.74, 5.5], [-22.91, -43.17, 0.48, 3.7],
+    [-19.92, -43.94, 0.34, 2.7],
+
+    // Oceania
+    [-33.87, 151.21, 0.48, 3.7], [-37.81, 144.96, 0.44, 3.4], [-27.47, 153.03, 0.32, 2.6],
+    [-31.95, 115.86, 0.3, 2.5], [-36.85, 174.76, 0.28, 2.4],
   ];
 
-  drawUrbanBelt(50.8, -7, 30, 0.72, 68); // western and central Europe
-  drawUrbanBelt(36.5, 116, 123, 0.72, 38); // east China coast
-  drawUrbanBelt(38.0, -82, -71, 0.68, 45); // northeastern US
-  drawUrbanBelt(33.0, -98, -78, 0.42, 35); // southern US
-  drawUrbanBelt(23.0, 72, 88, 0.52, 34); // northern India
-  for (const [lat, lon, strength, count] of cities) drawCluster(lat, lon, strength, count);
-
-  ctx.globalCompositeOperation = "lighter";
-  for (let i = 0; i < 900; i += 1) {
-    const x = rand() * canvas.width;
-    const y = rand() * canvas.height;
-    if (rand() < 0.68 && (y < 105 || y > 405)) continue;
-    const alpha = 0.05 + rand() * 0.18;
-    ctx.fillStyle = `rgba(255,210,135,${alpha})`;
-    ctx.fillRect(x, y, 0.55 + rand() * 0.8, 0.55 + rand() * 0.8);
-  }
+  for (const city of cities) drawCity(...city);
 
   const tex = new THREE.CanvasTexture(canvas);
   tex.colorSpace = THREE.SRGBColorSpace;
@@ -404,6 +403,8 @@ function makeCityLightsTexture() {
   tex.needsUpdate = true;
   return tex;
 }
+
+const earthLightsTexture = makeMajorCityLightsTexture();
 
 const earthNightSunDir = new THREE.Vector3(0, 0, 1);
 const earthNightUniforms = {
@@ -449,8 +450,8 @@ earthMesh.add(earthNightShadowMesh);
 const cityLightsMaterial = new THREE.ShaderMaterial({
   uniforms: {
     ...earthNightUniforms,
-    uCityTex: { value: makeCityLightsTexture() },
-    uIntensity: { value: 2.35 },
+    uCityTex: { value: earthLightsTexture },
+    uIntensity: { value: 4.2 },
   },
   vertexShader: earthNightVert,
   fragmentShader: `
@@ -463,11 +464,12 @@ varying vec3 vNormal;
 void main(){
   float lit=dot(normalize(vNormal),normalize(uSunDir));
   float night=1.0-smoothstep(-0.24,0.08,lit);
-  vec3 city=texture2D(uCityTex,vUv).rgb;
-  float strength=max(max(city.r,city.g),city.b);
-  float alpha=strength*night*1.28;
+  vec3 cityMap=texture2D(uCityTex,vUv).rgb;
+  float brightness=max(max(cityMap.r,cityMap.g),cityMap.b);
+  float strength=smoothstep(0.012,0.34,brightness);
+  float alpha=strength*night*1.25;
   if(alpha<0.01) discard;
-  gl_FragColor=vec4(city*night*uIntensity,alpha);
+  gl_FragColor=vec4(cityMap*night*uIntensity,alpha);
 }`,
   transparent: true,
   blending: THREE.AdditiveBlending,
