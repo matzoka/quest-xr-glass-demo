@@ -520,13 +520,15 @@ new MTLLoader().setPath("./assets/NCC-1701/").load("untitled.mtl", (materials) =
 const shipVel = new THREE.Vector3();
 const shipTmp = new THREE.Vector3();
 const shipWarpUp = new THREE.Vector3(0, 1, 0);
-const shipTargetSun = new THREE.Vector3(-72, 24, -58);
-const shipTargetSaturn = new THREE.Vector3(70, -9, -35);
+const shipTargetEmptyLeft = new THREE.Vector3(-82, 16, 72);
+const shipTargetEmptyRight = new THREE.Vector3(82, 16, 72);
 const ENTERPRISE_TAIL_OFFSET = EARTH_RADIUS * 1.15;
+const SHIP_WARP_DELAY_AFTER_ROOM_EXIT = 10;
 let shipActive = false;
 let shipWarping = false;
-let shipTravel = 0;
-let shipMaxTravel = 0;
+let shipEnteredRoom = false;
+let shipExitedRoom = false;
+let shipAfterRoomT = 0;
 let shipWarpT = 0;
 let shipWarpDuration = 0.75;
 let shipWarpAudioEnded = true;
@@ -548,25 +550,40 @@ scene.add(enterpriseWarp);
 
 function spawnEnterprise() {
   const side = Math.random() < 0.5 ? -1 : 1;
-  const target = side < 0 ? shipTargetSaturn : shipTargetSun;
+  const target = side < 0 ? shipTargetEmptyRight : shipTargetEmptyLeft;
   enterprise.position.set(
     roomCenter.x + side * (roomHalf.x + 1.2),
-    roomCenter.y + roomHalf.y * (0.2 + Math.random() * 0.9),
-    roomCenter.z + (Math.random() * 2 - 1) * roomHalf.z
+    roomCenter.y + roomHalf.y * (0.05 + Math.random() * 0.75),
+    roomCenter.z + (Math.random() * 2 - 1) * roomHalf.z * 0.65
   );
   shipVel
     .copy(target)
     .sub(enterprise.position)
     .normalize()
     .multiplyScalar(2.1 + Math.random() * 0.35);
-  shipTravel = 0;
-  shipMaxTravel = enterprise.position.distanceTo(target) + 6;
+  shipEnteredRoom = false;
+  shipExitedRoom = false;
+  shipAfterRoomT = 0;
   shipWarping = false;
   shipWarpT = 0;
   shipActive = true;
   enterprise.visible = true;
   enterpriseWarp.visible = false;
   playShipEntrance();
+}
+
+function enterpriseInsideRoomFrame() {
+  const dx = Math.abs(enterprise.position.x - roomCenter.x);
+  const dy = Math.abs(enterprise.position.y - roomCenter.y);
+  const dz = Math.abs(enterprise.position.z - roomCenter.z);
+  return dx <= roomHalf.x + 0.25 && dy <= roomHalf.y + 0.45 && dz <= roomHalf.z + 0.25;
+}
+
+function enterpriseClearOfRoomFrame() {
+  const dx = Math.abs(enterprise.position.x - roomCenter.x);
+  const dy = Math.abs(enterprise.position.y - roomCenter.y);
+  const dz = Math.abs(enterprise.position.z - roomCenter.z);
+  return dx > roomHalf.x + 0.9 || dy > roomHalf.y + 0.9 || dz > roomHalf.z + 0.9;
 }
 
 function startEnterpriseWarp() {
@@ -611,13 +628,19 @@ function updateEnterprise(dt) {
     return;
   }
 
-  const step = shipVel.length() * dt;
   enterprise.position.addScaledVector(shipVel, dt);
-  shipTravel += step;
   // Object3D.lookAt aims +Z at the target, so look "backward" to put the bow
   // (-Z, the saucer) forward and the engine wake (+Z) trailing behind.
   enterprise.lookAt(shipTmp.copy(enterprise.position).sub(shipVel));
-  if (shipTravel >= shipMaxTravel) startEnterpriseWarp();
+  if (!shipEnteredRoom && enterpriseInsideRoomFrame()) shipEnteredRoom = true;
+  if (shipEnteredRoom && !shipExitedRoom && enterpriseClearOfRoomFrame()) {
+    shipExitedRoom = true;
+    shipAfterRoomT = 0;
+  }
+  if (shipExitedRoom) {
+    shipAfterRoomT += dt;
+    if (shipAfterRoomT >= SHIP_WARP_DELAY_AFTER_ROOM_EXIT) startEnterpriseWarp();
+  }
 }
 
 statusEl.textContent = "準備完了。コントローラーで地球に触れると、その方向へ弾けます（PCはWASD/矢印/クリック）。";
