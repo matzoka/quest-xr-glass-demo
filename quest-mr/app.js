@@ -1570,12 +1570,13 @@ klingon.visible = false;
 scene.add(klingon);
 
 const klingonCloakField = new THREE.Mesh(
-  new THREE.IcosahedronGeometry(1, 2),
+  new THREE.IcosahedronGeometry(1, 4),
   new THREE.MeshBasicMaterial({
     color: 0x54ff9b,
     transparent: true,
     opacity: 0,
-    wireframe: true,
+    wireframe: false,
+    side: THREE.BackSide,
     blending: THREE.AdditiveBlending,
     depthWrite: false,
   })
@@ -1650,6 +1651,9 @@ function tuneKlingonMaterial(material) {
   material.side = THREE.DoubleSide;
   material.transparent = true;
   material.opacity = 0;
+  if ("wireframe" in material) material.wireframe = false;
+  material.depthTest = true;
+  material.depthWrite = true;
   if (material.color) {
     if (name.includes("red") || textureName.includes("red")) {
       material.color.set(0xffd0c6);
@@ -1781,8 +1785,8 @@ function spawnKlingonPass() {
 }
 
 function orientKlingonAlongVelocity() {
-  // The Negh'Var model is longest along local +Z, so +Z is treated as the bow.
-  klingon.lookAt(klingonTmp.copy(klingon.position).add(klingonVel));
+  // Object3D.lookAt points local -Z at the target; this OBJ's bow is local +Z.
+  klingon.lookAt(klingonTmp.copy(klingon.position).sub(klingonVel));
 }
 
 function updateKlingon(dt) {
@@ -1814,13 +1818,7 @@ function updateKlingon(dt) {
   orientKlingonAlongVelocity();
   setKlingonOpacity(alpha);
 
-  const cloakIn = 1 - THREE.MathUtils.smoothstep(klingonT, 0.2, KLINGON_FADE_IN + 0.8);
-  const cloakOut = THREE.MathUtils.smoothstep(klingonT, klingonPassDuration - KLINGON_FADE_OUT, klingonPassDuration);
-  const cloakAlpha = Math.max(cloakIn, cloakOut) * 0.58;
-  klingonCloakField.visible = cloakAlpha > 0.02;
-  klingonCloakField.material.opacity = cloakAlpha;
-  klingonCloakField.rotation.x += dt * 0.22;
-  klingonCloakField.rotation.y += dt * (0.45 + cloakAlpha * 0.7);
+  klingonCloakField.visible = false;
 
   const vanish = THREE.MathUtils.smoothstep(klingonT, klingonPassDuration - 2.8, klingonPassDuration);
   const flashAlpha = vanish * (1 - THREE.MathUtils.smoothstep(klingonT, klingonPassDuration - 0.5, klingonPassDuration));
