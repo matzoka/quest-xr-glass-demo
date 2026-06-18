@@ -157,6 +157,28 @@ function makeStarTexture() {
   return tex;
 }
 
+function smoothFade01(value) {
+  const t = THREE.MathUtils.clamp(value, 0, 1);
+  return t * t * (3 - 2 * t);
+}
+
+function applyCanvasEdgeFade(ctx, width, height, edgeX = 0.12, edgeY = 0.18) {
+  const image = ctx.getImageData(0, 0, width, height);
+  const data = image.data;
+
+  for (let y = 0; y < height; y += 1) {
+    const v = (y + 0.5) / height;
+    const fy = smoothFade01(Math.min(v, 1 - v) / edgeY);
+    for (let x = 0; x < width; x += 1) {
+      const u = (x + 0.5) / width;
+      const fx = smoothFade01(Math.min(u, 1 - u) / edgeX);
+      data[(y * width + x) * 4 + 3] = Math.round(data[(y * width + x) * 4 + 3] * fx * fy);
+    }
+  }
+
+  ctx.putImageData(image, 0, 0);
+}
+
 function makeGalaxyTexture(seed = 71701) {
   const rand = seededRandom(seed);
   const canvas = document.createElement("canvas");
@@ -190,6 +212,8 @@ function makeGalaxyTexture(seed = 71701) {
     ctx.fill();
   }
   ctx.restore();
+
+  applyCanvasEdgeFade(ctx, canvas.width, canvas.height, 0.12, 0.2);
 
   const tex = new THREE.CanvasTexture(canvas);
   tex.colorSpace = THREE.SRGBColorSpace;
@@ -231,6 +255,8 @@ function makeNebulaTexture(seed = 48211, hue = 0.6) {
     ctx.fillRect(x, y, 1 + rand() * 2, 1 + rand() * 2);
   }
   ctx.restore();
+
+  applyCanvasEdgeFade(ctx, canvas.width, canvas.height, 0.1, 0.22);
 
   const tex = new THREE.CanvasTexture(canvas);
   tex.colorSpace = THREE.SRGBColorSpace;
@@ -296,6 +322,7 @@ function addGalaxyBand(position, width, height, opacity, rotationZ, seed) {
       color: 0xffffff,
       transparent: true,
       opacity,
+      alphaTest: 0.003,
       depthWrite: false,
       side: THREE.DoubleSide,
       blending: THREE.AdditiveBlending,
@@ -313,6 +340,7 @@ function addNebulaCloud(position, width, height, opacity, rotationZ, seed, hue) 
     color: 0xffffff,
     transparent: true,
     opacity,
+    alphaTest: 0.003,
     depthWrite: false,
     side: THREE.DoubleSide,
     blending: THREE.AdditiveBlending,
