@@ -55,7 +55,7 @@ scene.environment = pmrem.fromScene(new RoomEnvironment(renderer), 0.04).texture
 // ---------------------------------------------------------------------------
 const roomCenter = new THREE.Vector3(0, 2.2, -2.2); // world position of the box center
 const roomHalf = new THREE.Vector3(4.5, 2.2, 4.5); // half extents (box is 9 x 4.4 x 9 m)
-const BLACK_HOLE_POSITION = new THREE.Vector3(144, 55, -277);
+const BLACK_HOLE_POSITION = new THREE.Vector3(-220, -150, -220);
 let ballRadius = 0.36; // set from the Earth radius below
 const collisionHalf = new THREE.Vector3(); // roomHalf - ballRadius, per axis
 
@@ -5041,7 +5041,7 @@ const BLACK_HOLE_DISK_OUTER = BLACK_HOLE_HORIZON_R * 6.4;
 const BLACK_HOLE_PULL_R = BLACK_HOLE_DISK_OUTER * 1.38;
 const BLACK_HOLE_TRIGGER_R = BLACK_HOLE_HORIZON_R * 1.08;
 const BLACK_HOLE_RETURN_COOLDOWN = 5.0;
-const BLACK_HOLE_SOUND_START_R = BLACK_HOLE_PULL_R * 3.3;
+const BLACK_HOLE_SOUND_START_R = BLACK_HOLE_PULL_R * 9.9;
 const BLACK_HOLE_SOUND_FULL_R = BLACK_HOLE_PULL_R * 0.9;
 const BLACK_HOLE_SOUND_MAX_GAIN = 1.0;
 const BLACK_HOLE_SHADER_TIME_SCALE = 2.85;
