@@ -533,8 +533,8 @@ function makeStarPoints(count, radius, size, opacity, seed) {
     positions.push(Math.cos(a) * r * d, z * d, Math.sin(a) * r * d);
     const c = palette[Math.floor(rand() * palette.length)];
     const distanceT = THREE.MathUtils.clamp((d / radius - 0.86) / 0.14, 0, 1);
-    const depthBrightness = THREE.MathUtils.lerp(1.16, 0.58, distanceT);
-    const twinkle = (0.52 + rand() * 0.48) * depthBrightness;
+    const depthBrightness = THREE.MathUtils.lerp(1.28, 0.78, distanceT);
+    const twinkle = (0.82 + rand() * 0.68) * depthBrightness;
     colors.push(c.r * twinkle, c.g * twinkle, c.b * twinkle);
   }
 
@@ -543,14 +543,13 @@ function makeStarPoints(count, radius, size, opacity, seed) {
   geo.setAttribute("color", new THREE.Float32BufferAttribute(colors, 3));
 
   const mat = new THREE.PointsMaterial({
-    map: makeStarTexture(),
     size,
     sizeAttenuation: false,
     transparent: true,
     opacity,
-    alphaTest: 0.09,
-    vertexColors: true,
     depthWrite: false,
+    toneMapped: false,
+    vertexColors: true,
     blending: THREE.AdditiveBlending,
   });
 
@@ -629,11 +628,11 @@ const spaceBackdrop = new THREE.Group();
 const spaceNebulaMaterials = [];
 spaceBackdrop.position.copy(roomCenter);
 spaceBackdrop.add(makeMilkyWayBand());
-spaceBackdrop.add(makeStarPoints(5600, 265, 0.54, 0.68, 67531));
-spaceBackdrop.add(makeStarPoints(3300, 185, 0.86, 0.98, 12077));
-spaceBackdrop.add(makeStarPoints(920, 212, 1.12, 0.82, 43789));
-spaceBackdrop.add(makeStarPoints(260, 178, 1.72, 1.0, 87103));
-spaceBackdrop.add(makeStarPoints(45, 172, 2.35, 0.96, 34129));
+spaceBackdrop.add(makeStarPoints(4100, 265, 1.0, 0.94, 67531));
+spaceBackdrop.add(makeStarPoints(2600, 185, 1.35, 0.98, 12077));
+spaceBackdrop.add(makeStarPoints(650, 212, 1.75, 0.92, 43789));
+spaceBackdrop.add(makeStarPoints(170, 178, 2.35, 0.98, 87103));
+spaceBackdrop.add(makeStarPoints(30, 172, 3.05, 0.95, 34129));
 
 function addGalaxyBand(position, width, height, opacity, rotationZ, seed) {
   const galaxy = new THREE.Mesh(
@@ -766,7 +765,7 @@ function makeSpiralGalaxyField(seed, textureSeed, count, radiusMin, radiusMax, o
 function addDistantSpiralGalaxies() {
   const fieldSeeds = [509773, 612049, 771221, 884399];
   for (let i = 0; i < fieldSeeds.length; i += 1) {
-    const field = makeSpiralGalaxyField(fieldSeeds[i], 190001 + i * 137, 400, 238 + i * 10, 344 + i * 8, 0.16);
+    const field = makeSpiralGalaxyField(fieldSeeds[i], 190001 + i * 137, 400, 238 + i * 10, 344 + i * 8, 0.04);
     spaceBackdrop.add(field);
   }
 }
