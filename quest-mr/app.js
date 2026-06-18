@@ -2869,6 +2869,7 @@ async function enterXr(mode) {
     poseDebugXrButton.visible = DEBUG_POSE_CAPTURE;
     poseDebugXrHitArea.visible = DEBUG_POSE_CAPTURE;
     poseDebugXrPanel.visible = DEBUG_POSE_CAPTURE;
+    resetToHome();
     statusEl.textContent = `${label} 起動中。左スティックで水平移動／右スティック上下で昇降。グリップでホームに復帰。地球に触れて弾く。終了は「終了」ボタンを指してトリガー。`;
   } catch (error) {
     console.error(error);
