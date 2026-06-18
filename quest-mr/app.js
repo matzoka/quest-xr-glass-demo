@@ -3573,12 +3573,23 @@ const APPROVED_XR_ICON_URLS = {
   klingon: "./assets/icon-klingon-c.png",
   blackHole: "./assets/icon-blackhole-c.png",
 };
+const RAW_APPROVED_ASSET_BASE = "https://raw.githubusercontent.com/matzoka/quest-xr-glass-demo/master/quest-mr/assets/";
 
-function loadApprovedXrIconTexture(kind) {
-  const tex = texLoader.load(APPROVED_XR_ICON_URLS[kind]);
+function loadApprovedAssetTexture(localUrl, fileName) {
+  const tex = texLoader.load(localUrl, undefined, undefined, () => {
+    texLoader.load(RAW_APPROVED_ASSET_BASE + fileName, (fallbackTex) => {
+      tex.image = fallbackTex.image;
+      tex.needsUpdate = true;
+    });
+  });
   tex.colorSpace = THREE.SRGBColorSpace;
   tex.anisotropy = maxAnisotropy;
   return tex;
+}
+
+function loadApprovedXrIconTexture(kind) {
+  const localUrl = APPROVED_XR_ICON_URLS[kind];
+  return loadApprovedAssetTexture(localUrl, localUrl.split("/").pop());
 }
 
 const XR_ICON_SPIN = 1.35;
@@ -3815,10 +3826,7 @@ function makeControllerHelpTexture() {
 }
 
 function loadControllerHelpDTexture() {
-  const tex = texLoader.load("./assets/controller-help-d.png");
-  tex.colorSpace = THREE.SRGBColorSpace;
-  tex.anisotropy = maxAnisotropy;
-  return tex;
+  return loadApprovedAssetTexture("./assets/controller-help-d.png", "controller-help-d.png");
 }
 
 let poseDebugPanelTexture = makePoseDebugPanelTexture();
