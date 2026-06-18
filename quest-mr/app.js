@@ -2817,6 +2817,7 @@ async function enterXr(mode) {
       enterpriseOrbitXrButton.visible = false;
       klingonXrButton.visible = false;
       poseDebugXrButton.visible = false;
+      poseDebugXrHitArea.visible = false;
       poseDebugXrPanel.visible = false;
       currentMode = "preview";
       updateSpaceBackdropMode();
@@ -2845,6 +2846,7 @@ async function enterXr(mode) {
     enterpriseOrbitXrButton.visible = true;
     klingonXrButton.visible = true;
     poseDebugXrButton.visible = DEBUG_POSE_CAPTURE;
+    poseDebugXrHitArea.visible = DEBUG_POSE_CAPTURE;
     poseDebugXrPanel.visible = DEBUG_POSE_CAPTURE;
     statusEl.textContent = `${label} 起動中。左スティックで水平移動／右スティック上下で昇降。グリップでホームに復帰。地球に触れて弾く。終了は「終了」ボタンを指してトリガー。`;
   } catch (error) {
@@ -2942,7 +2944,7 @@ function playPoseRecordSound() {
   const now = audioContext.currentTime;
   const master = audioContext.createGain();
   master.gain.setValueAtTime(0.0001, now);
-  master.gain.exponentialRampToValueAtTime(0.09, now + 0.012);
+  master.gain.exponentialRampToValueAtTime(0.18, now + 0.012);
   master.gain.exponentialRampToValueAtTime(0.0001, now + 0.28);
   master.connect(audioContext.destination);
 
@@ -3624,7 +3626,7 @@ klingonXrButton.visible = false;
 scene.add(klingonXrButton);
 
 const poseDebugXrButton = new THREE.Mesh(
-  new THREE.PlaneGeometry(0.5, 0.18),
+  new THREE.PlaneGeometry(0.56, 0.2),
   new THREE.MeshBasicMaterial({
     map: makeButtonTexture("視線記録", "rgba(90,62,150,0.95)"),
     transparent: true,
@@ -3637,8 +3639,23 @@ poseDebugXrButton.renderOrder = 999;
 poseDebugXrButton.visible = false;
 scene.add(poseDebugXrButton);
 
+const poseDebugXrHitArea = new THREE.Mesh(
+  new THREE.PlaneGeometry(0.78, 0.34),
+  new THREE.MeshBasicMaterial({
+    transparent: true,
+    opacity: 0,
+    depthTest: false,
+    depthWrite: false,
+    side: THREE.DoubleSide,
+  })
+);
+poseDebugXrHitArea.position.set(0, 2.2, -0.5);
+poseDebugXrHitArea.renderOrder = 1000;
+poseDebugXrHitArea.visible = false;
+scene.add(poseDebugXrHitArea);
+
 const poseDebugXrPanel = new THREE.Mesh(
-  new THREE.PlaneGeometry(0.76, 0.44),
+  new THREE.PlaneGeometry(0.9, 0.52),
   new THREE.MeshBasicMaterial({
     map: poseDebugPanelTexture,
     depthTest: false,
@@ -3665,6 +3682,7 @@ const grips = [];
 const gripPrev = []; // previous world position of each grip
 const gripValid = []; // whether gripPrev holds a usable value
 const gripTouching = []; // latch so one touch == one kick
+const poseDebugTouching = []; // latch so one hand press records once
 
 for (let index = 0; index < 2; index += 1) {
   const grip = renderer.xr.getControllerGrip(index);
@@ -3678,6 +3696,7 @@ for (let index = 0; index < 2; index += 1) {
   gripPrev.push(new THREE.Vector3());
   gripValid.push(false);
   gripTouching.push(false);
+  poseDebugTouching.push(false);
 
   const controller = renderer.xr.getController(index);
   controller.addEventListener("select", () => {
@@ -3688,14 +3707,14 @@ for (let index = 0; index < 2; index += 1) {
       raycaster.ray.origin.setFromMatrixPosition(controller.matrixWorld);
       raycaster.ray.direction.set(0, 0, -1).applyMatrix4(tempMatrix);
       const uiTargets = [exitButton, resetButton, enterpriseOrbitXrButton, klingonXrButton];
-      if (poseDebugXrButton.visible) uiTargets.push(poseDebugXrButton);
+      if (poseDebugXrButton.visible) uiTargets.push(poseDebugXrHitArea, poseDebugXrButton);
       const uiHit = raycaster.intersectObjects(uiTargets)[0];
       if (uiHit) {
         if (uiHit.object === exitButton) renderer.xr.getSession()?.end();
         else if (uiHit.object === resetButton) resetBall();
         else if (uiHit.object === enterpriseOrbitXrButton) requestEnterpriseRareOrbit();
         else if (uiHit.object === klingonXrButton) requestKlingonPass();
-        else if (uiHit.object === poseDebugXrButton) capturePoseDebugUrl();
+        else if (uiHit.object === poseDebugXrButton || uiHit.object === poseDebugXrHitArea) capturePoseDebugUrl();
         return;
       }
     }
@@ -3713,7 +3732,17 @@ for (let index = 0; index < 2; index += 1) {
 
 const MARKER_RADIUS = 0.025;
 
+function isPoseDebugButtonTouched(point) {
+  if (!poseDebugXrButton.visible) return false;
+  tmpVec.copy(point).sub(poseDebugXrButton.position);
+  const localX = tmpVec.dot(poseDebugButtonRight);
+  const localY = tmpVec.dot(poseDebugButtonUp);
+  const localZ = tmpVec.dot(poseDebugButtonForward);
+  return Math.abs(localX) <= 0.43 && Math.abs(localY) <= 0.2 && Math.abs(localZ) <= 0.12;
+}
+
 function updateHandTouch(dt) {
+  updatePoseDebugButton();
   tmpBall.copy(roomCenter).add(ballOffset);
 
   for (let i = 0; i < grips.length; i += 1) {
@@ -3721,10 +3750,18 @@ function updateHandTouch(dt) {
     if (!grip.visible) {
       gripValid[i] = false;
       gripTouching[i] = false;
+      poseDebugTouching[i] = false;
       continue;
     }
 
     tmpHand.setFromMatrixPosition(grip.matrixWorld);
+
+    const touchingPoseDebug = isPoseDebugButtonTouched(tmpHand);
+    if (touchingPoseDebug && !poseDebugTouching[i]) {
+      initAudio();
+      capturePoseDebugUrl();
+    }
+    poseDebugTouching[i] = touchingPoseDebug;
 
     let handSpeed = 0;
     if (gripValid[i] && dt > 0) {
@@ -3839,6 +3876,7 @@ function setPoseDebugPanelValues(values) {
 }
 
 function capturePoseDebugUrl() {
+  initAudio();
   const cam = getViewerPose(viewerWorld);
   const pos = viewerWorld.clone();
   const forward = viewerForward.clone().normalize();
@@ -3897,15 +3935,17 @@ function updatePoseDebugButton() {
   poseDebugButtonUp.set(0, 1, 0).applyQuaternion(cam.quaternion).normalize();
   poseDebugXrButton.position
     .copy(viewerWorld)
-    .addScaledVector(poseDebugButtonForward, 0.45)
-    .addScaledVector(poseDebugButtonRight, 0.3)
-    .addScaledVector(poseDebugButtonUp, -0.28);
+    .addScaledVector(poseDebugButtonForward, 0.6)
+    .addScaledVector(poseDebugButtonRight, 0.18)
+    .addScaledVector(poseDebugButtonUp, -0.14);
+  poseDebugXrHitArea.position.copy(poseDebugXrButton.position);
   poseDebugXrPanel.position
     .copy(viewerWorld)
-    .addScaledVector(poseDebugButtonForward, 0.46)
-    .addScaledVector(poseDebugButtonRight, 0.3)
-    .addScaledVector(poseDebugButtonUp, -0.62);
+    .addScaledVector(poseDebugButtonForward, 0.61)
+    .addScaledVector(poseDebugButtonRight, 0.18)
+    .addScaledVector(poseDebugButtonUp, -0.48);
   poseDebugXrButton.quaternion.copy(cam.quaternion);
+  poseDebugXrHitArea.quaternion.copy(cam.quaternion);
   poseDebugXrPanel.quaternion.copy(cam.quaternion);
 }
 
