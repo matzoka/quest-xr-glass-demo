@@ -13,6 +13,7 @@ const DEBUG_TOP_VIEW_DISTANCE = Number(new URLSearchParams(window.location.searc
 const DEBUG_BLACK_HOLE_VIEW = new URLSearchParams(window.location.search).has("blackHoleDebug");
 const DEBUG_BLACK_HOLE_FALL = new URLSearchParams(window.location.search).has("blackHoleFallDebug");
 const DEBUG_SOLAR_SPOT_VIEW = new URLSearchParams(window.location.search).has("solarSpotDebug");
+const DEBUG_COMET_VIEW = new URLSearchParams(window.location.search).has("cometDebug");
 
 // ---------------------------------------------------------------------------
 // Scene / renderer
@@ -76,6 +77,12 @@ camera.position.set(0, roomCenter.y, roomCenter.z + fitDist + roomHalf.z + 0.5);
 camera.lookAt(roomCenter);
 
 function applyDebugTopCamera() {
+  if (DEBUG_COMET_VIEW && !renderer.xr.isPresenting) {
+    camera.up.set(0, 1, 0);
+    camera.position.set(-12, 42, 12);
+    camera.lookAt(-50, 28, -70);
+    return;
+  }
   if (DEBUG_SOLAR_SPOT_VIEW && !renderer.xr.isPresenting) {
     camera.up.set(0, 1, 0);
     camera.position.set(-48, 30, -35);
@@ -1596,8 +1603,8 @@ function updateMeteor(dt) {
 }
 
 // ---------------------------------------------------------------------------
-// Distant comet: a rare background pass with a long tail. It is not aimed at
-// the Earth and lives in world space, far behind the room.
+// Long-period comet: a slow, solar-centered elliptical pass. It is not aimed at
+// the Earth; the tail points away from the Sun rather than simply behind motion.
 // ---------------------------------------------------------------------------
 function makeCometHeadTexture() {
   const canvas = document.createElement("canvas");
@@ -1677,36 +1684,54 @@ scene.add(comet);
 
 let cometActive = false;
 let cometT = 0;
-let cometDuration = 18;
-let nextCometAt = 12;
-const cometStart = new THREE.Vector3();
-const cometEnd = new THREE.Vector3();
+let cometDuration = 520;
+let nextCometAt = DEBUG_COMET_VIEW ? 0.5 : 12;
 const cometMoveDir = new THREE.Vector3();
 const cometTailDir = new THREE.Vector3();
 const cometViewDir = new THREE.Vector3();
 const cometPlaneY = new THREE.Vector3();
 const cometPlaneZ = new THREE.Vector3();
 const cometBasis = new THREE.Matrix4();
+const cometOrbitCenter = new THREE.Vector3();
+const cometOrbitMajor = new THREE.Vector3();
+const cometOrbitMinor = new THREE.Vector3();
+const cometOrbitPos = new THREE.Vector3();
+const cometPrevPos = new THREE.Vector3();
+let cometOrbitSemiMajor = 150;
+let cometOrbitSemiMinor = 92;
+let cometOrbitFocusOffset = 116;
+let cometOrbitStart = -2.25;
+let cometOrbitSpan = 2.05;
+let cometOrbitPerihelion = 34;
 
 function scheduleNextComet() {
-  nextCometAt = elapsed + 95 + Math.random() * 115;
+  nextCometAt = elapsed + 160 + Math.random() * 220;
 }
 
 function spawnComet() {
-  const side = Math.random() < 0.5 ? -1 : 1;
-  const z = roomCenter.z - 54 - Math.random() * 28;
-  const y = roomCenter.y + 14 + Math.random() * 14;
-  cometStart.set(roomCenter.x + side * (roomHalf.x + 42 + Math.random() * 20), y, z);
-  cometEnd.set(
-    roomCenter.x - side * (roomHalf.x + 54 + Math.random() * 24),
-    y - 8 - Math.random() * 12,
-    z + (Math.random() - 0.5) * 18
-  );
-  cometMoveDir.copy(cometEnd).sub(cometStart).normalize();
-  cometTailDir.copy(cometMoveDir).negate();
-  comet.position.copy(cometStart);
-  cometDuration = 20 + Math.random() * 8;
+  sunMesh.getWorldPosition(cometOrbitCenter);
+
+  const sign = DEBUG_COMET_VIEW ? 1 : Math.random() < 0.5 ? -1 : 1;
+  cometOrbitMajor.set(sign * 0.9, -0.06, -0.22).normalize();
+  cometOrbitMinor.set(DEBUG_COMET_VIEW ? 0.05 * sign : 0.08 * sign, DEBUG_COMET_VIEW ? 0.32 : 0.56, DEBUG_COMET_VIEW ? -0.95 : -0.83).normalize();
+  cometOrbitMinor.addScaledVector(cometOrbitMajor, -cometOrbitMinor.dot(cometOrbitMajor)).normalize();
+
+  cometOrbitPerihelion = SUN_RADIUS * (DEBUG_COMET_VIEW ? 1.7 : 1.55 + Math.random() * 0.55);
+  cometOrbitSemiMajor = DEBUG_COMET_VIEW ? 145 : 135 + Math.random() * 75;
+  cometOrbitFocusOffset = Math.max(1, cometOrbitSemiMajor - cometOrbitPerihelion);
+  cometOrbitSemiMinor = Math.sqrt(Math.max(1, cometOrbitSemiMajor * cometOrbitSemiMajor - cometOrbitFocusOffset * cometOrbitFocusOffset));
+  cometOrbitStart = DEBUG_COMET_VIEW ? 0.36 : -2.45 + Math.random() * 0.28;
+  cometOrbitSpan = DEBUG_COMET_VIEW ? 1.45 : 3.25 + Math.random() * 0.5;
+  cometDuration = DEBUG_COMET_VIEW ? 520 : 420 + Math.random() * 180;
   cometT = 0;
+  const startP = 0;
+  const startE = cometOrbitStart + cometOrbitSpan * startP;
+  cometOrbitPos
+    .copy(cometOrbitCenter)
+    .addScaledVector(cometOrbitMajor, Math.cos(startE) * cometOrbitSemiMajor - cometOrbitFocusOffset)
+    .addScaledVector(cometOrbitMinor, Math.sin(startE) * cometOrbitSemiMinor);
+  comet.position.copy(cometOrbitPos);
+  cometPrevPos.copy(cometOrbitPos);
   comet.visible = true;
   cometActive = true;
 }
@@ -1718,8 +1743,22 @@ function updateComet(dt) {
   }
   cometT += dt;
   const p = Math.min(1, cometT / cometDuration);
-  const fade = THREE.MathUtils.smoothstep(p, 0, 0.12) * (1 - THREE.MathUtils.smoothstep(p, 0.86, 1.0));
-  comet.position.lerpVectors(cometStart, cometEnd, p);
+  const fade = THREE.MathUtils.smoothstep(p, 0, 0.025) * (1 - THREE.MathUtils.smoothstep(p, 0.965, 1.0));
+  const orbitP = p;
+  const e = cometOrbitStart + cometOrbitSpan * orbitP;
+  sunMesh.getWorldPosition(cometOrbitCenter);
+  cometOrbitPos
+    .copy(cometOrbitCenter)
+    .addScaledVector(cometOrbitMajor, Math.cos(e) * cometOrbitSemiMajor - cometOrbitFocusOffset)
+    .addScaledVector(cometOrbitMinor, Math.sin(e) * cometOrbitSemiMinor);
+  cometMoveDir.copy(cometOrbitPos).sub(cometPrevPos);
+  if (cometMoveDir.lengthSq() < 1e-5) cometMoveDir.copy(cometOrbitMajor);
+  cometMoveDir.normalize();
+  comet.position.copy(cometOrbitPos);
+  cometPrevPos.copy(cometOrbitPos);
+  cometTailDir.copy(cometOrbitPos).sub(cometOrbitCenter);
+  if (cometTailDir.lengthSq() < 1e-5) cometTailDir.copy(cometMoveDir).negate();
+  cometTailDir.normalize();
   cometViewDir.copy(camera.position).sub(comet.position).normalize();
   cometPlaneY.crossVectors(cometViewDir, cometTailDir);
   if (cometPlaneY.lengthSq() < 1e-5) cometPlaneY.crossVectors(camera.up, cometTailDir);
@@ -1731,9 +1770,13 @@ function updateComet(dt) {
   }
   cometBasis.makeBasis(cometTailDir, cometPlaneY, cometPlaneZ);
   comet.quaternion.setFromRotationMatrix(cometBasis);
-  cometTail.material.opacity = 0.78 * fade;
-  cometHead.material.opacity = 0.9 * fade;
-  cometHead.scale.setScalar(1.18 + Math.sin(cometT * 4.2) * 0.08);
+  const sunDistance = cometOrbitPos.distanceTo(cometOrbitCenter);
+  const solarWind = THREE.MathUtils.clamp(1.15 - (sunDistance - cometOrbitPerihelion) / (cometOrbitSemiMajor * 0.92), 0.34, 1.0);
+  cometTail.material.opacity = 0.42 * fade + 0.48 * fade * solarWind;
+  cometHead.material.opacity = 0.62 * fade + 0.28 * fade * solarWind;
+  cometTail.scale.set(COMET_TAIL_LENGTH * (0.72 + solarWind * 0.55), COMET_TAIL_WIDTH * (0.75 + solarWind * 0.55), 1);
+  cometTail.position.x = (COMET_TAIL_LENGTH * (0.72 + solarWind * 0.55)) * 0.5;
+  cometHead.scale.setScalar(1.1 + solarWind * 0.48 + Math.sin(cometT * 1.35) * 0.04);
   if (p >= 1) {
     comet.visible = false;
     cometActive = false;
