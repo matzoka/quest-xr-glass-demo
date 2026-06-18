@@ -3737,49 +3737,39 @@ const saturnRingLightingUniforms = {
   uSaturnRadius: { value: SATURN_R },
 };
 
-function saturnRingDensity(t) {
-  const innerFade = THREE.MathUtils.smoothstep(t, 0.02, 0.1);
-  const outerFade = 1 - THREE.MathUtils.smoothstep(t, 0.9, 1.0);
-  const bRing = Math.exp(-Math.pow((t - 0.32) / 0.18, 2)) * 0.95;
-  const aRing = Math.exp(-Math.pow((t - 0.76) / 0.22, 2)) * 0.72;
-  const cRing = Math.exp(-Math.pow((t - 0.08) / 0.07, 2)) * 0.26;
-  const cassiniGap = 1 - Math.exp(-Math.pow((t - 0.61) / 0.035, 2)) * 0.92;
-  const enckeGap = 1 - Math.exp(-Math.pow((t - 0.83) / 0.012, 2)) * 0.72;
-  const fineBanding = 0.82 + 0.1 * Math.sin(t * 92) + 0.06 * Math.sin(t * 227);
-  return THREE.MathUtils.clamp((bRing + aRing + cRing) * innerFade * outerFade * cassiniGap * enckeGap * fineBanding, 0, 1);
-}
-
 function makeSaturnRingBandTexture() {
-  const rand = seededRandom(91027);
   const canvas = document.createElement("canvas");
   canvas.width = 4096;
-  canvas.height = 160;
+  canvas.height = 4;
   const ctx = canvas.getContext("2d");
   const img = ctx.createImageData(canvas.width, canvas.height);
   for (let x = 0; x < canvas.width; x += 1) {
     const t = x / (canvas.width - 1);
-    const density = saturnRingDensity(t);
-    const warm = 0.78 + 0.14 * Math.sin(t * 17.5) + 0.08 * Math.sin(t * 53.0);
+    const innerFade = THREE.MathUtils.smoothstep(t, 0.0, 0.035);
+    const outerFade = 1 - THREE.MathUtils.smoothstep(t, 0.93, 1.0);
+    const cRing = Math.exp(-Math.pow((t - 0.08) / 0.07, 2)) * 0.34;
+    const bRing = Math.exp(-Math.pow((t - 0.34) / 0.23, 2)) * 1.0;
+    const aRing = Math.exp(-Math.pow((t - 0.74) / 0.24, 2)) * 0.78;
+    const cassiniGap = 1 - Math.exp(-Math.pow((t - 0.61) / 0.026, 2)) * 0.96;
+    const enckeGap = 1 - Math.exp(-Math.pow((t - 0.84) / 0.008, 2)) * 0.62;
+    const fineBands = 0.92 + 0.055 * Math.sin(t * 180.0) + 0.03 * Math.sin(t * 430.0);
+    const density = THREE.MathUtils.clamp((cRing + bRing + aRing) * innerFade * outerFade * cassiniGap * enckeGap * fineBands, 0, 1);
+    const warm = 0.76 + 0.16 * Math.sin(t * 11.0) + 0.06 * Math.sin(t * 47.0);
     for (let y = 0; y < canvas.height; y += 1) {
-      const edge = Math.abs((y + 0.5) / canvas.height - 0.5);
-      const verticalFade = 1 - THREE.MathUtils.smoothstep(edge, 0.36, 0.5);
-      const grain = 0.58 + rand() * 0.78;
-      const microGap = rand() > 0.985 ? 0.34 + rand() * 0.34 : 1;
-      const alpha = THREE.MathUtils.clamp(density * verticalFade * grain * microGap * 178, 0, 210);
       const i = (y * canvas.width + x) * 4;
-      img.data[i + 0] = Math.round(178 + 42 * warm + rand() * 14);
-      img.data[i + 1] = Math.round(160 + 38 * warm + rand() * 12);
-      img.data[i + 2] = Math.round(132 + 34 * warm + rand() * 10);
-      img.data[i + 3] = alpha;
+      img.data[i + 0] = Math.round(170 + 56 * warm);
+      img.data[i + 1] = Math.round(154 + 48 * warm);
+      img.data[i + 2] = Math.round(122 + 38 * warm);
+      img.data[i + 3] = Math.round(THREE.MathUtils.clamp(density * 242, 0, 242));
     }
   }
   ctx.putImageData(img, 0, 0);
   const tex = new THREE.CanvasTexture(canvas);
   tex.colorSpace = THREE.SRGBColorSpace;
   tex.anisotropy = maxAnisotropy;
-  tex.generateMipmaps = false;
-  tex.minFilter = THREE.NearestFilter;
-  tex.magFilter = THREE.NearestFilter;
+  tex.generateMipmaps = true;
+  tex.minFilter = THREE.LinearMipmapLinearFilter;
+  tex.magFilter = THREE.LinearFilter;
   tex.wrapS = THREE.ClampToEdgeWrapping;
   tex.wrapT = THREE.ClampToEdgeWrapping;
   return tex;
@@ -3829,84 +3819,19 @@ ${SATURN_RING_SHADE_GLSL}
 void main(){
   vec4 tex=texture2D(uTex,vUv);
   if(tex.a<0.012) discard;
+  float radial=clamp(vUv.x,0.0,1.0);
+  float band=0.94+0.06*sin(radial*120.0)+0.035*sin(radial*310.0);
   float light=ringLight(vWorldPos);
   float shadow=saturnBodyShadow(vWorldPos);
-  vec3 color=tex.rgb*light*mix(1.0,0.16,shadow);
-  float alpha=tex.a*(0.50+0.18*light)*mix(1.0,0.42,shadow);
+  vec3 base=mix(vec3(0.64,0.58,0.44),vec3(0.96,0.88,0.66),max(max(tex.r,tex.g),tex.b));
+  vec3 color=base*band*(0.46+0.76*light)*mix(1.0,0.18,shadow);
+  float alpha=clamp(tex.a*1.52*(0.74+0.26*light)*mix(1.0,0.48,shadow),0.0,0.96);
   gl_FragColor=vec4(color,alpha);
 }`,
     transparent: true,
     side: THREE.DoubleSide,
     depthWrite: false,
   });
-}
-
-function makeSaturnRingParticleMaterial() {
-  return new THREE.ShaderMaterial({
-    uniforms: {
-      uPointSizePx: { value: 3.0 },
-      ...saturnRingLightingUniforms,
-    },
-    vertexShader: `
-attribute vec3 color;
-uniform float uPointSizePx;
-varying vec3 vColor;
-varying vec3 vWorldPos;
-void main(){
-  vColor=color;
-  vec4 worldPos=modelMatrix*vec4(position,1.0);
-  vWorldPos=worldPos.xyz;
-  gl_Position=projectionMatrix*viewMatrix*worldPos;
-  gl_PointSize=uPointSizePx;
-}`,
-    fragmentShader: `
-precision mediump float;
-uniform vec3 uSunDirWorld;
-uniform vec3 uSaturnCenterWorld;
-uniform float uSaturnRadius;
-varying vec3 vColor;
-varying vec3 vWorldPos;
-${SATURN_RING_SHADE_GLSL}
-void main(){
-  vec2 p=gl_PointCoord-vec2(0.5);
-  if(dot(p,p)>0.24) discard;
-  float light=ringLight(vWorldPos);
-  float shadow=saturnBodyShadow(vWorldPos);
-  vec3 color=vColor*(0.86+0.42*light)*mix(1.0,0.14,shadow);
-  float alpha=(0.92+0.08*light)*mix(1.0,0.34,shadow);
-  gl_FragColor=vec4(color,alpha);
-}`,
-    transparent: true,
-    depthWrite: false,
-    vertexColors: true,
-  });
-}
-
-function makeSaturnRingParticles(innerRadius, outerRadius, count) {
-  const rand = seededRandom(53191);
-  const positions = [];
-  const colors = [];
-  const span = outerRadius - innerRadius;
-  for (let i = 0; i < count; i += 1) {
-    let t = rand();
-    for (let tries = 0; tries < 6 && rand() > saturnRingDensity(t); tries += 1) {
-      t = rand();
-    }
-    const radius = innerRadius + span * t + (rand() - 0.5) * span * 0.006;
-    const angle = rand() * Math.PI * 2;
-    const vertical = (rand() - 0.5) * SATURN_R * 0.008;
-    positions.push(Math.cos(angle) * radius, vertical, Math.sin(angle) * radius);
-    const density = saturnRingDensity(t);
-    const brightness = (0.5 + density * 0.34) * (0.74 + rand() * 0.28);
-    colors.push(0.9 * brightness, 0.78 * brightness, 0.58 * brightness);
-  }
-  const geo = new THREE.BufferGeometry();
-  geo.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
-  geo.setAttribute("color", new THREE.Float32BufferAttribute(colors, 3));
-  return new THREE.Points(
-    geo,
-    makeSaturnRingParticleMaterial()
-  );
 }
 
 const saturnRingInner = SATURN_R * 1.2;
@@ -3918,7 +3843,7 @@ const rvec = new THREE.Vector3();
 for (let i = 0; i < rpos.count; i += 1) {
   rvec.fromBufferAttribute(rpos, i);
   const u = (rvec.length() - saturnRingInner) / (saturnRingOuter - saturnRingInner);
-  const v = (Math.atan2(rvec.y, rvec.x) + Math.PI) / (Math.PI * 2);
+  const v = 1.0;
   ruv.setXY(i, u, v);
 }
 const saturnRing = new THREE.Mesh(
@@ -3928,9 +3853,6 @@ const saturnRing = new THREE.Mesh(
 saturnRing.rotation.x = -Math.PI / 2; // lay flat in the equatorial plane
 saturnRing.renderOrder = 2;
 saturnGroup.add(saturnRing);
-const saturnRingParticles = makeSaturnRingParticles(saturnRingInner, saturnRingOuter, 120000);
-saturnRingParticles.renderOrder = 3;
-saturnGroup.add(saturnRingParticles);
 
 // ---------------------------------------------------------------------------
 // Other planets, scattered well outside the room so they read as distant
