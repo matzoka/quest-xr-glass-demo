@@ -2869,6 +2869,7 @@ function initAudio() {
   loadWarpBuffer();
   loadRareOrbitBuffer();
   loadKlingonBuffer();
+  loadBlackHoleBuffer();
   loadOneShotAudio(klingonArrivalSound);
   loadOneShotAudio(klingonDepartureSound);
 }
@@ -2991,6 +2992,13 @@ let klingonBufferTried = false;
 let klingonBufferPromise = null;
 let klingonSource = null;
 let klingonAudioWanted = false;
+let blackHoleBuffer = null;
+let blackHoleBufferTried = false;
+let blackHoleBufferPromise = null;
+let blackHoleRumbleSource = null;
+let blackHoleRumbleGain = null;
+let blackHoleRumbleFilter = null;
+let blackHoleRumbleTargetGain = 0;
 const klingonArrivalSound = {
   url: "./assets/star-trek-tng-transporter.mp3",
   label: "Klingon arrival sound",
@@ -3046,6 +3054,103 @@ async function loadRareOrbitBuffer() {
     console.error("rare orbit audio load failed:", e);
   }
 }
+
+function loadBlackHoleBuffer() {
+  if (blackHoleBuffer || !audioContext) return Promise.resolve(blackHoleBuffer);
+  if (blackHoleBufferPromise) return blackHoleBufferPromise;
+  blackHoleBufferTried = true;
+  blackHoleBufferPromise = fetch("./assets/blackhole.mp3")
+    .then((res) => {
+      if (!res.ok) throw new Error("HTTP " + res.status);
+      return res.arrayBuffer();
+    })
+    .then((arrayBuffer) => audioContext.decodeAudioData(arrayBuffer))
+    .then((buffer) => {
+      blackHoleBuffer = buffer;
+      if (blackHoleRumbleTargetGain > 0.001) startBlackHoleRumble();
+      return buffer;
+    })
+    .catch((e) => {
+      console.error("black hole sound load failed:", e);
+      return null;
+    })
+    .finally(() => {
+      blackHoleBufferPromise = null;
+    });
+  return blackHoleBufferPromise;
+}
+
+function startBlackHoleRumble() {
+  if (!audioContext || audioContext.state !== "running") return;
+  if (!blackHoleBuffer && !blackHoleBufferPromise && !blackHoleBufferTried) loadBlackHoleBuffer();
+  if (!blackHoleBuffer || blackHoleRumbleSource) return;
+
+  try {
+    blackHoleRumbleGain = audioContext.createGain();
+    blackHoleRumbleGain.gain.value = 0.0001;
+    blackHoleRumbleFilter = audioContext.createBiquadFilter();
+    blackHoleRumbleFilter.type = "lowpass";
+    blackHoleRumbleFilter.frequency.value = 120;
+    blackHoleRumbleFilter.Q.value = 0.7;
+    blackHoleRumbleSource = audioContext.createBufferSource();
+    blackHoleRumbleSource.buffer = blackHoleBuffer;
+    blackHoleRumbleSource.loop = true;
+    blackHoleRumbleSource.connect(blackHoleRumbleFilter);
+    blackHoleRumbleFilter.connect(blackHoleRumbleGain);
+    blackHoleRumbleGain.connect(audioContext.destination);
+    blackHoleRumbleSource.onended = () => {
+      blackHoleRumbleSource = null;
+    };
+    blackHoleRumbleSource.start();
+  } catch (e) {
+    blackHoleRumbleSource = null;
+    blackHoleRumbleGain = null;
+    blackHoleRumbleFilter = null;
+  }
+}
+
+function getBlackHoleRumbleGain(distance) {
+  const t = THREE.MathUtils.clamp(
+    (BLACK_HOLE_SOUND_START_R - distance) / (BLACK_HOLE_SOUND_START_R - BLACK_HOLE_SOUND_FULL_R),
+    0,
+    1
+  );
+  return Math.pow(smoothFade01(t), 1.28) * BLACK_HOLE_SOUND_MAX_GAIN;
+}
+
+function updateBlackHoleRumble(distance, dt, timeSeconds) {
+  blackHoleRumbleTargetGain = getBlackHoleRumbleGain(distance);
+  if (!audioContext) return;
+  if (audioContext.state === "suspended") return;
+  if (!blackHoleBuffer && !blackHoleBufferPromise && !blackHoleBufferTried) loadBlackHoleBuffer();
+  if (blackHoleRumbleTargetGain > 0.001 && !blackHoleRumbleSource) startBlackHoleRumble();
+  if (!blackHoleRumbleGain) return;
+
+  const now = audioContext.currentTime;
+  const gain = Math.max(0.0001, blackHoleRumbleTargetGain);
+  blackHoleRumbleGain.gain.cancelScheduledValues(now);
+  blackHoleRumbleGain.gain.setTargetAtTime(gain, now, 0.22);
+
+  const intensity = THREE.MathUtils.clamp(blackHoleRumbleTargetGain / BLACK_HOLE_SOUND_MAX_GAIN, 0, 1);
+  if (blackHoleRumbleFilter) {
+    blackHoleRumbleFilter.frequency.setTargetAtTime(90 + intensity * 460, now, 0.28);
+    blackHoleRumbleFilter.Q.setTargetAtTime(0.65 + intensity * 1.5, now, 0.35);
+  }
+  if (blackHoleRumbleSource?.playbackRate) {
+    blackHoleRumbleSource.playbackRate.setTargetAtTime(0.94 + intensity * 0.12 + Math.sin(timeSeconds * 0.7) * 0.006, now, 0.45);
+  }
+}
+
+window.__questXrDebug = Object.assign(window.__questXrDebug || {}, {
+  getBlackHoleRumbleState: () => ({
+    audioState: audioContext?.state || "none",
+    bufferLoaded: !!blackHoleBuffer,
+    sourceActive: !!blackHoleRumbleSource,
+    targetGain: blackHoleRumbleTargetGain,
+    currentGain: blackHoleRumbleGain?.gain.value || 0,
+    filterFrequency: blackHoleRumbleFilter?.frequency.value || 0,
+  }),
+});
 
 function loadKlingonBuffer() {
   if (klingonBuffer || !audioContext) return Promise.resolve(klingonBuffer);
@@ -4646,6 +4751,9 @@ const BLACK_HOLE_DISK_OUTER = BLACK_HOLE_HORIZON_R * 6.4;
 const BLACK_HOLE_PULL_R = BLACK_HOLE_DISK_OUTER * 1.38;
 const BLACK_HOLE_TRIGGER_R = BLACK_HOLE_HORIZON_R * 1.08;
 const BLACK_HOLE_RETURN_COOLDOWN = 5.0;
+const BLACK_HOLE_SOUND_START_R = BLACK_HOLE_PULL_R * 3.3;
+const BLACK_HOLE_SOUND_FULL_R = BLACK_HOLE_PULL_R * 0.9;
+const BLACK_HOLE_SOUND_MAX_GAIN = 0.18;
 const blackHoleGroup = new THREE.Group();
 blackHoleGroup.position.copy(BLACK_HOLE_POSITION);
 scene.add(blackHoleGroup);
@@ -4885,6 +4993,7 @@ function updateBlackHole(dt, timeSeconds) {
   blackHoleTmp.copy(viewerWorld).sub(BLACK_HOLE_POSITION);
   const distance = blackHoleTmp.length();
   blackHoleLens.lookAt(viewerWorld);
+  updateBlackHoleRumble(distance, dt, timeSeconds);
 
   if (blackHoleCooldown > 0) blackHoleCooldown = Math.max(0, blackHoleCooldown - dt);
 
