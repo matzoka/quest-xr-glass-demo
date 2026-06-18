@@ -13,7 +13,7 @@ const klingonButton = document.querySelector("#klingonButton");
 const blackHoleTourButton = document.querySelector("#blackHoleTourButton");
 const controllerHelpButton = document.querySelector("#controllerHelpButton");
 const poseDebugOutputEl = document.querySelector("#poseDebugOutput");
-const APP_VERSION = "v2026.06.19.25";
+const APP_VERSION = "v2026.06.19.26";
 const DEBUG_TOP_VIEW = new URLSearchParams(window.location.search).has("topDebug");
 const DEBUG_TOP_VIEW_DISTANCE = Number(new URLSearchParams(window.location.search).get("topDebugDist"));
 const DEBUG_BLACK_HOLE_VIEW = new URLSearchParams(window.location.search).has("blackHoleDebug");
@@ -4433,6 +4433,57 @@ const gripValid = []; // whether gripPrev holds a usable value
 const gripTouching = []; // latch so one touch == one kick
 const poseDebugTouching = []; // latch so one hand press records once
 const xrButtonTouching = []; // latch so a physical button press fires once
+const xrAimControllers = [];
+const xrAimRays = [];
+const xrAimReticles = [];
+const XR_AIM_RAY_LENGTH = 2.4;
+
+function getXrUiTargets() {
+  const targets = [
+    ...xrButtonHitTargets,
+    exitButton,
+    resetButton,
+    enterpriseOrbitXrButton,
+    klingonXrButton,
+    blackHoleTourXrButton,
+  ];
+  if (poseDebugXrButton.visible) targets.push(poseDebugXrHitArea, poseDebugXrButton);
+  return targets;
+}
+
+function makeXrAimRay() {
+  const line = new THREE.Line(
+    new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(0, 0, -0.035), new THREE.Vector3(0, 0, -1)]),
+    new THREE.LineBasicMaterial({
+      color: 0x8ff7ff,
+      transparent: true,
+      opacity: 0.72,
+      depthTest: false,
+    })
+  );
+  line.scale.z = XR_AIM_RAY_LENGTH;
+  line.renderOrder = 1304;
+  line.visible = false;
+  return line;
+}
+
+function makeXrAimReticle() {
+  const reticle = new THREE.Mesh(
+    new THREE.RingGeometry(0.018, 0.031, 36),
+    new THREE.MeshBasicMaterial({
+      color: 0x7affa7,
+      transparent: true,
+      opacity: 0.92,
+      depthTest: false,
+      side: THREE.DoubleSide,
+      toneMapped: false,
+    })
+  );
+  reticle.renderOrder = 1305;
+  reticle.visible = false;
+  scene.add(reticle);
+  return reticle;
+}
 
 for (let index = 0; index < 2; index += 1) {
   const grip = renderer.xr.getControllerGrip(index);
@@ -4470,6 +4521,12 @@ for (let index = 0; index < 2; index += 1) {
   xrButtonTouching.push(null);
 
   const controller = renderer.xr.getController(index);
+  const aimRay = makeXrAimRay();
+  const aimReticle = makeXrAimReticle();
+  controller.add(aimRay);
+  xrAimControllers.push(controller);
+  xrAimRays.push(aimRay);
+  xrAimReticles.push(aimReticle);
   controller.addEventListener("select", () => {
     initAudio();
     // If aiming at the Exit button, leave the XR session instead of launching.
@@ -4477,16 +4534,7 @@ for (let index = 0; index < 2; index += 1) {
       tempMatrix.identity().extractRotation(controller.matrixWorld);
       raycaster.ray.origin.setFromMatrixPosition(controller.matrixWorld);
       raycaster.ray.direction.set(0, 0, -1).applyMatrix4(tempMatrix);
-      const uiTargets = [
-        ...xrButtonHitTargets,
-        exitButton,
-        resetButton,
-        enterpriseOrbitXrButton,
-        klingonXrButton,
-        blackHoleTourXrButton,
-      ];
-      if (poseDebugXrButton.visible) uiTargets.push(poseDebugXrHitArea, poseDebugXrButton);
-      const uiHit = raycaster.intersectObjects(uiTargets)[0];
+      const uiHit = raycaster.intersectObjects(getXrUiTargets())[0];
       if (uiHit) {
         const action = xrButtonActions.get(uiHit.object);
         if (action) activateXrButtonAction(action);
@@ -4568,6 +4616,42 @@ function updateHandTouch(dt) {
       playCollisionSound();
     }
     gripTouching[i] = touching;
+  }
+}
+
+function updateXrAimRays() {
+  const visible = renderer.xr.isPresenting && isViewerInsideEarthFrame() && exitButton.visible;
+  const uiTargets = visible ? getXrUiTargets() : [];
+  for (let i = 0; i < xrAimControllers.length; i += 1) {
+    const controller = xrAimControllers[i];
+    const ray = xrAimRays[i];
+    const reticle = xrAimReticles[i];
+    if (!visible || !controller.visible) {
+      ray.visible = false;
+      reticle.visible = false;
+      continue;
+    }
+
+    tempMatrix.identity().extractRotation(controller.matrixWorld);
+    raycaster.ray.origin.setFromMatrixPosition(controller.matrixWorld);
+    raycaster.ray.direction.set(0, 0, -1).applyMatrix4(tempMatrix);
+    const uiHit = raycaster.intersectObjects(uiTargets)[0];
+    const hitDistance = uiHit ? Math.max(0.08, Math.min(XR_AIM_RAY_LENGTH, uiHit.distance)) : XR_AIM_RAY_LENGTH;
+    const activeColor = uiHit ? 0x7affa7 : 0x8ff7ff;
+
+    ray.scale.z = hitDistance;
+    ray.material.color.setHex(activeColor);
+    ray.material.opacity = uiHit ? 0.92 : 0.62;
+    ray.visible = true;
+
+    if (uiHit) {
+      reticle.position.copy(uiHit.point).addScaledVector(raycaster.ray.direction, -0.006);
+      reticle.quaternion.copy(controller.getWorldQuaternion(new THREE.Quaternion()));
+      reticle.material.color.setHex(activeColor);
+      reticle.visible = true;
+    } else {
+      reticle.visible = false;
+    }
   }
 }
 
@@ -6990,6 +7074,7 @@ renderer.setAnimationLoop((timestamp) => {
 
   keyboardSteer();
   updateHandPresence();
+  updateXrAimRays();
   updateHandTouch(dt);
   updateLocomotion(dt);
 
