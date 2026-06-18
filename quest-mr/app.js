@@ -12,6 +12,7 @@ const DEBUG_TOP_VIEW = new URLSearchParams(window.location.search).has("topDebug
 const DEBUG_TOP_VIEW_DISTANCE = Number(new URLSearchParams(window.location.search).get("topDebugDist"));
 const DEBUG_BLACK_HOLE_VIEW = new URLSearchParams(window.location.search).has("blackHoleDebug");
 const DEBUG_BLACK_HOLE_FALL = new URLSearchParams(window.location.search).has("blackHoleFallDebug");
+const DEBUG_SOLAR_SPOT_VIEW = new URLSearchParams(window.location.search).has("solarSpotDebug");
 
 // ---------------------------------------------------------------------------
 // Scene / renderer
@@ -75,6 +76,12 @@ camera.position.set(0, roomCenter.y, roomCenter.z + fitDist + roomHalf.z + 0.5);
 camera.lookAt(roomCenter);
 
 function applyDebugTopCamera() {
+  if (DEBUG_SOLAR_SPOT_VIEW && !renderer.xr.isPresenting) {
+    camera.up.set(0, 1, 0);
+    camera.position.set(-48, 30, -35);
+    camera.lookAt(-48, 30, -62);
+    return;
+  }
   if (DEBUG_BLACK_HOLE_VIEW && !renderer.xr.isPresenting) {
     camera.up.set(0, 1, 0);
     camera.position.copy(BLACK_HOLE_POSITION).add(new THREE.Vector3(-1.4, 1.15, 8.9));
@@ -3735,29 +3742,30 @@ const SOLAR_SPOT_FRAG = `
 precision mediump float;
 uniform vec4 uSpotA;
 uniform vec4 uSpotB;
+uniform float uSpotOpacity;
 uniform float uTime;
-varying vec2 vUv;
-float spotMask(vec2 uv, vec4 spot, float seed){
-  float opacity=spot.w;
+varying vec3 vLocalDir;
+float spotMask(vec3 dir, vec4 spot, float opacity, float seed){
   if(opacity<=0.001) return 0.0;
-  float du=abs(fract(uv.x-spot.x+0.5)-0.5);
-  float dv=uv.y-spot.y;
-  float d=sqrt(du*du*1.7+dv*dv);
-  float penumbra=1.0-smoothstep(spot.z*0.62,spot.z*1.25,d);
-  float umbra=1.0-smoothstep(spot.z*0.18,spot.z*0.56,d);
-  float mottled=0.72+0.28*sin((uv.x+seed)*84.0+uTime*0.35)*sin((uv.y-seed)*67.0-uTime*0.22);
+  vec3 center=normalize(spot.xyz);
+  float radius=spot.w;
+  float angular=acos(clamp(dot(normalize(dir),center),-1.0,1.0));
+  float penumbra=1.0-smoothstep(radius*0.58,radius*1.22,angular);
+  float umbra=1.0-smoothstep(radius*0.2,radius*0.52,angular);
+  float mottled=0.72+0.28*sin((dir.x+seed)*46.0+uTime*0.35)*sin((dir.y-dir.z-seed)*53.0-uTime*0.22);
   return opacity*(penumbra*0.32+umbra*0.88)*mottled;
 }
 void main(){
-  float mask=max(spotMask(vUv,uSpotA,0.17),spotMask(vUv,uSpotB,0.53));
+  float mask=max(spotMask(vLocalDir,uSpotA,uSpotOpacity,0.17),spotMask(vLocalDir,uSpotB,uSpotOpacity*0.8,0.53));
   if(mask<0.01) discard;
   vec3 col=mix(vec3(0.12,0.018,0.0),vec3(0.0,0.0,0.0),smoothstep(0.34,0.82,mask));
   gl_FragColor=vec4(col,clamp(mask*1.05,0.0,0.96));
 }`;
 
 const solarSpotUniforms = {
-  uSpotA: { value: new THREE.Vector4(0, 0, 0, 0) },
-  uSpotB: { value: new THREE.Vector4(0, 0, 0, 0) },
+  uSpotA: { value: new THREE.Vector4(0, 0, 1, 0.06) },
+  uSpotB: { value: new THREE.Vector4(0, 0, 1, 0.035) },
+  uSpotOpacity: { value: 0 },
   uTime: { value: 0 },
 };
 const solarSpotMesh = new THREE.Mesh(
@@ -3765,9 +3773,9 @@ const solarSpotMesh = new THREE.Mesh(
   new THREE.ShaderMaterial({
     uniforms: solarSpotUniforms,
     vertexShader: `
-varying vec2 vUv;
+varying vec3 vLocalDir;
 void main(){
-  vUv=uv;
+  vLocalDir=normalize(position);
   gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0);
 }`,
     fragmentShader: SOLAR_SPOT_FRAG,
@@ -3783,20 +3791,13 @@ sunMesh.add(solarSpotMesh);
 let solarSpotActive = false;
 let solarSpotT = 0;
 let solarSpotDuration = 46;
-let nextSolarSpotAt = 70;
+let nextSolarSpotAt = DEBUG_SOLAR_SPOT_VIEW ? 0.5 : 70;
 const solarSpotViewLocal = new THREE.Vector3();
 const solarSpotAxisA = new THREE.Vector3();
 const solarSpotAxisB = new THREE.Vector3();
 const solarSpotDir = new THREE.Vector3();
 const solarSpotTmp = new THREE.Vector3();
 const solarSpotPole = new THREE.Vector3(0, 1, 0);
-
-function dirToSunUv(dir) {
-  const phi = Math.atan2(dir.z, -dir.x);
-  const u = THREE.MathUtils.euclideanModulo(phi, Math.PI * 2) / (Math.PI * 2);
-  const v = Math.acos(THREE.MathUtils.clamp(dir.y, -1, 1)) / Math.PI;
-  return { u, v };
-}
 
 function scheduleNextSolarSpot() {
   nextSolarSpotAt = elapsed + 170 + Math.random() * 190;
@@ -3821,16 +3822,14 @@ function spawnSolarSpot() {
     .addScaledVector(solarSpotAxisB, Math.sin(angle) * offset * 0.72)
     .normalize();
 
-  const uv = dirToSunUv(solarSpotDir);
-  const radius = 0.019 + Math.random() * 0.012;
-  solarSpotUniforms.uSpotA.value.set(uv.u, uv.v, radius, 0);
+  const radius = 0.055 + Math.random() * 0.034;
+  solarSpotUniforms.uSpotA.value.set(solarSpotDir.x, solarSpotDir.y, solarSpotDir.z, radius);
 
   solarSpotTmp.copy(solarSpotDir).addScaledVector(solarSpotAxisA, (Math.random() - 0.5) * 0.11).addScaledVector(
     solarSpotAxisB,
     (Math.random() - 0.5) * 0.08
   ).normalize();
-  const uvB = dirToSunUv(solarSpotTmp);
-  solarSpotUniforms.uSpotB.value.set(uvB.u, uvB.v, radius * (0.45 + Math.random() * 0.25), 0);
+  solarSpotUniforms.uSpotB.value.set(solarSpotTmp.x, solarSpotTmp.y, solarSpotTmp.z, radius * (0.45 + Math.random() * 0.25));
 
   solarSpotDuration = 38 + Math.random() * 24;
   solarSpotT = 0;
@@ -3847,12 +3846,10 @@ function updateSolarSpots(dt) {
   solarSpotT += dt;
   const p = Math.min(1, solarSpotT / solarSpotDuration);
   const fade = THREE.MathUtils.smoothstep(p, 0, 0.14) * (1 - THREE.MathUtils.smoothstep(p, 0.78, 1.0));
-  solarSpotUniforms.uSpotA.value.w = fade;
-  solarSpotUniforms.uSpotB.value.w = fade * 0.8;
+  solarSpotUniforms.uSpotOpacity.value = fade;
   if (p >= 1) {
     solarSpotActive = false;
-    solarSpotUniforms.uSpotA.value.w = 0;
-    solarSpotUniforms.uSpotB.value.w = 0;
+    solarSpotUniforms.uSpotOpacity.value = 0;
     scheduleNextSolarSpot();
   }
 }
