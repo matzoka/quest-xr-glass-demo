@@ -2830,6 +2830,7 @@ async function enterXr(mode) {
       klingonXrButton.visible = false;
       blackHoleTourXrButton.visible = false;
       controllerHelpXrButton.visible = false;
+      setXrButtonVolumesVisible(false);
       enterpriseOrbitXrIcon.visible = false;
       klingonXrIcon.visible = false;
       blackHoleTourXrIcon.visible = false;
@@ -2866,6 +2867,7 @@ async function enterXr(mode) {
     klingonXrButton.visible = true;
     blackHoleTourXrButton.visible = true;
     controllerHelpXrButton.visible = true;
+    setXrButtonVolumesVisible(true);
     enterpriseOrbitXrIcon.visible = true;
     klingonXrIcon.visible = true;
     blackHoleTourXrIcon.visible = true;
@@ -2924,6 +2926,7 @@ function initAudio() {
   loadRareOrbitBuffer();
   loadKlingonBuffer();
   loadBlackHoleBuffer();
+  loadOneShotAudio(xrButtonPressSound);
   loadOneShotAudio(klingonArrivalSound);
   loadOneShotAudio(klingonDepartureSound);
 }
@@ -3088,6 +3091,14 @@ let blackHoleRumbleSource = null;
 let blackHoleRumbleGain = null;
 let blackHoleRumbleFilter = null;
 let blackHoleRumbleTargetGain = 0;
+const xrButtonPressSound = {
+  url: "./assets/xr-button-press.mp3",
+  label: "XR button press sound",
+  buffer: null,
+  promise: null,
+  source: null,
+  failed: false,
+};
 const klingonArrivalSound = {
   url: "./assets/star-trek-tng-transporter.mp3",
   label: "Klingon arrival sound",
@@ -3330,6 +3341,10 @@ function playOneShotAudio(sound, volume = 0.72) {
     sound.source = null;
     return 0;
   }
+}
+
+function playXrButtonPressSound() {
+  return playOneShotAudio(xrButtonPressSound, 0.86);
 }
 
 function playKlingonArrivalSound() {
@@ -3604,10 +3619,18 @@ const XR_BUTTON_Y0 = 1.42;
 const XR_BUTTON_STEP = 0.165;
 const XR_BUTTON_W = 0.62;
 const XR_BUTTON_H = 0.135;
+const XR_BUTTON_DEPTH = 0.12;
+const XR_BUTTON_HIT_W = XR_BUTTON_W + 0.14;
+const XR_BUTTON_HIT_H = XR_BUTTON_H + 0.11;
+const XR_BUTTON_HIT_DEPTH = 0.5;
 const XR_ICON_Z = 0.39;
 const XR_ICON_SIZE = 0.19;
 const XR_ICON_ASPECT_H = 100 / 170;
 const xrButtonIcons = [];
+const xrButtonVolumes = [];
+const xrButtonHitTargets = [];
+const xrButtonActions = new Map();
+let lastXrButtonActionAt = -Infinity;
 
 function xrButtonY(row) {
   return XR_BUTTON_Y0 + row * XR_BUTTON_STEP;
@@ -3616,6 +3639,73 @@ function xrButtonY(row) {
 function placeXrButton(mesh, row) {
   mesh.position.set(XR_BUTTON_X, xrButtonY(row), XR_BUTTON_Z);
   mesh.rotation.y = XR_BUTTON_ROT_Y;
+}
+
+function makeXrButtonBody(row, accent = 0x2fbfff) {
+  const body = new THREE.Mesh(
+    new THREE.BoxGeometry(XR_BUTTON_W + 0.035, XR_BUTTON_H + 0.028, XR_BUTTON_DEPTH),
+    new THREE.MeshStandardMaterial({
+      color: 0x07111a,
+      emissive: accent,
+      emissiveIntensity: 0.12,
+      metalness: 0.24,
+      roughness: 0.36,
+      transparent: true,
+      opacity: 0.88,
+    })
+  );
+  body.position.set(XR_BUTTON_X, xrButtonY(row), XR_BUTTON_Z);
+  body.rotation.y = XR_BUTTON_ROT_Y;
+  body.renderOrder = 998;
+  body.visible = false;
+  scene.add(body);
+
+  const edge = new THREE.LineSegments(
+    new THREE.EdgesGeometry(body.geometry),
+    new THREE.LineBasicMaterial({
+      color: accent,
+      transparent: true,
+      opacity: 0.38,
+      depthTest: false,
+    })
+  );
+  edge.renderOrder = 1000;
+  body.add(edge);
+  return body;
+}
+
+function makeXrButtonHitBox(row, action) {
+  const hitBox = new THREE.Mesh(
+    new THREE.BoxGeometry(XR_BUTTON_HIT_W, XR_BUTTON_HIT_H, XR_BUTTON_HIT_DEPTH),
+    new THREE.MeshBasicMaterial({
+      transparent: true,
+      opacity: 0,
+      depthTest: false,
+      depthWrite: false,
+    })
+  );
+  hitBox.position.set(XR_BUTTON_X, xrButtonY(row), XR_BUTTON_Z);
+  hitBox.rotation.y = XR_BUTTON_ROT_Y;
+  hitBox.renderOrder = 1202;
+  hitBox.visible = false;
+  scene.add(hitBox);
+  xrButtonHitTargets.push(hitBox);
+  xrButtonActions.set(hitBox, action);
+  return hitBox;
+}
+
+function enhanceXrButton(mesh, row, action, accent) {
+  xrButtonActions.set(mesh, action);
+  const body = makeXrButtonBody(row, accent);
+  const hitBox = makeXrButtonHitBox(row, action);
+  xrButtonVolumes.push({ body, hitBox });
+}
+
+function setXrButtonVolumesVisible(visible) {
+  for (const item of xrButtonVolumes) {
+    item.body.visible = visible;
+    item.hitBox.visible = visible;
+  }
 }
 
 function makeXrIcon(kind, row, size = 0.17) {
@@ -3902,6 +3992,7 @@ placeXrButton(exitButton, 0);
 exitButton.renderOrder = 999;
 exitButton.visible = false;
 scene.add(exitButton);
+enhanceXrButton(exitButton, 0, "exit", 0xff5c6e);
 
 const resetButton = new THREE.Mesh(
   new THREE.PlaneGeometry(XR_BUTTON_W, XR_BUTTON_H),
@@ -3916,6 +4007,7 @@ placeXrButton(resetButton, 1);
 resetButton.renderOrder = 999;
 resetButton.visible = false;
 scene.add(resetButton);
+enhanceXrButton(resetButton, 1, "reset", 0x55b9ff);
 
 const enterpriseOrbitXrButton = new THREE.Mesh(
   new THREE.PlaneGeometry(XR_BUTTON_W, XR_BUTTON_H),
@@ -3930,6 +4022,7 @@ placeXrButton(enterpriseOrbitXrButton, 2);
 enterpriseOrbitXrButton.renderOrder = 999;
 enterpriseOrbitXrButton.visible = false;
 scene.add(enterpriseOrbitXrButton);
+enhanceXrButton(enterpriseOrbitXrButton, 2, "enterprise", 0x78d6ff);
 const enterpriseOrbitXrIcon = makeXrIcon("enterprise", 2, XR_ICON_SIZE);
 
 const klingonXrButton = new THREE.Mesh(
@@ -3945,6 +4038,7 @@ placeXrButton(klingonXrButton, 3);
 klingonXrButton.renderOrder = 999;
 klingonXrButton.visible = false;
 scene.add(klingonXrButton);
+enhanceXrButton(klingonXrButton, 3, "klingon", 0x75ffa8);
 const klingonXrIcon = makeXrIcon("klingon", 3, XR_ICON_SIZE);
 
 const blackHoleTourXrButton = new THREE.Mesh(
@@ -3960,6 +4054,7 @@ placeXrButton(blackHoleTourXrButton, 4);
 blackHoleTourXrButton.renderOrder = 999;
 blackHoleTourXrButton.visible = false;
 scene.add(blackHoleTourXrButton);
+enhanceXrButton(blackHoleTourXrButton, 4, "blackHole", 0xffbc69);
 const blackHoleTourXrIcon = makeXrIcon("blackHole", 4, XR_ICON_SIZE);
 
 const controllerHelpXrButton = new THREE.Mesh(
@@ -3975,6 +4070,7 @@ placeXrButton(controllerHelpXrButton, 5);
 controllerHelpXrButton.renderOrder = 999;
 controllerHelpXrButton.visible = false;
 scene.add(controllerHelpXrButton);
+enhanceXrButton(controllerHelpXrButton, 5, "help", 0x7affa7);
 
 const poseDebugXrButton = new THREE.Mesh(
   new THREE.PlaneGeometry(0.56, 0.2),
@@ -4145,6 +4241,38 @@ function updateHandPresence() {
   setHandPresenceVisible(visible);
 }
 
+function activateXrButtonAction(action) {
+  if (!action || elapsed - lastXrButtonActionAt < 0.22) return false;
+  lastXrButtonActionAt = elapsed;
+  playXrButtonPressSound();
+
+  if (action === "exit") renderer.xr.getSession()?.end();
+  else if (action === "reset") resetBall();
+  else if (action === "enterprise") requestEnterpriseRareOrbit();
+  else if (action === "klingon") requestKlingonPass();
+  else if (action === "blackHole") teleportToBlackHoleTour();
+  else if (action === "help") toggleControllerHelp();
+  else return false;
+
+  return true;
+}
+
+function getTouchedXrButtonAction(point) {
+  for (const hitBox of xrButtonHitTargets) {
+    if (!hitBox.visible) continue;
+    tmpVec.copy(point);
+    hitBox.worldToLocal(tmpVec);
+    if (
+      Math.abs(tmpVec.x) <= XR_BUTTON_HIT_W * 0.5 &&
+      Math.abs(tmpVec.y) <= XR_BUTTON_HIT_H * 0.5 &&
+      Math.abs(tmpVec.z) <= XR_BUTTON_HIT_DEPTH * 0.5
+    ) {
+      return xrButtonActions.get(hitBox) || null;
+    }
+  }
+  return null;
+}
+
 // ---------------------------------------------------------------------------
 // XR controllers: touch the Earth to launch it; trigger launches along the
 // pointing direction as a fallback for when it is out of reach.
@@ -4154,6 +4282,7 @@ const gripPrev = []; // previous world position of each grip
 const gripValid = []; // whether gripPrev holds a usable value
 const gripTouching = []; // latch so one touch == one kick
 const poseDebugTouching = []; // latch so one hand press records once
+const xrButtonTouching = []; // latch so a physical button press fires once
 
 for (let index = 0; index < 2; index += 1) {
   const grip = renderer.xr.getControllerGrip(index);
@@ -4188,6 +4317,7 @@ for (let index = 0; index < 2; index += 1) {
   gripValid.push(false);
   gripTouching.push(false);
   poseDebugTouching.push(false);
+  xrButtonTouching.push(null);
 
   const controller = renderer.xr.getController(index);
   controller.addEventListener("select", () => {
@@ -4197,16 +4327,20 @@ for (let index = 0; index < 2; index += 1) {
       tempMatrix.identity().extractRotation(controller.matrixWorld);
       raycaster.ray.origin.setFromMatrixPosition(controller.matrixWorld);
       raycaster.ray.direction.set(0, 0, -1).applyMatrix4(tempMatrix);
-      const uiTargets = [exitButton, resetButton, enterpriseOrbitXrButton, klingonXrButton, blackHoleTourXrButton, controllerHelpXrButton];
+      const uiTargets = [
+        ...xrButtonHitTargets,
+        exitButton,
+        resetButton,
+        enterpriseOrbitXrButton,
+        klingonXrButton,
+        blackHoleTourXrButton,
+        controllerHelpXrButton,
+      ];
       if (poseDebugXrButton.visible) uiTargets.push(poseDebugXrHitArea, poseDebugXrButton);
       const uiHit = raycaster.intersectObjects(uiTargets)[0];
       if (uiHit) {
-        if (uiHit.object === exitButton) renderer.xr.getSession()?.end();
-        else if (uiHit.object === resetButton) resetBall();
-        else if (uiHit.object === enterpriseOrbitXrButton) requestEnterpriseRareOrbit();
-        else if (uiHit.object === klingonXrButton) requestKlingonPass();
-        else if (uiHit.object === blackHoleTourXrButton) teleportToBlackHoleTour();
-        else if (uiHit.object === controllerHelpXrButton) toggleControllerHelp();
+        const action = xrButtonActions.get(uiHit.object);
+        if (action) activateXrButtonAction(action);
         else if (uiHit.object === poseDebugXrButton || uiHit.object === poseDebugXrHitArea) capturePoseDebugUrl();
         return;
       }
@@ -4244,10 +4378,18 @@ function updateHandTouch(dt) {
       gripValid[i] = false;
       gripTouching[i] = false;
       poseDebugTouching[i] = false;
+      xrButtonTouching[i] = null;
       continue;
     }
 
     tmpHand.setFromMatrixPosition(grip.matrixWorld);
+
+    const touchedXrButtonAction = getTouchedXrButtonAction(tmpHand);
+    if (touchedXrButtonAction && xrButtonTouching[i] !== touchedXrButtonAction) {
+      initAudio();
+      activateXrButtonAction(touchedXrButtonAction);
+    }
+    xrButtonTouching[i] = touchedXrButtonAction;
 
     const touchingPoseDebug = isPoseDebugButtonTouched(tmpHand);
     if (touchingPoseDebug && !poseDebugTouching[i]) {
