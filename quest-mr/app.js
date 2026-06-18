@@ -2671,7 +2671,12 @@ function makeButtonTexture(label, bg) {
   ctx.strokeStyle = "rgba(255,255,255,0.85)";
   ctx.stroke();
   ctx.fillStyle = "#fff";
-  ctx.font = "bold 46px sans-serif";
+  const maxTextWidth = 270;
+  let fontSize = 46;
+  do {
+    ctx.font = `bold ${fontSize}px sans-serif`;
+    fontSize -= 2;
+  } while (fontSize > 28 && ctx.measureText(label).width > maxTextWidth);
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
   ctx.fillText(label, 160, 70);
