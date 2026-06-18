@@ -1780,6 +1780,7 @@ const KLINGON_FADE_IN = 4.2;
 const KLINGON_FADE_OUT = 5.4;
 const KLINGON_PASS_DURATION_FALLBACK = 29;
 const KLINGON_TARGET_LENGTH = EARTH_RADIUS * 5.75;
+const KLINGON_MODEL_ROLL_FIX = Math.PI / 2;
 const KLINGON_ASSET_PATH = "./assets/klingon_ship/";
 const KLINGON_MTL_FILE = "klingon_ship.mtl";
 const KLINGON_OBJ_FILE = "klingon_ship.obj";
@@ -1906,6 +1907,10 @@ function loadKlingonModel() {
             const size = box.getSize(new THREE.Vector3());
             const maxDim = Math.max(size.x, size.y, size.z) || 1;
             obj.scale.setScalar(KLINGON_TARGET_LENGTH / maxDim);
+            // The OBJ's physical up axis is local +X, while Object3D.lookAt
+            // stabilizes local +Y as up. Roll the mesh once so the warship
+            // travels level instead of banking on its side.
+            obj.rotation.z = KLINGON_MODEL_ROLL_FIX;
             obj.updateMatrixWorld(true);
             const fittedBox = new THREE.Box3().setFromObject(obj);
             const fittedCenter = fittedBox.getCenter(new THREE.Vector3());
@@ -1951,14 +1956,15 @@ function loadKlingonModel() {
 
 function spawnKlingonPass() {
   const side = Math.random() < 0.5 ? -1 : 1;
+  const cruiseY = roomCenter.y + roomHalf.y * 0.34;
   klingonStart.set(
     roomCenter.x + side * (roomHalf.x + 7.2),
-    roomCenter.y + roomHalf.y * 0.42,
+    cruiseY,
     roomCenter.z - roomHalf.z * 0.62
   );
   klingonEnd.set(
     roomCenter.x - side * (roomHalf.x + 8.2),
-    roomCenter.y + roomHalf.y * 0.16,
+    cruiseY,
     roomCenter.z - roomHalf.z * 0.38
   );
   klingonPassDuration = playKlingonTheme();
@@ -1989,8 +1995,8 @@ function requestKlingonPass() {
 }
 
 function orientKlingonAlongVelocity() {
-  // The current Klingon OBJ faces along the same convention as the previous
-  // ship after centering, so target behind the model to keep its nose leading.
+  // The model mesh is roll-corrected at load time, so this only has to point
+  // the bow along the route while keeping the ship's top aligned with world up.
   klingon.lookAt(klingonTmp.copy(klingon.position).sub(klingonVel));
 }
 
