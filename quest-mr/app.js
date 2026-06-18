@@ -13,7 +13,7 @@ const klingonButton = document.querySelector("#klingonButton");
 const blackHoleTourButton = document.querySelector("#blackHoleTourButton");
 const controllerHelpButton = document.querySelector("#controllerHelpButton");
 const poseDebugOutputEl = document.querySelector("#poseDebugOutput");
-const APP_VERSION = "v2026.06.19.26";
+const APP_VERSION = "v2026.06.19.27";
 const DEBUG_TOP_VIEW = new URLSearchParams(window.location.search).has("topDebug");
 const DEBUG_TOP_VIEW_DISTANCE = Number(new URLSearchParams(window.location.search).get("topDebugDist"));
 const DEBUG_BLACK_HOLE_VIEW = new URLSearchParams(window.location.search).has("blackHoleDebug");
@@ -3630,16 +3630,15 @@ const XR_BUTTON_Y0 = 1.42;
 const XR_BUTTON_STEP = 0.165;
 const XR_BUTTON_W = 0.62;
 const XR_BUTTON_H = 0.135;
-const XR_BUTTON_DEPTH = 0.12;
-const XR_BUTTON_HIT_W = XR_BUTTON_W + 0.14;
-const XR_BUTTON_HIT_H = XR_BUTTON_H + 0.11;
-const XR_BUTTON_HIT_DEPTH = 0.5;
+const XR_BUTTON_HIT_W = XR_BUTTON_W;
+const XR_BUTTON_HIT_H = XR_BUTTON_H;
+const XR_BUTTON_HIT_DEPTH = 0.035;
 const XR_ICON_Z = 0.39;
 const XR_ICON_SIZE = 0.19;
 const XR_ICON_ASPECT_H = 100 / 170;
-const XR_ICON_HIT_W = XR_ICON_SIZE + 0.16;
-const XR_ICON_HIT_H = XR_ICON_SIZE + 0.16;
-const XR_ICON_HIT_DEPTH = 0.38;
+const XR_ICON_HIT_W = XR_ICON_SIZE + 0.045;
+const XR_ICON_HIT_H = XR_ICON_SIZE + 0.045;
+const XR_ICON_HIT_DEPTH = 0.035;
 const xrButtonIcons = [];
 const xrIconHitTargets = [];
 const xrButtonVolumes = [];
@@ -3656,39 +3655,6 @@ function placeXrButton(mesh, row) {
   mesh.rotation.y = XR_BUTTON_ROT_Y;
 }
 
-function makeXrButtonBody(row, accent = 0x2fbfff) {
-  const body = new THREE.Mesh(
-    new THREE.BoxGeometry(XR_BUTTON_W + 0.035, XR_BUTTON_H + 0.028, XR_BUTTON_DEPTH),
-    new THREE.MeshStandardMaterial({
-      color: 0x07111a,
-      emissive: accent,
-      emissiveIntensity: 0.12,
-      metalness: 0.24,
-      roughness: 0.36,
-      transparent: true,
-      opacity: 0.88,
-    })
-  );
-  body.position.set(XR_BUTTON_X, xrButtonY(row), XR_BUTTON_Z);
-  body.rotation.y = XR_BUTTON_ROT_Y;
-  body.renderOrder = 998;
-  body.visible = false;
-  scene.add(body);
-
-  const edge = new THREE.LineSegments(
-    new THREE.EdgesGeometry(body.geometry),
-    new THREE.LineBasicMaterial({
-      color: accent,
-      transparent: true,
-      opacity: 0.38,
-      depthTest: false,
-    })
-  );
-  edge.renderOrder = 1000;
-  body.add(edge);
-  return body;
-}
-
 function makeXrButtonHitBox(row, action) {
   const hitBox = new THREE.Mesh(
     new THREE.BoxGeometry(XR_BUTTON_HIT_W, XR_BUTTON_HIT_H, XR_BUTTON_HIT_DEPTH),
@@ -3703,22 +3669,21 @@ function makeXrButtonHitBox(row, action) {
   hitBox.rotation.y = XR_BUTTON_ROT_Y;
   hitBox.renderOrder = 1202;
   hitBox.visible = false;
+  hitBox.userData.xrHitSize = { w: XR_BUTTON_HIT_W, h: XR_BUTTON_HIT_H, d: XR_BUTTON_HIT_DEPTH };
   scene.add(hitBox);
   xrButtonHitTargets.push(hitBox);
   xrButtonActions.set(hitBox, action);
   return hitBox;
 }
 
-function enhanceXrButton(mesh, row, action, accent) {
+function enhanceXrButton(mesh, row, action) {
   xrButtonActions.set(mesh, action);
-  const body = makeXrButtonBody(row, accent);
   const hitBox = makeXrButtonHitBox(row, action);
-  xrButtonVolumes.push({ body, hitBox });
+  xrButtonVolumes.push({ hitBox });
 }
 
 function setXrButtonVolumesVisible(visible) {
   for (const item of xrButtonVolumes) {
-    item.body.visible = visible;
     item.hitBox.visible = visible;
   }
   for (const item of xrIconHitTargets) {
@@ -3759,6 +3724,7 @@ function makeXrIcon(kind, row, size = 0.17, action = null) {
     hitBox.rotation.copy(icon.rotation);
     hitBox.renderOrder = 1203;
     hitBox.visible = false;
+    hitBox.userData.xrHitSize = { w: XR_ICON_HIT_W, h: XR_ICON_HIT_H, d: XR_ICON_HIT_DEPTH };
     scene.add(hitBox);
     xrButtonHitTargets.push(hitBox);
     xrIconHitTargets.push({ icon, hitBox });
@@ -4156,7 +4122,7 @@ placeXrButton(exitButton, 0);
 exitButton.renderOrder = 999;
 exitButton.visible = false;
 scene.add(exitButton);
-enhanceXrButton(exitButton, 0, "exit", 0xff5c6e);
+enhanceXrButton(exitButton, 0, "exit");
 
 const resetButton = new THREE.Mesh(
   new THREE.PlaneGeometry(XR_BUTTON_W, XR_BUTTON_H),
@@ -4171,7 +4137,7 @@ placeXrButton(resetButton, 1);
 resetButton.renderOrder = 999;
 resetButton.visible = false;
 scene.add(resetButton);
-enhanceXrButton(resetButton, 1, "reset", 0x55b9ff);
+enhanceXrButton(resetButton, 1, "reset");
 
 const enterpriseOrbitXrButton = new THREE.Mesh(
   new THREE.PlaneGeometry(XR_BUTTON_W, XR_BUTTON_H),
@@ -4186,7 +4152,7 @@ placeXrButton(enterpriseOrbitXrButton, 2);
 enterpriseOrbitXrButton.renderOrder = 999;
 enterpriseOrbitXrButton.visible = false;
 scene.add(enterpriseOrbitXrButton);
-enhanceXrButton(enterpriseOrbitXrButton, 2, "enterprise", 0x78d6ff);
+enhanceXrButton(enterpriseOrbitXrButton, 2, "enterprise");
 const enterpriseOrbitXrIcon = makeXrIcon("enterprise", 2, XR_ICON_SIZE, "enterprise");
 
 const klingonXrButton = new THREE.Mesh(
@@ -4202,7 +4168,7 @@ placeXrButton(klingonXrButton, 3);
 klingonXrButton.renderOrder = 999;
 klingonXrButton.visible = false;
 scene.add(klingonXrButton);
-enhanceXrButton(klingonXrButton, 3, "klingon", 0x75ffa8);
+enhanceXrButton(klingonXrButton, 3, "klingon");
 const klingonXrIcon = makeXrIcon("klingon", 3, XR_ICON_SIZE, "klingon");
 
 const blackHoleTourXrButton = new THREE.Mesh(
@@ -4218,9 +4184,9 @@ placeXrButton(blackHoleTourXrButton, 4);
 blackHoleTourXrButton.renderOrder = 999;
 blackHoleTourXrButton.visible = false;
 scene.add(blackHoleTourXrButton);
-enhanceXrButton(blackHoleTourXrButton, 4, "blackHole", 0xffbc69);
+enhanceXrButton(blackHoleTourXrButton, 4, "blackHole");
 const blackHoleTourXrIcon = makeXrIcon("blackHole", 4, XR_ICON_SIZE, "blackHole");
-const helpXrIcon = makeXrIcon("help", 0, XR_ICON_SIZE, "help");
+const helpXrIcon = makeXrIcon("help", 5, XR_ICON_SIZE, "help");
 
 const poseDebugXrButton = new THREE.Mesh(
   new THREE.PlaneGeometry(0.56, 0.2),
@@ -4412,10 +4378,11 @@ function getTouchedXrButtonAction(point) {
     if (!hitBox.visible) continue;
     tmpVec.copy(point);
     hitBox.worldToLocal(tmpVec);
+    const size = hitBox.userData.xrHitSize || { w: XR_BUTTON_HIT_W, h: XR_BUTTON_HIT_H, d: XR_BUTTON_HIT_DEPTH };
     if (
-      Math.abs(tmpVec.x) <= XR_BUTTON_HIT_W * 0.5 &&
-      Math.abs(tmpVec.y) <= XR_BUTTON_HIT_H * 0.5 &&
-      Math.abs(tmpVec.z) <= XR_BUTTON_HIT_DEPTH * 0.5
+      Math.abs(tmpVec.x) <= size.w * 0.5 &&
+      Math.abs(tmpVec.y) <= size.h * 0.5 &&
+      Math.abs(tmpVec.z) <= size.d * 0.5
     ) {
       return xrButtonActions.get(hitBox) || null;
     }
