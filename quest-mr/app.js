@@ -13,7 +13,7 @@ const klingonButton = document.querySelector("#klingonButton");
 const blackHoleTourButton = document.querySelector("#blackHoleTourButton");
 const controllerHelpButton = document.querySelector("#controllerHelpButton");
 const poseDebugOutputEl = document.querySelector("#poseDebugOutput");
-const APP_VERSION = "v2026.06.19.24";
+const APP_VERSION = "v2026.06.19.25";
 const DEBUG_TOP_VIEW = new URLSearchParams(window.location.search).has("topDebug");
 const DEBUG_TOP_VIEW_DISTANCE = Number(new URLSearchParams(window.location.search).get("topDebugDist"));
 const DEBUG_BLACK_HOLE_VIEW = new URLSearchParams(window.location.search).has("blackHoleDebug");
@@ -6071,9 +6071,9 @@ let blackHoleTourCountdownStart = 0;
 let blackHoleTourCountdownTimer = null;
 let blackHoleTourCountdownTextureTick = -1;
 let blackHoleTourCountdownBeep = -1;
-const BLACK_HOLE_TOUR_COUNTDOWN = 3.2;
+const BLACK_HOLE_TOUR_COUNTDOWN = 8.0;
 
-function makeBlackHoleWarpHudTexture(secondsLeft = 3, progress = 0) {
+function makeBlackHoleWarpHudTexture(secondsLeft = BLACK_HOLE_TOUR_COUNTDOWN, progress = 0) {
   const c = document.createElement("canvas");
   c.width = 1280;
   c.height = 640;
@@ -6165,7 +6165,7 @@ function makeBlackHoleWarpHudTexture(secondsLeft = 3, progress = 0) {
   return tex;
 }
 
-blackHoleWarpHudTexture = makeBlackHoleWarpHudTexture(3, 0);
+blackHoleWarpHudTexture = makeBlackHoleWarpHudTexture(BLACK_HOLE_TOUR_COUNTDOWN, 0);
 const blackHoleWarpHud = new THREE.Mesh(
   new THREE.PlaneGeometry(1.62, 0.81),
   new THREE.MeshBasicMaterial({
@@ -6244,11 +6244,11 @@ function requestBlackHoleTour() {
   blackHoleTourCountdownTextureTick = -1;
   blackHoleTourCountdownBeep = -1;
   blackHoleWarpHud.visible = true;
-  refreshBlackHoleWarpHud(3, 0);
+  refreshBlackHoleWarpHud(BLACK_HOLE_TOUR_COUNTDOWN, 0);
   blackHoleTourCountdownTimer = window.setTimeout(() => {
     finishBlackHoleTourCountdown();
   }, BLACK_HOLE_TOUR_COUNTDOWN * 1000);
-  statusEl.textContent = "ブラックホール探訪: ワープ前警告シーケンスを開始します。";
+  statusEl.textContent = "ブラックホール探訪: 8秒のワープ前警告シーケンスを開始します。";
 }
 
 function finishBlackHoleTourCountdown() {
