@@ -263,6 +263,158 @@ function makeNebulaTexture(seed = 48211, hue = 0.6) {
   return tex;
 }
 
+function makeMilkyWayTexture(seed = 830201) {
+  const rand = seededRandom(seed);
+  const canvas = document.createElement("canvas");
+  canvas.width = 4096;
+  canvas.height = 2048;
+  const ctx = canvas.getContext("2d");
+  const width = canvas.width;
+  const height = canvas.height;
+
+  function bandCenter(u) {
+    return 0.52 + Math.sin(u * Math.PI * 2 * 1.08 + 0.62) * 0.105 + Math.sin(u * Math.PI * 2 * 2.35 - 1.7) * 0.035;
+  }
+
+  function drawWrapped(x, margin, draw) {
+    draw(x);
+    if (x < margin) draw(x + width);
+    if (x > width - margin) draw(x - width);
+  }
+
+  function drawCloud(x, y, rx, ry, rotation, colorA, colorB, alpha) {
+    drawWrapped(x, rx * 1.4, (wrappedX) => {
+      ctx.save();
+      ctx.translate(wrappedX, y);
+      ctx.rotate(rotation);
+      ctx.scale(rx / ry, 1);
+      const g = ctx.createRadialGradient(0, 0, 0, 0, 0, ry);
+      g.addColorStop(0, colorA(alpha));
+      g.addColorStop(0.42, colorB(alpha * 0.38));
+      g.addColorStop(1, "rgba(0,0,0,0)");
+      ctx.fillStyle = g;
+      ctx.beginPath();
+      ctx.arc(0, 0, ry, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    });
+  }
+
+  ctx.clearRect(0, 0, width, height);
+  ctx.globalCompositeOperation = "lighter";
+
+  for (let i = 0; i < 1400; i += 1) {
+    const u = rand();
+    const x = u * width;
+    const coreBias = Math.exp(-Math.pow((u - 0.56) / 0.17, 2));
+    const spread = 0.025 + rand() * 0.07 + coreBias * 0.035;
+    const y = (bandCenter(u) + (rand() - rand()) * spread) * height;
+    const rx = 55 + rand() * 230 + coreBias * 210;
+    const ry = 14 + rand() * 72 + coreBias * 58;
+    const warm = rand() < 0.62 || coreBias > 0.35;
+    const alpha = 0.014 + rand() * 0.064 + coreBias * 0.06;
+    drawCloud(
+      x,
+      y,
+      rx,
+      ry,
+      (rand() - 0.5) * 0.72,
+      warm
+        ? (a) => `rgba(255,218,168,${a})`
+        : (a) => `rgba(170,195,255,${a})`,
+      warm
+        ? (a) => `rgba(168,126,88,${a})`
+        : (a) => `rgba(80,120,210,${a})`,
+      alpha
+    );
+  }
+
+  for (let i = 0; i < 42000; i += 1) {
+    const u = rand();
+    const coreBias = Math.exp(-Math.pow((u - 0.56) / 0.18, 2));
+    const spread = 0.012 + Math.pow(rand(), 2.3) * (0.12 + coreBias * 0.055);
+    const v = bandCenter(u) + (rand() - rand()) * spread;
+    if (v < 0.02 || v > 0.98) continue;
+    const x = u * width;
+    const y = v * height;
+    const warm = rand() < 0.46 + coreBias * 0.22;
+    const alpha = 0.045 + rand() * (0.18 + coreBias * 0.25);
+    const size = rand() < 0.992 ? 0.34 + rand() * 0.82 : 1.15 + rand() * 1.9;
+    ctx.fillStyle = warm
+      ? `rgba(255,222,185,${alpha})`
+      : `rgba(${180 + rand() * 65},${205 + rand() * 40},255,${alpha})`;
+    drawWrapped(x, 4, (wrappedX) => {
+      ctx.beginPath();
+      ctx.arc(wrappedX, y, size, 0, Math.PI * 2);
+      ctx.fill();
+    });
+  }
+
+  for (let i = 0; i < 1200; i += 1) {
+    const u = 0.49 + (rand() - rand()) * 0.12;
+    const v = bandCenter(u) + (rand() - rand()) * 0.06;
+    const x = u * width;
+    const y = v * height;
+    const size = 0.9 + rand() * 2.4;
+    const alpha = 0.14 + rand() * 0.42;
+    ctx.fillStyle = `rgba(255,235,198,${alpha})`;
+    ctx.beginPath();
+    ctx.arc(x, y, size, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  ctx.globalCompositeOperation = "destination-out";
+  for (let lane = 0; lane < 6; lane += 1) {
+    ctx.beginPath();
+    for (let step = 0; step <= 260; step += 1) {
+      const u = step / 260;
+      const offset = (lane - 2.5) * 0.015 + Math.sin(u * Math.PI * 2 * (1.6 + lane * 0.16) + lane) * 0.018;
+      const x = u * width;
+      const y = (bandCenter(u) + offset) * height;
+      if (step === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+    }
+    ctx.strokeStyle = `rgba(0,0,0,${0.035 + rand() * 0.07})`;
+    ctx.lineWidth = 10 + rand() * 30;
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
+    ctx.stroke();
+  }
+
+  for (let i = 0; i < 220; i += 1) {
+    const u = rand();
+    const x = u * width;
+    const y = (bandCenter(u) + (rand() - rand()) * (0.03 + rand() * 0.07)) * height;
+    const rx = 35 + rand() * 180;
+    const ry = 8 + rand() * 36;
+    drawWrapped(x, rx * 1.3, (wrappedX) => {
+      ctx.save();
+      ctx.translate(wrappedX, y);
+      ctx.rotate((rand() - 0.5) * 0.85);
+      ctx.scale(rx / ry, 1);
+      const g = ctx.createRadialGradient(0, 0, 0, 0, 0, ry);
+      g.addColorStop(0, `rgba(0,0,0,${0.16 + rand() * 0.22})`);
+      g.addColorStop(0.58, `rgba(0,0,0,${0.08 + rand() * 0.12})`);
+      g.addColorStop(1, "rgba(0,0,0,0)");
+      ctx.fillStyle = g;
+      ctx.beginPath();
+      ctx.arc(0, 0, ry, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    });
+  }
+
+  ctx.globalCompositeOperation = "source-over";
+  applyCanvasEdgeFade(ctx, width, height, 0.04, 0.02);
+
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.wrapS = THREE.RepeatWrapping;
+  tex.wrapT = THREE.ClampToEdgeWrapping;
+  tex.anisotropy = Math.min(8, renderer.capabilities.getMaxAnisotropy());
+  return tex;
+}
+
 function makeSpiralGalaxyTexture(seed = 25103) {
   const rand = seededRandom(seed);
   const canvas = document.createElement("canvas");
@@ -402,9 +554,70 @@ function makeStarPoints(count, radius, size, opacity, seed) {
   return new THREE.Points(geo, mat);
 }
 
+function makeMilkyWayBand() {
+  const radius = 372;
+  const segments = 192;
+  const rows = 18;
+  const positions = [];
+  const uvs = [];
+  const indices = [];
+
+  for (let row = 0; row <= rows; row += 1) {
+    const v = row / rows;
+    const bandOffset = (v - 0.5) * 0.86;
+    for (let col = 0; col <= segments; col += 1) {
+      const u = col / segments;
+      const longitude = u * Math.PI * 2;
+      const centerLatitude = Math.sin(u * Math.PI * 2 * 1.08 + 0.62) * 0.105 + Math.sin(u * Math.PI * 2 * 2.35 - 1.7) * 0.035;
+      const latitude = centerLatitude + bandOffset;
+      const cosLat = Math.cos(latitude);
+      positions.push(
+        Math.cos(longitude) * cosLat * radius,
+        Math.sin(latitude) * radius,
+        Math.sin(longitude) * cosLat * radius
+      );
+      uvs.push(u, v);
+    }
+  }
+
+  for (let row = 0; row < rows; row += 1) {
+    for (let col = 0; col < segments; col += 1) {
+      const a = row * (segments + 1) + col;
+      const b = a + 1;
+      const c = a + segments + 1;
+      const d = c + 1;
+      indices.push(a, c, b, b, c, d);
+    }
+  }
+
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+  geometry.setAttribute("uv", new THREE.Float32BufferAttribute(uvs, 2));
+  geometry.setIndex(indices);
+  geometry.computeBoundingSphere();
+
+  const band = new THREE.Mesh(
+    geometry,
+    new THREE.MeshBasicMaterial({
+      map: makeMilkyWayTexture(),
+      color: 0xffffff,
+      transparent: true,
+      opacity: 0.8,
+      alphaTest: 0.004,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+      blending: THREE.AdditiveBlending,
+    })
+  );
+  band.rotation.set(0.46, -0.16, -0.58);
+  band.renderOrder = -20;
+  return band;
+}
+
 const spaceBackdrop = new THREE.Group();
 const spaceNebulaMaterials = [];
 spaceBackdrop.position.copy(roomCenter);
+spaceBackdrop.add(makeMilkyWayBand());
 spaceBackdrop.add(makeStarPoints(5600, 265, 0.72, 0.46, 67531));
 spaceBackdrop.add(makeStarPoints(3300, 185, 1.15, 0.84, 12077));
 spaceBackdrop.add(makeStarPoints(920, 212, 1.55, 0.58, 43789));
