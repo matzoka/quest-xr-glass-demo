@@ -4782,18 +4782,12 @@ const blackHoleLens = new THREE.Mesh(
 blackHoleLens.renderOrder = 7;
 blackHoleGroup.add(blackHoleLens);
 
-const blackHoleShadow = new THREE.Mesh(
-  new THREE.CircleGeometry(BLACK_HOLE_HORIZON_R * 1.05, 96),
-  new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 1.0, depthWrite: true, side: THREE.DoubleSide, toneMapped: false })
-);
-blackHoleShadow.renderOrder = 9;
-blackHoleGroup.add(blackHoleShadow);
-
 const blackHoleCore = new THREE.Mesh(
   new THREE.SphereGeometry(BLACK_HOLE_HORIZON_R * 0.98, 64, 32),
   new THREE.MeshBasicMaterial({ color: 0x000000, toneMapped: false })
 );
 blackHoleCore.renderOrder = 8;
+blackHoleGroup.add(blackHoleCore);
 
 const blackHoleParticlePositions = [];
 const blackHoleParticleColors = [];
@@ -4891,7 +4885,6 @@ function updateBlackHole(dt, timeSeconds) {
   blackHoleTmp.copy(viewerWorld).sub(BLACK_HOLE_POSITION);
   const distance = blackHoleTmp.length();
   blackHoleLens.lookAt(viewerWorld);
-  blackHoleShadow.lookAt(viewerWorld);
 
   if (blackHoleCooldown > 0) blackHoleCooldown = Math.max(0, blackHoleCooldown - dt);
 
