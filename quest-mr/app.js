@@ -2829,11 +2829,11 @@ async function enterXr(mode) {
       enterpriseOrbitXrButton.visible = false;
       klingonXrButton.visible = false;
       blackHoleTourXrButton.visible = false;
-      controllerHelpXrButton.visible = false;
       setXrButtonVolumesVisible(false);
       enterpriseOrbitXrIcon.visible = false;
       klingonXrIcon.visible = false;
       blackHoleTourXrIcon.visible = false;
+      helpXrIcon.visible = false;
       poseDebugXrButton.visible = false;
       poseDebugXrHitArea.visible = false;
       poseDebugXrPanel.visible = false;
@@ -2866,11 +2866,11 @@ async function enterXr(mode) {
     enterpriseOrbitXrButton.visible = true;
     klingonXrButton.visible = true;
     blackHoleTourXrButton.visible = true;
-    controllerHelpXrButton.visible = true;
-    setXrButtonVolumesVisible(true);
     enterpriseOrbitXrIcon.visible = true;
     klingonXrIcon.visible = true;
     blackHoleTourXrIcon.visible = true;
+    helpXrIcon.visible = true;
+    setXrButtonVolumesVisible(true);
     poseDebugXrButton.visible = DEBUG_POSE_CAPTURE;
     poseDebugXrHitArea.visible = DEBUG_POSE_CAPTURE;
     poseDebugXrPanel.visible = DEBUG_POSE_CAPTURE;
@@ -3591,6 +3591,7 @@ const APPROVED_XR_ICON_URLS = {
   enterprise: "./assets/icon-enterprise-c.png",
   klingon: "./assets/icon-klingon-c.png",
   blackHole: "./assets/icon-blackhole-c.png",
+  help: "./assets/icon-help-b.png",
 };
 const RAW_APPROVED_ASSET_BASE = "https://raw.githubusercontent.com/matzoka/quest-xr-glass-demo/master/quest-mr/assets/";
 
@@ -3626,7 +3627,11 @@ const XR_BUTTON_HIT_DEPTH = 0.5;
 const XR_ICON_Z = 0.39;
 const XR_ICON_SIZE = 0.19;
 const XR_ICON_ASPECT_H = 100 / 170;
+const XR_ICON_HIT_W = XR_ICON_SIZE + 0.16;
+const XR_ICON_HIT_H = XR_ICON_SIZE + 0.16;
+const XR_ICON_HIT_DEPTH = 0.38;
 const xrButtonIcons = [];
+const xrIconHitTargets = [];
 const xrButtonVolumes = [];
 const xrButtonHitTargets = [];
 const xrButtonActions = new Map();
@@ -3706,9 +3711,12 @@ function setXrButtonVolumesVisible(visible) {
     item.body.visible = visible;
     item.hitBox.visible = visible;
   }
+  for (const item of xrIconHitTargets) {
+    item.hitBox.visible = visible && item.icon.visible;
+  }
 }
 
-function makeXrIcon(kind, row, size = 0.17) {
+function makeXrIcon(kind, row, size = 0.17, action = null) {
   const icon = new THREE.Mesh(
     new THREE.PlaneGeometry(size, size * XR_ICON_ASPECT_H),
     new THREE.MeshBasicMaterial({
@@ -3726,6 +3734,27 @@ function makeXrIcon(kind, row, size = 0.17) {
   icon.visible = false;
   scene.add(icon);
   xrButtonIcons.push(icon);
+
+  if (action) {
+    const hitBox = new THREE.Mesh(
+      new THREE.BoxGeometry(XR_ICON_HIT_W, XR_ICON_HIT_H, XR_ICON_HIT_DEPTH),
+      new THREE.MeshBasicMaterial({
+        transparent: true,
+        opacity: 0,
+        depthTest: false,
+        depthWrite: false,
+      })
+    );
+    hitBox.position.copy(icon.position);
+    hitBox.rotation.copy(icon.rotation);
+    hitBox.renderOrder = 1203;
+    hitBox.visible = false;
+    scene.add(hitBox);
+    xrButtonHitTargets.push(hitBox);
+    xrIconHitTargets.push({ icon, hitBox });
+    xrButtonActions.set(hitBox, action);
+  }
+
   return icon;
 }
 
@@ -4023,7 +4052,7 @@ enterpriseOrbitXrButton.renderOrder = 999;
 enterpriseOrbitXrButton.visible = false;
 scene.add(enterpriseOrbitXrButton);
 enhanceXrButton(enterpriseOrbitXrButton, 2, "enterprise", 0x78d6ff);
-const enterpriseOrbitXrIcon = makeXrIcon("enterprise", 2, XR_ICON_SIZE);
+const enterpriseOrbitXrIcon = makeXrIcon("enterprise", 2, XR_ICON_SIZE, "enterprise");
 
 const klingonXrButton = new THREE.Mesh(
   new THREE.PlaneGeometry(XR_BUTTON_W, XR_BUTTON_H),
@@ -4039,7 +4068,7 @@ klingonXrButton.renderOrder = 999;
 klingonXrButton.visible = false;
 scene.add(klingonXrButton);
 enhanceXrButton(klingonXrButton, 3, "klingon", 0x75ffa8);
-const klingonXrIcon = makeXrIcon("klingon", 3, XR_ICON_SIZE);
+const klingonXrIcon = makeXrIcon("klingon", 3, XR_ICON_SIZE, "klingon");
 
 const blackHoleTourXrButton = new THREE.Mesh(
   new THREE.PlaneGeometry(XR_BUTTON_W, XR_BUTTON_H),
@@ -4055,22 +4084,8 @@ blackHoleTourXrButton.renderOrder = 999;
 blackHoleTourXrButton.visible = false;
 scene.add(blackHoleTourXrButton);
 enhanceXrButton(blackHoleTourXrButton, 4, "blackHole", 0xffbc69);
-const blackHoleTourXrIcon = makeXrIcon("blackHole", 4, XR_ICON_SIZE);
-
-const controllerHelpXrButton = new THREE.Mesh(
-  new THREE.PlaneGeometry(XR_BUTTON_W, XR_BUTTON_H),
-  new THREE.MeshBasicMaterial({
-    map: makeButtonTexture("操作HELP", "rgba(122,255,167,0.95)"),
-    transparent: true,
-    depthTest: false,
-    side: THREE.DoubleSide,
-  })
-);
-placeXrButton(controllerHelpXrButton, 5);
-controllerHelpXrButton.renderOrder = 999;
-controllerHelpXrButton.visible = false;
-scene.add(controllerHelpXrButton);
-enhanceXrButton(controllerHelpXrButton, 5, "help", 0x7affa7);
+const blackHoleTourXrIcon = makeXrIcon("blackHole", 4, XR_ICON_SIZE, "blackHole");
+const helpXrIcon = makeXrIcon("help", 0, XR_ICON_SIZE, "help");
 
 const poseDebugXrButton = new THREE.Mesh(
   new THREE.PlaneGeometry(0.56, 0.2),
@@ -4334,7 +4349,6 @@ for (let index = 0; index < 2; index += 1) {
         enterpriseOrbitXrButton,
         klingonXrButton,
         blackHoleTourXrButton,
-        controllerHelpXrButton,
       ];
       if (poseDebugXrButton.visible) uiTargets.push(poseDebugXrHitArea, poseDebugXrButton);
       const uiHit = raycaster.intersectObjects(uiTargets)[0];
@@ -4427,6 +4441,11 @@ function updateXrButtonIcons(dt) {
     const icon = xrButtonIcons[i];
     if (!icon.visible) continue;
     icon.rotation.y += dt * XR_ICON_SPIN * (i % 2 === 0 ? 1 : -1);
+  }
+  for (const item of xrIconHitTargets) {
+    item.hitBox.visible = item.icon.visible;
+    item.hitBox.position.copy(item.icon.position);
+    item.hitBox.rotation.copy(item.icon.rotation);
   }
 }
 
