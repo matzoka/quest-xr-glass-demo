@@ -4180,17 +4180,19 @@ function keyboardSteer() {
 // ---------------------------------------------------------------------------
 let xrBaseRefSpace = null;
 const locomotion = new THREE.Vector3();
+const XR_HOME_LOCOMOTION = new THREE.Vector3(0.1, 0, 1.1);
 const LOCO_SPEED = 4.0; // m/s
 
 renderer.xr.addEventListener("sessionstart", () => {
   xrBaseRefSpace = renderer.xr.getReferenceSpace();
-  locomotion.set(0, 0, 0);
+  locomotion.copy(XR_HOME_LOCOMOTION);
 });
 
-// Snap the player straight back to where they started the session.
+// Snap the player to the front-on lobby position where the whole XR button
+// stack and its icons fit comfortably in view.
 function resetToHome() {
-  locomotion.set(0, 0, 0);
-  if (xrBaseRefSpace) renderer.xr.setReferenceSpace(xrBaseRefSpace);
+  locomotion.copy(XR_HOME_LOCOMOTION);
+  applyXrLocomotionOffset();
 }
 
 function applyXrLocomotionOffset() {
