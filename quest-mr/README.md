@@ -2,10 +2,18 @@
 
 宇宙空間に浮かぶ部屋の中の地球を、手（コントローラー）で触れて弾くデモです。
 弾かれた地球は直線に飛び、部屋の壁・床で跳ね返り続けます。地球はゆっくり自転し、
-雲のレイヤーが地表とは別の速度で流れます。人工衛星（ISS風）が地球を周回し、USS エンター
-プライズ風の宇宙船が数分おきに画面を横切り（登場時にファンファーレが鳴ります）、ときおり
-流れ星が落ちて地表で発火し、地表ではランダムに稲光が光ります。月（大きさは地球の約1/4という実物どおりのサイズ比）が、地球の周りを周回します。さらに、東京とロサンゼルスを結ぶ小さな旅客機が地表を飛び交います。Meta Quest 3 の VR / AR で動作します。
-まれにクリンゴン K't'inga 級がクローク解除風に現れ、暗い背景側を重く通過してから緑の発光とともに消えます。
+雲のレイヤーが地表とは別の速度で流れます。可視の太陽方向から昼夜を計算し、夜側だけに
+主要都市ライトとオーロラが出ます。人工衛星（ISS風）は地球を周回し、夜側では暗くなります。
+月・火星・金星・木星・土星本体にも太陽方向に合わせた陰影が入り、太陽ではフレア、プロミネンス、
+黒点が一定期間だけ発生します。
+
+USS Enterprise風の宇宙船は地球の部屋枠を通過した後、何もない宇宙空間へ向けてワープし、
+ワープ音の終わりに船体・航跡・前方スパークが同時に消えます。低確率では地球近くを周回する
+レア演出もあります。小型隕石は多くが大気圏で燃え尽き、夜側では浅い角度の流れ星として見えます。
+遠方では彗星が地球に衝突しない背景演出として通過し、地表ではランダムに稲光が光ります。
+月（大きさは地球の約1/4という実物どおりのサイズ比）が、地球の周りを周回します。さらに、
+東京とロサンゼルスを結ぶ小さな旅客機が地表を飛び交います。Meta Quest 3 の VR / AR で動作します。
+まれにクリンゴン船がクローク解除風に現れ、暗い背景側を重く通過してから緑の発光とともに消えます。
 このクリンゴン演出では `assets/klingon_theme.mp3` を再生し、音声の約29秒の尺に合わせて通過速度を調整しています。
 
 Three.js + WebXR で動作します。
@@ -54,16 +62,24 @@ Quest の AR / VR セッションは **HTTPS（セキュアコンテキスト）
 ## ファイル構成
 
 - `index.html` … エントリーポイント（Three.js を CDN から読み込み）
-- `app.js` … シーン構築・物理（直線移動と反射）・入力処理・地球の自転と雲の制御
+- `app.js` … シーン構築・物理（直線移動と反射）・入力処理・地球の自転、雲、太陽方向に基づく惑星陰影の制御
 - `styles.css` … HUD のスタイル
 - `assets/earth_atmos_2048.jpg` … 地表テクスチャ（three.js サンプル / NASA 由来）
 - `assets/earth_clouds_2048.png` … 雲テクスチャ（同上、透過マップとして使用）
 - `assets/moon_1024.jpg` … 月テクスチャ（同上）
-- `assets/klingon_theme.mp3` … クリンゴン K't'inga 級の通過時に再生するBGM
-- `assets/star-trek-tng-transporter.mp3` … クリンゴン K't'inga 級の出現時に再生する効果音
-- `assets/star-trek-transportation.mp3` … クリンゴン K't'inga 級の消滅時に再生する効果音
-- `assets/KtingaClass/` … クリンゴン K't'inga 級の3Dモデル一式
-- `_headers` … 静的ホスト用のヘッダー設定
+- `assets/2k_sun.jpg` … 太陽テクスチャ
+- `assets/2k_mars.jpg` / `assets/2k_venus_atmosphere.jpg` / `assets/2k_jupiter.jpg` … 火星・金星・木星テクスチャ
+- `assets/2k_saturn.jpg` / `assets/2k_saturn_ring_alpha.png` … 土星本体とリングのテクスチャ
+- `assets/NCC-1701/` … Enterprise風宇宙船のOBJ / MTLモデルとテクスチャ一式
+- `assets/enterprise_theme.mp3` … Enterprise風宇宙船の登場時に再生する音声
+- `assets/warp.mp3` … Enterprise風宇宙船のワープ時に再生する音声
+- `assets/star-trek-viewer.mp3` … Enterprise風宇宙船のレア周回中に再生するBGM
+- `assets/klingon_theme.mp3` … クリンゴン船の通過時に再生するBGM
+- `assets/star-trek-tng-transporter.mp3` … クリンゴン船の出現時に再生する効果音
+- `assets/star-trek-transportation.mp3` … クリンゴン船の消滅時に再生する効果音
+- `assets/klingon_ship/` … 現行のクリンゴン船OBJ / MTLモデル一式
+- `inspect.html` / `inspect.js` … 現行クリンゴン船モデルを単体確認するための検査ビュー
+- `_headers` … 静的ホスト用のMIME設定とCOOP / COEPヘッダー設定
 
 ## 調整できるところ（`app.js`）
 
@@ -72,14 +88,17 @@ Quest の AR / VR セッションは **HTTPS（セキュアコンテキスト）
 - `EARTH_SPIN` / `CLOUD_SPIN` … 自転の速さと、雲が流れる速さ（rad/秒）
 - `CRUISE_DEFAULT` / `MIN_KICK` / `MAX_KICK` / `HAND_GAIN` … 弾く速度と手の感度
 
-## テクスチャについて
+## テクスチャとモデルについて
 
-地球と雲のテクスチャは three.js のサンプル（NASA Blue Marble 由来）を `assets/` に
-同梱しています。外部 CDN に依存しないため、オフラインや CORS 制限のある環境でも
-そのまま表示できます。
+地球、雲、月、太陽、火星、金星、木星、土星のテクスチャは `assets/` に同梱しています。
+外部画像CDNに依存しないため、オフラインやCORS制限のある環境でもそのまま表示できます。
+
+Enterprise風宇宙船は `assets/NCC-1701/` のOBJ / MTLモデルを読み込み、クリンゴン船は
+`assets/klingon_ship/` の `klingon_ship.obj` / `klingon_ship.mtl` を読み込みます。
+現在のアプリでは、`assets/klingon_ship/` 以外のクリンゴン船フォルダは参照していません。
 
 初期版のガラス球モデル（`assets/glass_demo.glb`）と生成スクリプト
-（`scripts/create_quest_mr_glass_demo.py`）は、地球版では使用しませんが参考として
+（`../scripts/create_quest_mr_glass_demo.py`）は、地球版では使用しませんが参考として
 残しています。
 
 ## エンタープライズ号の登場音楽
@@ -89,13 +108,17 @@ Quest の AR / VR セッションは **HTTPS（セキュアコンテキスト）
 
 お好みの音源に差し替える場合は、MP3 を **`assets/enterprise_theme.mp3`** という名前で
 置いてください。ファイルがあればそちらの冒頭が登場中に再生され、画面から消えると停止します
-（無ければ合成ファンファーレにフォールバック）。別のファイル名にしたい場合は `app.js` の
-`new Audio("./assets/enterprise_theme.mp3")` を編集してください。
+（無ければ合成ファンファーレにフォールバック）。別のファイル名にしたい場合は `app.js` 内の
+Enterprise音声読み込みパスを編集してください。
+
+ワープ時は **`assets/warp.mp3`** を再生し、音声の終了タイミングに合わせて船体、航跡、
+前方スパークを同時に消します。レア周回演出では、地球周回に入っている間だけ
+**`assets/star-trek-viewer.mp3`** を再生します。
 
 > 楽曲の著作権は利用者の責任で確認してください。実在のテーマ曲などは権利者の許諾が必要な
 > 場合があります。
 
-## クリンゴン K't'inga 級のBGM
+## クリンゴン船のBGM
 
 クリンゴン演出では **`assets/klingon_theme.mp3`** を Web Audio で読み込みます。
 音声を読み込めた場合はMP3の実際の長さに合わせて通過演出の時間を決め、読み込めない場合でも

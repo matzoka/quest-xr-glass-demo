@@ -1,4 +1,4 @@
-// Standalone inspection viewer for the Klingon K't'inga model.
+// Standalone inspection viewer for the Klingon ship model.
 // Loads the same OBJ/MTL + textures used by the main app, applies the same
 // material treatment (textures kept, stray loose-edge lines hidden), and shows
 // it fully lit and fully opaque with orbit controls so the hull can be checked
@@ -107,149 +107,6 @@ function tuneMaterial(material) {
   return material;
 }
 
-function makeKtingaWingSkinMaterial(sampleMap) {
-  if (sampleMap) {
-    sampleMap.colorSpace = THREE.SRGBColorSpace;
-    sampleMap.anisotropy = maxAnisotropy;
-    sampleMap.wrapS = THREE.RepeatWrapping;
-    sampleMap.wrapT = THREE.RepeatWrapping;
-    sampleMap.repeat.set(1.65, 1.45);
-    sampleMap.needsUpdate = true;
-  }
-  return new THREE.MeshStandardMaterial({
-    color: 0xc7ddcf,
-    map: sampleMap || null,
-    roughness: 0.86,
-    metalness: 0.06,
-    emissive: 0x06100a,
-    emissiveIntensity: 0.04,
-    transparent: false,
-    opacity: 1,
-    side: THREE.DoubleSide,
-    depthTest: true,
-    depthWrite: true,
-  });
-}
-
-function getMeshVerticesInObjectSpace(root, mesh) {
-  const vertices = [];
-  const position = mesh.geometry && mesh.geometry.attributes && mesh.geometry.attributes.position;
-  if (!position) return vertices;
-  root.updateWorldMatrix(true, true);
-  mesh.updateWorldMatrix(true, false);
-  const toRoot = new THREE.Matrix4().copy(root.matrixWorld).invert();
-  const point = new THREE.Vector3();
-  for (let i = 0; i < position.count; i++) {
-    point.fromBufferAttribute(position, i).applyMatrix4(mesh.matrixWorld).applyMatrix4(toRoot);
-    vertices.push(point.clone());
-  }
-  return vertices;
-}
-
-function convexHullXZ(points) {
-  const unique = [];
-  const seen = new Set();
-  for (const point of points) {
-    const key = `${point.x.toFixed(4)},${point.z.toFixed(4)}`;
-    if (!seen.has(key)) {
-      seen.add(key);
-      unique.push(point);
-    }
-  }
-  unique.sort((a, b) => (a.x === b.x ? a.z - b.z : a.x - b.x));
-  if (unique.length <= 3) return unique;
-  const cross = (origin, a, b) => (a.x - origin.x) * (b.z - origin.z) - (a.z - origin.z) * (b.x - origin.x);
-  const lower = [];
-  for (const point of unique) {
-    while (lower.length >= 2 && cross(lower[lower.length - 2], lower[lower.length - 1], point) <= 0) lower.pop();
-    lower.push(point);
-  }
-  const upper = [];
-  for (let i = unique.length - 1; i >= 0; i--) {
-    const point = unique[i];
-    while (upper.length >= 2 && cross(upper[upper.length - 2], upper[upper.length - 1], point) <= 0) upper.pop();
-    upper.push(point);
-  }
-  lower.pop();
-  upper.pop();
-  return lower.concat(upper);
-}
-
-function getMeshMaterialKey(mesh) {
-  const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
-  return mats
-    .map((material) => `${material && material.name ? material.name : ""} ${getMaterialTextureName(material)}`)
-    .join(" ")
-    .toLowerCase();
-}
-
-function getKtingaWingSourceVertices(obj) {
-  const sourceVertices = [];
-  obj.updateWorldMatrix(true, true);
-  obj.traverse((child) => {
-    if (!child.isMesh || child.name.includes("textured-wing-skin")) return;
-    const materialKey = getMeshMaterialKey(child);
-    if (!/(ktmain|ktbrown|ktgray|ktgreen3)/.test(materialKey)) return;
-    const vertices = getMeshVerticesInObjectSpace(obj, child);
-    if (!vertices.length) return;
-    const box = new THREE.Box3().setFromPoints(vertices);
-    const size = box.getSize(new THREE.Vector3());
-    const center = box.getCenter(new THREE.Vector3());
-    const isWingSpan = size.x > 1.2 && size.z > 0.08 && center.z > -1.85 && center.z < 1.85 && box.max.y < 0.56;
-    if (isWingSpan) sourceVertices.push(...vertices);
-  });
-  return sourceVertices;
-}
-
-function addKtingaWingSkins(obj, sampleMap) {
-  const sourceVertices = getKtingaWingSourceVertices(obj);
-  if (sourceVertices.length < 3) return;
-
-  const material = makeKtingaWingSkinMaterial(sampleMap);
-  const group = new THREE.Group();
-  group.name = "ktinga-textured-wing-skins";
-
-  const bounds = new THREE.Box3().setFromPoints(sourceVertices);
-  const centerX = (bounds.min.x + bounds.max.x) * 0.5;
-  const skinY = Math.min(bounds.max.y + 0.012, 0.2);
-
-  const makeSkin = (name, hull) => {
-    const xValues = hull.map((p) => p.x);
-    const zValues = hull.map((p) => p.z);
-    const minX = Math.min(...xValues);
-    const maxX = Math.max(...xValues);
-    const minZ = Math.min(...zValues);
-    const maxZ = Math.max(...zValues);
-    const spanX = Math.max(maxX - minX, 0.0001);
-    const spanZ = Math.max(maxZ - minZ, 0.0001);
-    const geometry = new THREE.BufferGeometry();
-    geometry.setAttribute("position", new THREE.Float32BufferAttribute(hull.flatMap((p) => [p.x, skinY, p.z]), 3));
-    geometry.setAttribute(
-      "uv",
-      new THREE.Float32BufferAttribute(hull.flatMap((p) => [(p.x - minX) / spanX, (p.z - minZ) / spanZ]), 2)
-    );
-    const indices = [];
-    for (let i = 1; i < hull.length - 1; i++) indices.push(0, i, i + 1);
-    geometry.setIndex(indices);
-    geometry.computeVertexNormals();
-    const mesh = new THREE.Mesh(geometry, material);
-    mesh.name = name;
-    group.add(mesh);
-    hullMeshes.push(mesh);
-  };
-
-  for (const side of [-1, 1]) {
-    const sidePoints = sourceVertices.filter((p) => {
-      const outward = Math.abs(p.x - centerX);
-      return side * (p.x - centerX) > 0.08 && outward < 2.08 && p.z > -1.68 && p.z < 1.28;
-    });
-    const hull = convexHullXZ(sidePoints);
-    if (hull.length >= 3) makeSkin(`ktinga-${side < 0 ? "port" : "starboard"}-textured-wing-skin`, hull);
-  }
-
-  obj.add(group);
-}
-
 const lineObjects = [];
 let wireOn = false;
 let hullMeshes = [];
@@ -264,19 +121,18 @@ function setWireframe(on) {
   }
 }
 
-new MTLLoader().setPath("./assets/KtingaClass/").load(
-  "ktinga.mtl",
+new MTLLoader().setPath("./assets/klingon_ship/").load(
+  "klingon_ship.mtl",
   (materials) => {
     materials.preload();
     new OBJLoader()
       .setMaterials(materials)
-      .setPath("./assets/KtingaClass/")
+      .setPath("./assets/klingon_ship/")
       .load(
-        "ktinga.obj",
+        "klingon_ship.obj",
         (obj) => {
           let meshCount = 0;
           let matCount = 0;
-          let wingSkinMap = null;
           obj.traverse((child) => {
             if (child.isMesh) {
               meshCount++;
@@ -285,16 +141,12 @@ new MTLLoader().setPath("./assets/KtingaClass/").load(
               mats.forEach((m) => {
                 matCount++;
                 tuneMaterial(m);
-                const textureName = getMaterialTextureName(m);
-                if (!wingSkinMap && m.map && textureName.includes("ktmainup1")) wingSkinMap = m.map.clone();
-                if (!wingSkinMap && m.map && textureName.includes("ktmainup")) wingSkinMap = m.map.clone();
               });
             } else if (child.isLine) {
               child.visible = false;
               lineObjects.push(child);
             }
           });
-          addKtingaWingSkins(obj, wingSkinMap);
 
           // Center and scale to a comfortable size (~8 units long).
           const box = new THREE.Box3().setFromObject(obj);
@@ -306,11 +158,11 @@ new MTLLoader().setPath("./assets/KtingaClass/").load(
           obj.position.sub(center);
           modelRoot.add(obj);
 
-          window.__inspect = { modelRoot, hullMeshes, lineObjects }; // TEMP debug
+          window.__inspect = { modelRoot, hullMeshes, lineObjects };
           statusEl.textContent =
             `読み込み完了  メッシュ:${meshCount}  マテリアル:${matCount}  遊離線:${lineObjects.length}(非表示)`;
           statusEl.style.color = "#8fe39a";
-          console.log("K't'inga inspector loaded", { meshCount, matCount, lineObjects: lineObjects.length });
+          console.log("Klingon ship inspector loaded", { meshCount, matCount, lineObjects: lineObjects.length });
         },
         (xhr) => {
           if (xhr.total) statusEl.textContent = `読み込み中… ${((xhr.loaded / xhr.total) * 100) | 0}%`;
@@ -330,7 +182,7 @@ new MTLLoader().setPath("./assets/KtingaClass/").load(
   }
 );
 
-// View presets. The K't'inga bow (command head) is at the model's local -Z.
+// View presets. The runtime pass is checked separately for forward direction.
 function setView(kind) {
   const d = 13;
   controls.target.set(0, 0, 0);

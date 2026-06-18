@@ -184,6 +184,47 @@ function makeGalaxyTexture(seed = 71701) {
   return tex;
 }
 
+function makeNebulaTexture(seed = 48211, hue = 0.6) {
+  const rand = seededRandom(seed);
+  const canvas = document.createElement("canvas");
+  canvas.width = 1024;
+  canvas.height = 512;
+  const ctx = canvas.getContext("2d");
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  for (let i = 0; i < 18; i += 1) {
+    const x = rand() * canvas.width;
+    const y = rand() * canvas.height;
+    const rx = 120 + rand() * 340;
+    const alpha = 0.025 + rand() * 0.075;
+    const colorA = new THREE.Color().setHSL(hue + (rand() - 0.5) * 0.09, 0.42 + rand() * 0.22, 0.48 + rand() * 0.18);
+    const colorB = new THREE.Color().setHSL(hue + (rand() - 0.5) * 0.14, 0.5, 0.18);
+    const g = ctx.createRadialGradient(x, y, 0, x, y, rx);
+    g.addColorStop(0, `rgba(${(colorA.r * 255) | 0},${(colorA.g * 255) | 0},${(colorA.b * 255) | 0},${alpha})`);
+    g.addColorStop(0.38, `rgba(${(colorB.r * 255) | 0},${(colorB.g * 255) | 0},${(colorB.b * 255) | 0},${alpha * 0.35})`);
+    g.addColorStop(1, "rgba(0,0,0,0)");
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+  }
+
+  ctx.save();
+  ctx.globalCompositeOperation = "lighter";
+  ctx.translate(canvas.width * 0.5, canvas.height * 0.5);
+  ctx.rotate((rand() - 0.5) * 0.9);
+  for (let i = 0; i < 1600; i += 1) {
+    const x = (rand() - 0.5) * canvas.width * 1.1;
+    const y = (rand() - rand()) * (24 + Math.pow(rand(), 2.4) * 150);
+    const a = 0.012 + rand() * 0.04;
+    ctx.fillStyle = `rgba(${120 + rand() * 90},${145 + rand() * 70},${200 + rand() * 55},${a})`;
+    ctx.fillRect(x, y, 1 + rand() * 2, 1 + rand() * 2);
+  }
+  ctx.restore();
+
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+
 function makeStarPoints(count, radius, size, opacity, seed) {
   const rand = seededRandom(seed);
   const positions = [];
@@ -202,7 +243,9 @@ function makeStarPoints(count, radius, size, opacity, seed) {
     const d = radius * (0.86 + rand() * 0.14);
     positions.push(Math.cos(a) * r * d, z * d, Math.sin(a) * r * d);
     const c = palette[Math.floor(rand() * palette.length)];
-    const twinkle = 0.55 + rand() * 0.45;
+    const distanceT = THREE.MathUtils.clamp((d / radius - 0.86) / 0.14, 0, 1);
+    const depthBrightness = THREE.MathUtils.lerp(1.16, 0.58, distanceT);
+    const twinkle = (0.52 + rand() * 0.48) * depthBrightness;
     colors.push(c.r * twinkle, c.g * twinkle, c.b * twinkle);
   }
 
@@ -225,8 +268,11 @@ function makeStarPoints(count, radius, size, opacity, seed) {
 }
 
 const spaceBackdrop = new THREE.Group();
+const spaceNebulaMaterials = [];
 spaceBackdrop.position.copy(roomCenter);
+spaceBackdrop.add(makeStarPoints(5600, 265, 0.72, 0.46, 67531));
 spaceBackdrop.add(makeStarPoints(3300, 185, 1.15, 0.84, 12077));
+spaceBackdrop.add(makeStarPoints(920, 212, 1.55, 0.58, 43789));
 spaceBackdrop.add(makeStarPoints(260, 178, 2.45, 0.98, 87103));
 spaceBackdrop.add(makeStarPoints(45, 172, 3.6, 0.96, 34129));
 
@@ -249,15 +295,51 @@ function addGalaxyBand(position, width, height, opacity, rotationZ, seed) {
   return galaxy;
 }
 
+function addNebulaCloud(position, width, height, opacity, rotationZ, seed, hue) {
+  const material = new THREE.MeshBasicMaterial({
+    map: makeNebulaTexture(seed, hue),
+    color: 0xffffff,
+    transparent: true,
+    opacity,
+    depthWrite: false,
+    side: THREE.DoubleSide,
+    blending: THREE.AdditiveBlending,
+  });
+  material.userData.baseOpacity = opacity;
+  material.userData.phase = (seed % 997) * 0.013;
+  material.userData.breath = 0.035 + ((seed % 31) / 31) * 0.035;
+  const nebula = new THREE.Mesh(new THREE.PlaneGeometry(width, height), material);
+  nebula.position.copy(position);
+  nebula.rotation.z = rotationZ;
+  spaceNebulaMaterials.push(material);
+  spaceBackdrop.add(nebula);
+  return nebula;
+}
+
 addGalaxyBand(new THREE.Vector3(-70, 22, -180), 170, 70, 0.78, 0.0, 71701);
 addGalaxyBand(new THREE.Vector3(78, 38, -225), 62, 24, 0.44, -0.38, 36017);
 addGalaxyBand(new THREE.Vector3(108, -34, -245), 48, 18, 0.34, 0.28, 90163);
 addGalaxyBand(new THREE.Vector3(-132, -28, -238), 42, 16, 0.32, -0.18, 52121);
 addGalaxyBand(new THREE.Vector3(8, 62, -260), 34, 12, 0.28, 0.52, 14741);
+addGalaxyBand(new THREE.Vector3(-24, -58, -285), 28, 10, 0.18, -0.62, 83077);
+addGalaxyBand(new THREE.Vector3(132, 8, -295), 24, 9, 0.16, 0.18, 62539);
+addGalaxyBand(new THREE.Vector3(-108, 66, -310), 32, 12, 0.14, 0.46, 29401);
+addGalaxyBand(new THREE.Vector3(46, -76, -318), 22, 8, 0.13, -0.28, 75931);
+addNebulaCloud(new THREE.Vector3(-122, 42, -270), 130, 58, 0.22, -0.16, 88121, 0.6);
+addNebulaCloud(new THREE.Vector3(96, -6, -286), 112, 46, 0.16, 0.34, 47237, 0.55);
+addNebulaCloud(new THREE.Vector3(14, -66, -302), 150, 50, 0.14, -0.48, 13967, 0.69);
 scene.add(spaceBackdrop);
 
 function updateSpaceBackdropMode() {
   spaceBackdrop.visible = currentMode !== "ar";
+}
+
+function updateSpaceBackdrop(elapsedTime) {
+  for (const mat of spaceNebulaMaterials) {
+    const base = mat.userData.baseOpacity || 0.12;
+    const breath = mat.userData.breath || 0.04;
+    mat.opacity = base * (1 + Math.sin(elapsedTime * 0.035 + mat.userData.phase) * breath);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -545,15 +627,71 @@ ballGroup.add(tiltGroup);
 const MOON_RADIUS = EARTH_RADIUS * 0.273;
 const MOON_DISTANCE = EARTH_RADIUS * 6.0;
 const MOON_ORBIT_SPEED = 0.015; // rad/s — slow enough that Apollo is not chasing a racing Moon
+const moonSunDir = new THREE.Vector3(1, 0, 0);
+const moonSunWorld = new THREE.Vector3();
+const moonSunLocal = new THREE.Vector3();
+const moonMaterial = new THREE.ShaderMaterial({
+  uniforms: {
+    uTex: { value: loadTex("moon_1024.jpg") },
+    uSunDir: { value: moonSunDir },
+    uTexel: { value: new THREE.Vector2(1 / 1024, 1 / 512) },
+  },
+  vertexShader: `
+varying vec2 vUv;
+varying vec3 vNormal;
+void main(){
+  vUv=uv;
+  vNormal=normalize(normal);
+  gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0);
+}`,
+  fragmentShader: `
+precision mediump float;
+uniform sampler2D uTex;
+uniform vec3 uSunDir;
+uniform vec2 uTexel;
+varying vec2 vUv;
+varying vec3 vNormal;
+float luma(vec3 c){ return dot(c,vec3(0.299,0.587,0.114)); }
+void main(){
+  vec3 tex=texture2D(uTex,vUv).rgb;
+  float center=luma(tex);
+  float blur=0.0;
+  blur+=luma(texture2D(uTex,vUv+vec2(uTexel.x,0.0)).rgb);
+  blur+=luma(texture2D(uTex,vUv-vec2(uTexel.x,0.0)).rgb);
+  blur+=luma(texture2D(uTex,vUv+vec2(0.0,uTexel.y)).rgb);
+  blur+=luma(texture2D(uTex,vUv-vec2(0.0,uTexel.y)).rgb);
+  blur*=0.25;
+  float craterDark=clamp((blur-center)*3.15,0.0,0.34);
+  float craterBright=clamp((center-blur)*1.45,0.0,0.14);
+  float craterShade=clamp(1.0-craterDark+craterBright,0.68,1.22);
+
+  float lit=dot(normalize(vNormal),normalize(uSunDir));
+  float day=smoothstep(-0.13,0.18,lit);
+  float direct=pow(max(lit,0.0),0.82);
+  float light=mix(0.24,0.66+0.58*direct,day);
+  vec3 tint=mix(vec3(0.46,0.48,0.52),vec3(1.08,1.03,0.94),day);
+  vec3 color=tex*craterShade*light*tint;
+  gl_FragColor=vec4(color,1.0);
+}`,
+});
 const moon = new THREE.Mesh(
   new THREE.SphereGeometry(MOON_RADIUS, 48, 32),
-  new THREE.MeshStandardMaterial({ map: loadTex("moon_1024.jpg"), roughness: 1.0, metalness: 0.0 })
+  moonMaterial
 );
 moon.position.set(MOON_DISTANCE, 0, 0);
 const moonOrbit = new THREE.Group();
 moonOrbit.rotation.x = THREE.MathUtils.degToRad(6); // gently inclined orbit
 moonOrbit.add(moon);
 ballGroup.add(moonOrbit);
+
+function updateMoonLighting() {
+  moon.updateWorldMatrix(true, false);
+  sunMesh.getWorldPosition(moonSunWorld);
+  moonSunLocal.copy(moonSunWorld);
+  moon.worldToLocal(moonSunLocal);
+  moonSunLocal.normalize();
+  moonSunDir.copy(moonSunLocal);
+}
 
 // Airliner (JAL-style) tracing the Tokyo <-> Los Angeles route along the
 // surface. Child of earthMesh, so it rides the Earth's spin while flying.
@@ -1563,7 +1701,7 @@ function updateEnterpriseRareOrbit(dt) {
 }
 
 // ---------------------------------------------------------------------------
-// Klingon K't'inga: a rare, heavy background pass with cloak-style fades.
+// Klingon ship: a rare, heavy background pass with cloak-style fades.
 // ---------------------------------------------------------------------------
 const klingon = new THREE.Group();
 klingon.visible = false;
@@ -1626,9 +1764,9 @@ const KLINGON_FADE_IN = 4.2;
 const KLINGON_FADE_OUT = 5.4;
 const KLINGON_PASS_DURATION_FALLBACK = 29;
 const KLINGON_TARGET_LENGTH = EARTH_RADIUS * 5.75;
-const KLINGON_ASSET_PATH = "./assets/KtingaClass/";
-const KLINGON_MTL_FILE = "ktinga.mtl";
-const KLINGON_OBJ_FILE = "ktinga.obj";
+const KLINGON_ASSET_PATH = "./assets/klingon_ship/";
+const KLINGON_MTL_FILE = "klingon_ship.mtl";
+const KLINGON_OBJ_FILE = "klingon_ship.obj";
 let klingonModelLoaded = false;
 let klingonModelLoading = false;
 let klingonPending = false;
@@ -1659,9 +1797,8 @@ function keepKlingonHullReadable(material) {
   material.customProgramCacheKey = () => "klingon-hull-readable-v2";
 }
 
-// Tune the Klingon hull materials in place: keep the K't'inga textures and
-// only adjust shading so the pale hull stays readable while true light accents
-// glow. White hull panels are not treated as lamps on this model.
+// Tune the Klingon hull materials in place: keep the ship texture and only
+// adjust shading so the hull stays readable while true light accents glow.
 function tuneKlingonMaterial(material) {
   if (!material) return new THREE.MeshStandardMaterial({ color: 0x31433a });
   const name = (material.name || "").toLowerCase();
@@ -1705,149 +1842,6 @@ function tuneKlingonMaterial(material) {
   return material;
 }
 
-function makeKtingaWingSkinMaterial(sampleMap) {
-  if (sampleMap) {
-    sampleMap.colorSpace = THREE.SRGBColorSpace;
-    sampleMap.anisotropy = maxAnisotropy;
-    sampleMap.wrapS = THREE.RepeatWrapping;
-    sampleMap.wrapT = THREE.RepeatWrapping;
-    sampleMap.repeat.set(1.65, 1.45);
-    sampleMap.needsUpdate = true;
-  }
-  return new THREE.MeshStandardMaterial({
-    color: 0xc7ddcf,
-    map: sampleMap || null,
-    roughness: 0.86,
-    metalness: 0.06,
-    emissive: 0x06100a,
-    emissiveIntensity: 0.1,
-    transparent: true,
-    opacity: 0,
-    side: THREE.DoubleSide,
-    depthTest: true,
-    depthWrite: true,
-  });
-}
-
-function getMeshVerticesInObjectSpace(root, mesh) {
-  const vertices = [];
-  const position = mesh.geometry && mesh.geometry.attributes && mesh.geometry.attributes.position;
-  if (!position) return vertices;
-  root.updateWorldMatrix(true, true);
-  mesh.updateWorldMatrix(true, false);
-  const toRoot = new THREE.Matrix4().copy(root.matrixWorld).invert();
-  const point = new THREE.Vector3();
-  for (let i = 0; i < position.count; i++) {
-    point.fromBufferAttribute(position, i).applyMatrix4(mesh.matrixWorld).applyMatrix4(toRoot);
-    vertices.push(point.clone());
-  }
-  return vertices;
-}
-
-function convexHullXZ(points) {
-  const unique = [];
-  const seen = new Set();
-  for (const point of points) {
-    const key = `${point.x.toFixed(4)},${point.z.toFixed(4)}`;
-    if (!seen.has(key)) {
-      seen.add(key);
-      unique.push(point);
-    }
-  }
-  unique.sort((a, b) => (a.x === b.x ? a.z - b.z : a.x - b.x));
-  if (unique.length <= 3) return unique;
-  const cross = (origin, a, b) => (a.x - origin.x) * (b.z - origin.z) - (a.z - origin.z) * (b.x - origin.x);
-  const lower = [];
-  for (const point of unique) {
-    while (lower.length >= 2 && cross(lower[lower.length - 2], lower[lower.length - 1], point) <= 0) lower.pop();
-    lower.push(point);
-  }
-  const upper = [];
-  for (let i = unique.length - 1; i >= 0; i--) {
-    const point = unique[i];
-    while (upper.length >= 2 && cross(upper[upper.length - 2], upper[upper.length - 1], point) <= 0) upper.pop();
-    upper.push(point);
-  }
-  lower.pop();
-  upper.pop();
-  return lower.concat(upper);
-}
-
-function getMeshMaterialKey(mesh) {
-  const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
-  return mats
-    .map((material) => `${material && material.name ? material.name : ""} ${material && material.userData ? material.userData.klingonColorHex || "" : ""} ${getMaterialTextureName(material)}`)
-    .join(" ")
-    .toLowerCase();
-}
-
-function getKtingaWingSourceVertices(obj) {
-  const sourceVertices = [];
-  obj.updateWorldMatrix(true, true);
-  obj.traverse((child) => {
-    if (!child.isMesh || child.name.includes("textured-wing-skin")) return;
-    const materialKey = getMeshMaterialKey(child);
-    if (!/(ktmain|ktbrown|ktgray|ktgreen3)/.test(materialKey)) return;
-    const vertices = getMeshVerticesInObjectSpace(obj, child);
-    if (!vertices.length) return;
-    const box = new THREE.Box3().setFromPoints(vertices);
-    const size = box.getSize(new THREE.Vector3());
-    const center = box.getCenter(new THREE.Vector3());
-    const isWingSpan = size.x > 1.2 && size.z > 0.08 && center.z > -1.85 && center.z < 1.85 && box.max.y < 0.56;
-    if (isWingSpan) sourceVertices.push(...vertices);
-  });
-  return sourceVertices;
-}
-
-function addKtingaWingSkins(obj, sampleMap) {
-  const sourceVertices = getKtingaWingSourceVertices(obj);
-  if (sourceVertices.length < 3) return;
-
-  const material = makeKtingaWingSkinMaterial(sampleMap);
-  if (!klingonMaterials.includes(material)) klingonMaterials.push(material);
-  const group = new THREE.Group();
-  group.name = "ktinga-textured-wing-skins";
-
-  const bounds = new THREE.Box3().setFromPoints(sourceVertices);
-  const centerX = (bounds.min.x + bounds.max.x) * 0.5;
-  const skinY = Math.min(bounds.max.y + 0.012, 0.2);
-
-  const makeSkin = (name, hull) => {
-    const xValues = hull.map((p) => p.x);
-    const zValues = hull.map((p) => p.z);
-    const minX = Math.min(...xValues);
-    const maxX = Math.max(...xValues);
-    const minZ = Math.min(...zValues);
-    const maxZ = Math.max(...zValues);
-    const spanX = Math.max(maxX - minX, 0.0001);
-    const spanZ = Math.max(maxZ - minZ, 0.0001);
-    const geometry = new THREE.BufferGeometry();
-    geometry.setAttribute("position", new THREE.Float32BufferAttribute(hull.flatMap((p) => [p.x, skinY, p.z]), 3));
-    geometry.setAttribute(
-      "uv",
-      new THREE.Float32BufferAttribute(hull.flatMap((p) => [(p.x - minX) / spanX, (p.z - minZ) / spanZ]), 2)
-    );
-    const indices = [];
-    for (let i = 1; i < hull.length - 1; i++) indices.push(0, i, i + 1);
-    geometry.setIndex(indices);
-    geometry.computeVertexNormals();
-    const mesh = new THREE.Mesh(geometry, material);
-    mesh.name = name;
-    group.add(mesh);
-  };
-
-  for (const side of [-1, 1]) {
-    const sidePoints = sourceVertices.filter((p) => {
-      const outward = Math.abs(p.x - centerX);
-      return side * (p.x - centerX) > 0.08 && outward < 2.08 && p.z > -1.68 && p.z < 1.28;
-    });
-    const hull = convexHullXZ(sidePoints);
-    if (hull.length >= 3) makeSkin(`ktinga-${side < 0 ? "port" : "starboard"}-textured-wing-skin`, hull);
-  }
-
-  obj.add(group);
-}
-
 function setKlingonOpacity(alpha) {
   const clamped = THREE.MathUtils.clamp(alpha, 0, 1);
   for (const material of klingonMaterials) {
@@ -1873,7 +1867,6 @@ function loadKlingonModel() {
             let tunedMeshCount = 0;
             let tunedMaterialCount = 0;
             let hiddenLineCount = 0;
-            let wingSkinMap = null;
             const tunedColorCounts = {};
             obj.traverse((child) => {
               if (child.isMesh) {
@@ -1885,20 +1878,13 @@ function loadKlingonModel() {
                   tunedMaterialCount++;
                   const colorKey = material.userData.klingonColorHex || "unknown";
                   tunedColorCounts[colorKey] = (tunedColorCounts[colorKey] || 0) + 1;
-                  if (!wingSkinMap && material.map && colorKey.includes("ktmainup1")) wingSkinMap = material.map.clone();
-                  if (!wingSkinMap && material.map && colorKey.includes("ktmainup")) wingSkinMap = material.map.clone();
                   if (!klingonMaterials.includes(material)) klingonMaterials.push(material);
                 });
               } else if (child.isLine) {
-                // Some OBJ exports carry loose-edge `l` elements that OBJLoader
-                // turns into LineSegments. They are not part of the hull tuning or
-                // the opacity fade, so they render as always-on bright "wireframe"
-                // lines. Hide them.
                 child.visible = false;
                 hiddenLineCount++;
               }
             });
-            addKtingaWingSkins(obj, wingSkinMap);
 
             const box = new THREE.Box3().setFromObject(obj);
             const size = box.getSize(new THREE.Vector3());
@@ -1916,7 +1902,7 @@ function loadKlingonModel() {
             klingonModelLoading = false;
             setKlingonOpacity(0);
             console.log(
-              "Klingon K't'inga model loaded. raw size:",
+              "Klingon ship model loaded. raw size:",
               size.x.toFixed(2),
               size.y.toFixed(2),
               size.z.toFixed(2),
@@ -1974,9 +1960,8 @@ function spawnKlingonPass() {
 }
 
 function orientKlingonAlongVelocity() {
-  // The K't'inga's bow is the long-neck command head. In this OBJ, the loaded
-  // forward axis is opposite Object3D.lookAt's visible travel direction, so
-  // target a point behind the ship to keep the bow leading the pass.
+  // The current Klingon OBJ faces along the same convention as the previous
+  // ship after centering, so target behind the model to keep its nose leading.
   klingon.lookAt(klingonTmp.copy(klingon.position).sub(klingonVel));
 }
 
@@ -3319,13 +3304,17 @@ let solarProminenceDuration = 6;
 let nextSolarProminenceAt = 6;
 const solarPromPoints = [];
 const solarCameraLocal = new THREE.Vector3();
-const solarRoomLocal = new THREE.Vector3();
 const solarViewDir = new THREE.Vector3();
 const solarLimbDir = new THREE.Vector3();
 const solarTangent = new THREE.Vector3();
 const solarSide = new THREE.Vector3();
 const solarDir = new THREE.Vector3();
+const solarLimbAxisA = new THREE.Vector3();
+const solarLimbAxisB = new THREE.Vector3();
+const solarPromCandidateWorld = new THREE.Vector3();
+const solarPromCandidateNdc = new THREE.Vector3();
 const solarFootScale = new THREE.Vector3();
+let solarApexGlowBaseScale = SUN_RADIUS * 0.31;
 
 function scheduleNextSolarProminence() {
   nextSolarProminenceAt = elapsed + 18 + Math.random() * 22;
@@ -3335,20 +3324,62 @@ function rotateAroundAxis(vec, axis, angle) {
   return vec.applyAxisAngle(axis, angle).normalize();
 }
 
+function randomSolarProminenceScale() {
+  const r = Math.random();
+  if (r < 0.24) return 0.56 + Math.random() * 0.18;
+  if (r > 0.76) return 1.34 + Math.random() * 0.2;
+  return 0.82 + Math.random() * 0.42;
+}
+
+function randomSolarProminenceThickness() {
+  const r = Math.random();
+  if (r < 0.18) return 0.76 + Math.random() * 0.16;
+  if (r > 0.78) return 1.24 + Math.random() * 0.24;
+  return 0.94 + Math.random() * 0.28;
+}
+
+function setRandomVisibleSolarLimbDir() {
+  let bestAngle = Math.random() * Math.PI * 2;
+  for (let attempt = 0; attempt < 14; attempt += 1) {
+    const angle = Math.random() * Math.PI * 2;
+    solarLimbDir
+      .copy(solarLimbAxisA)
+      .multiplyScalar(Math.cos(angle))
+      .addScaledVector(solarLimbAxisB, Math.sin(angle))
+      .normalize();
+    solarPromCandidateWorld.copy(solarLimbDir).multiplyScalar(SUN_RADIUS * 1.18);
+    sunMesh.localToWorld(solarPromCandidateWorld);
+    solarPromCandidateNdc.copy(solarPromCandidateWorld).project(camera);
+    const outsideHud = solarPromCandidateNdc.x > -0.44 || solarPromCandidateNdc.y < 0.56;
+    if (
+      outsideHud &&
+      solarPromCandidateNdc.x > -0.96 &&
+      solarPromCandidateNdc.x < 0.96 &&
+      solarPromCandidateNdc.y > -0.94 &&
+      solarPromCandidateNdc.y < 0.94
+    ) {
+      bestAngle = angle;
+      break;
+    }
+  }
+  solarLimbDir
+    .copy(solarLimbAxisA)
+    .multiplyScalar(Math.cos(bestAngle))
+    .addScaledVector(solarLimbAxisB, Math.sin(bestAngle))
+    .normalize();
+}
+
 function spawnSolarProminence() {
   sunMesh.updateWorldMatrix(true, false);
   camera.getWorldPosition(solarCameraLocal);
   sunMesh.worldToLocal(solarCameraLocal);
   solarViewDir.copy(solarCameraLocal).normalize();
 
-  solarRoomLocal.copy(roomCenter);
-  sunMesh.worldToLocal(solarRoomLocal);
-  solarRoomLocal.normalize();
-  solarLimbDir.copy(solarRoomLocal).addScaledVector(solarViewDir, -solarRoomLocal.dot(solarViewDir));
-  if (solarLimbDir.lengthSq() < 1e-5) solarLimbDir.crossVectors(solarViewDir, _yUp);
-  if (solarLimbDir.lengthSq() < 1e-5) solarLimbDir.set(1, 0, 0);
-  solarLimbDir.normalize();
-  rotateAroundAxis(solarLimbDir, solarViewDir, (Math.random() - 0.5) * 0.45);
+  solarLimbAxisA.crossVectors(solarViewDir, _yUp);
+  if (solarLimbAxisA.lengthSq() < 1e-5) solarLimbAxisA.set(1, 0, 0);
+  solarLimbAxisA.normalize();
+  solarLimbAxisB.crossVectors(solarViewDir, solarLimbAxisA).normalize();
+  setRandomVisibleSolarLimbDir();
   solarDir.copy(solarLimbDir).addScaledVector(solarViewDir, 0.04).normalize();
 
   solarTangent.crossVectors(solarViewDir, solarDir);
@@ -3356,9 +3387,14 @@ function spawnSolarProminence() {
   solarTangent.normalize();
   solarSide.crossVectors(solarDir, solarTangent).normalize();
 
-  const halfAngle = THREE.MathUtils.degToRad(11 + Math.random() * 6.0);
-  const lift = 0.23 + Math.random() * 0.15;
-  const twist = (Math.random() - 0.5) * SUN_RADIUS * 0.09;
+  const sizeScale = randomSolarProminenceScale();
+  const thicknessScale = randomSolarProminenceThickness();
+  const sizeT = THREE.MathUtils.clamp((sizeScale - 0.56) / 0.98, 0, 1);
+  const thicknessT = THREE.MathUtils.clamp((thicknessScale - 0.76) / 0.72, 0, 1);
+  const halfAngle = THREE.MathUtils.degToRad(7 + Math.random() * 8.0) * THREE.MathUtils.lerp(0.62, 1.72, sizeT);
+  const lift = THREE.MathUtils.lerp(0.09, 0.46, sizeT) + Math.random() * THREE.MathUtils.lerp(0.03, 0.08, sizeT);
+  const twist = (Math.random() - 0.5) * SUN_RADIUS * THREE.MathUtils.lerp(0.045, 0.14, sizeT);
+  const filamentScale = THREE.MathUtils.lerp(0.58, 1.48, sizeT) * THREE.MathUtils.lerp(0.9, 1.08, thicknessT);
   solarPromPoints.length = 0;
   for (let i = 0; i <= 24; i += 1) {
     const p = i / 24;
@@ -3384,25 +3420,26 @@ function spawnSolarProminence() {
     const rise = Math.sin(p * Math.PI);
     return point
       .clone()
-      .addScaledVector(solarSide, SUN_RADIUS * (0.026 + rise * 0.055))
-      .addScaledVector(solarTangent, SUN_RADIUS * Math.sin(p * Math.PI * 2.0) * 0.018);
+      .addScaledVector(solarSide, SUN_RADIUS * (0.02 + rise * 0.05) * filamentScale)
+      .addScaledVector(solarTangent, SUN_RADIUS * Math.sin(p * Math.PI * 2.0) * 0.015 * filamentScale);
   });
   const strandPointsB = solarPromPoints.map((point, index) => {
     const p = index / (solarPromPoints.length - 1);
     const rise = Math.sin(p * Math.PI);
     return point
       .clone()
-      .addScaledVector(solarSide, -SUN_RADIUS * (0.018 + rise * 0.04))
-      .addScaledVector(solarTangent, SUN_RADIUS * Math.sin(p * Math.PI * 1.5 + 0.7) * 0.014);
+      .addScaledVector(solarSide, -SUN_RADIUS * (0.014 + rise * 0.036) * filamentScale)
+      .addScaledVector(solarTangent, SUN_RADIUS * Math.sin(p * Math.PI * 1.5 + 0.7) * 0.012 * filamentScale);
   });
 
   const curve = new THREE.CatmullRomCurve3(solarPromPoints);
   const strandCurveA = new THREE.CatmullRomCurve3(strandPointsA);
   const strandCurveB = new THREE.CatmullRomCurve3(strandPointsB);
-  const coreGeo = new THREE.TubeGeometry(curve, 96, SUN_RADIUS * 0.005, 10, false);
-  const glowGeo = new THREE.TubeGeometry(curve, 96, SUN_RADIUS * 0.018, 12, false);
-  const strandGeoA = new THREE.TubeGeometry(strandCurveA, 80, SUN_RADIUS * 0.004, 8, false);
-  const strandGeoB = new THREE.TubeGeometry(strandCurveB, 80, SUN_RADIUS * 0.0032, 8, false);
+  const tubeScale = THREE.MathUtils.lerp(0.58, 1.52, sizeT) * thicknessScale;
+  const coreGeo = new THREE.TubeGeometry(curve, 96, SUN_RADIUS * 0.0046 * tubeScale, 10, false);
+  const glowGeo = new THREE.TubeGeometry(curve, 96, SUN_RADIUS * 0.015 * tubeScale, 12, false);
+  const strandGeoA = new THREE.TubeGeometry(strandCurveA, 80, SUN_RADIUS * 0.0036 * tubeScale, 8, false);
+  const strandGeoB = new THREE.TubeGeometry(strandCurveB, 80, SUN_RADIUS * 0.0029 * tubeScale, 8, false);
   solarPromCore.geometry.dispose();
   solarPromGlow.geometry.dispose();
   solarPromStrandA.geometry.dispose();
@@ -3412,13 +3449,14 @@ function spawnSolarProminence() {
   solarPromStrandA.geometry = strandGeoA;
   solarPromStrandB.geometry = strandGeoB;
 
-  solarFootScale.setScalar(SUN_RADIUS * 0.22);
+  solarFootScale.setScalar(SUN_RADIUS * THREE.MathUtils.lerp(0.13, 0.27, sizeT));
+  solarApexGlowBaseScale = SUN_RADIUS * THREE.MathUtils.lerp(0.18, 0.42, sizeT);
   solarFootA.position.copy(solarPromPoints[0]).normalize().multiplyScalar(SUN_RADIUS * 1.014);
   solarFootB.position.copy(solarPromPoints[solarPromPoints.length - 1]).normalize().multiplyScalar(SUN_RADIUS * 1.014);
   solarApexGlow.position.copy(solarPromPoints[Math.floor(solarPromPoints.length / 2)]);
   solarFootA.scale.copy(solarFootScale);
   solarFootB.scale.copy(solarFootScale);
-  solarApexGlow.scale.setScalar(SUN_RADIUS * 0.34);
+  solarApexGlow.scale.setScalar(solarApexGlowBaseScale);
 
   solarProminenceDuration = 6.4 + Math.random() * 2.4;
   solarProminenceT = 0;
@@ -3448,7 +3486,7 @@ function updateSolarProminence(dt) {
   const breathing = 1 + Math.sin(elapsed * 3.6) * 0.05;
   solarFootA.scale.copy(solarFootScale).multiplyScalar(breathing);
   solarFootB.scale.copy(solarFootScale).multiplyScalar(0.92 + (breathing - 1) * 0.8);
-  solarApexGlow.scale.setScalar(SUN_RADIUS * 0.31 * (0.96 + breathing * 0.04));
+  solarApexGlow.scale.setScalar(solarApexGlowBaseScale * (0.96 + breathing * 0.04));
 
   if (p >= 1) {
     solarProminenceActive = false;
@@ -3464,14 +3502,94 @@ function updateSolarProminence(dt) {
   }
 }
 
+const planetSunWorld = new THREE.Vector3();
+const planetSunLocal = new THREE.Vector3();
+
+function makeSunlitPlanetMaterial(file, options = {}) {
+  const sunDir = new THREE.Vector3(1, 0, 0);
+  const tintDay = new THREE.Color(options.tintDay || 0xffffff);
+  const tintNight = new THREE.Color(options.tintNight || 0x555c66);
+  return {
+    sunDir,
+    material: new THREE.ShaderMaterial({
+      uniforms: {
+        uTex: { value: loadTex(file) },
+        uSunDir: { value: sunDir },
+        uTexel: { value: new THREE.Vector2(1 / (options.texWidth || 2048), 1 / (options.texHeight || 1024)) },
+        uNight: { value: options.night ?? 0.18 },
+        uDay: { value: options.day ?? 0.7 },
+        uDirect: { value: options.direct ?? 0.5 },
+        uRelief: { value: options.relief ?? 1.8 },
+        uSoftness: { value: options.softness ?? 0.18 },
+        uTintDay: { value: tintDay },
+        uTintNight: { value: tintNight },
+      },
+      vertexShader: `
+varying vec2 vUv;
+varying vec3 vNormal;
+void main(){
+  vUv=uv;
+  vNormal=normalize(normal);
+  gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0);
+}`,
+      fragmentShader: `
+precision mediump float;
+uniform sampler2D uTex;
+uniform vec3 uSunDir;
+uniform vec2 uTexel;
+uniform float uNight;
+uniform float uDay;
+uniform float uDirect;
+uniform float uRelief;
+uniform float uSoftness;
+uniform vec3 uTintDay;
+uniform vec3 uTintNight;
+varying vec2 vUv;
+varying vec3 vNormal;
+float luma(vec3 c){ return dot(c,vec3(0.299,0.587,0.114)); }
+void main(){
+  vec3 tex=texture2D(uTex,vUv).rgb;
+  float center=luma(tex);
+  float blur=0.0;
+  blur+=luma(texture2D(uTex,vUv+vec2(uTexel.x,0.0)).rgb);
+  blur+=luma(texture2D(uTex,vUv-vec2(uTexel.x,0.0)).rgb);
+  blur+=luma(texture2D(uTex,vUv+vec2(0.0,uTexel.y)).rgb);
+  blur+=luma(texture2D(uTex,vUv-vec2(0.0,uTexel.y)).rgb);
+  blur*=0.25;
+  float dark=clamp((blur-center)*uRelief,0.0,0.28);
+  float bright=clamp((center-blur)*uRelief*0.36,0.0,0.12);
+  float relief=clamp(1.0-dark+bright,0.72,1.18);
+
+  float lit=dot(normalize(vNormal),normalize(uSunDir));
+  float day=smoothstep(-uSoftness,uSoftness,lit);
+  float direct=pow(max(lit,0.0),0.85);
+  float light=mix(uNight,uDay+uDirect*direct,day);
+  vec3 tint=mix(uTintNight,uTintDay,day);
+  gl_FragColor=vec4(tex*relief*light*tint,1.0);
+}`,
+    }),
+  };
+}
+
 const SATURN_R = EARTH_RADIUS * 15;
 const saturnGroup = new THREE.Group();
 saturnGroup.position.set(45, -9, -35);
 saturnGroup.rotation.z = THREE.MathUtils.degToRad(26.7); // axial tilt
 scene.add(saturnGroup);
+const saturnLighting = makeSunlitPlanetMaterial("2k_saturn.jpg", {
+  texWidth: 2048,
+  texHeight: 1024,
+  night: 0.2,
+  day: 0.74,
+  direct: 0.42,
+  relief: 1.1,
+  softness: 0.2,
+  tintDay: 0xfff1d8,
+  tintNight: 0x5a5046,
+});
 const saturnBall = new THREE.Mesh(
   new THREE.SphereGeometry(SATURN_R, 64, 48),
-  new THREE.MeshStandardMaterial({ map: loadTex("2k_saturn.jpg"), roughness: 0.9, metalness: 0.0 })
+  saturnLighting.material
 );
 saturnGroup.add(saturnBall);
 const ringGeo = new THREE.RingGeometry(SATURN_R * 1.2, SATURN_R * 2.3, 128);
@@ -3501,26 +3619,81 @@ saturnGroup.add(saturnRing);
 // per-second rotation applied in the animation loop.
 // ---------------------------------------------------------------------------
 const planets = [];
-function addPlanet(file, radius, position, tiltDeg, spin) {
+
+function addPlanet(file, radius, position, tiltDeg, spin, options = {}) {
   const group = new THREE.Group();
   group.position.copy(position);
   group.rotation.z = THREE.MathUtils.degToRad(tiltDeg);
+  const lit = options.sunlit ? makeSunlitPlanetMaterial(file, options) : null;
   const mesh = new THREE.Mesh(
     new THREE.SphereGeometry(radius, 64, 48),
-    new THREE.MeshStandardMaterial({ map: loadTex(file), roughness: 0.95, metalness: 0.0 })
+    lit
+      ? lit.material
+      : new THREE.MeshStandardMaterial({ map: loadTex(file), roughness: 0.95, metalness: 0.0 })
   );
   group.add(mesh);
   scene.add(group);
-  planets.push({ mesh, spin });
+  planets.push({ mesh, spin, sunDir: lit && lit.sunDir });
   return mesh;
 }
 
+function updatePlanetLighting() {
+  sunMesh.getWorldPosition(planetSunWorld);
+  saturnBall.updateWorldMatrix(true, false);
+  planetSunLocal.copy(planetSunWorld);
+  saturnBall.worldToLocal(planetSunLocal);
+  planetSunLocal.normalize();
+  saturnLighting.sunDir.copy(planetSunLocal);
+
+  for (const p of planets) {
+    if (!p.sunDir) continue;
+    p.mesh.updateWorldMatrix(true, false);
+    planetSunLocal.copy(planetSunWorld);
+    p.mesh.worldToLocal(planetSunLocal);
+    planetSunLocal.normalize();
+    p.sunDir.copy(planetSunLocal);
+  }
+}
+
 // Mars — 0.5x Earth, rusty and small, just outside the right-hand wall.
-addPlanet("2k_mars.jpg", EARTH_RADIUS * 0.5, new THREE.Vector3(5.4, 2.4, -2.2), 25.2, 0.12);
+addPlanet("2k_mars.jpg", EARTH_RADIUS * 0.5, new THREE.Vector3(5.4, 2.4, -2.2), 25.2, 0.12, {
+  sunlit: true,
+  texWidth: 2048,
+  texHeight: 1024,
+  night: 0.22,
+  day: 0.72,
+  direct: 0.5,
+  relief: 2.35,
+  softness: 0.16,
+  tintDay: 0xfff0dc,
+  tintNight: 0x5e3a30,
+});
 // Venus — same size as Earth, pale thick atmosphere, just outside the left wall.
-addPlanet("2k_venus_atmosphere.jpg", EARTH_RADIUS * 1.0, new THREE.Vector3(-5.6, 2.2, -2.2), 2.6, -0.03);
+addPlanet("2k_venus_atmosphere.jpg", EARTH_RADIUS * 1.0, new THREE.Vector3(-5.6, 2.2, -2.2), 2.6, -0.03, {
+  sunlit: true,
+  texWidth: 2048,
+  texHeight: 1024,
+  night: 0.34,
+  day: 0.78,
+  direct: 0.34,
+  relief: 0.9,
+  softness: 0.24,
+  tintDay: 0xfff5dc,
+  tintNight: 0x6a5c4a,
+});
 // Jupiter — 20x Earth, banded giant, far to the left-behind.
-addPlanet("2k_jupiter.jpg", EARTH_RADIUS * 20, new THREE.Vector3(-42, 6, 26), 3.1, 0.22);
+addPlanet("2k_jupiter.jpg", EARTH_RADIUS * 20, new THREE.Vector3(-42, 6, 26), 3.1, 0.22, {
+  sunlit: true,
+  texWidth: 2048,
+  texHeight: 1024,
+  night: 0.2,
+  day: 0.76,
+  direct: 0.44,
+  relief: 0.85,
+  softness: 0.2,
+  tintDay: 0xffead2,
+  tintNight: 0x56483e,
+});
 
 // ---------------------------------------------------------------------------
 // Apollo 11-inspired mission. The scale and timing are still compressed for the
@@ -4033,15 +4206,18 @@ renderer.setAnimationLoop((timestamp) => {
   sunMesh.rotation.y += dt * 0.03;
   saturnBall.rotation.y += dt * 0.1;
   for (const p of planets) p.mesh.rotation.y += dt * p.spin;
+  updatePlanetLighting();
 
   // Refresh world matrices so the Apollo mission can read the live Moon
   // position (the Moon both orbits the Earth and the Earth roams the room).
   ballGroup.updateWorldMatrix(true, true);
   updateEarthNightSide(elapsed);
+  updateMoonLighting();
   updateApollo(dt);
 
   // Ambient space life: orbiting satellite, shooting stars, distant comet, surface lightning.
   elapsed += dt;
+  updateSpaceBackdrop(elapsed);
   satOrbit.rotation.y += dt * SAT_ORBIT_SPEED;
   satOrbit.updateWorldMatrix(true, true);
   updateSatelliteLighting();
