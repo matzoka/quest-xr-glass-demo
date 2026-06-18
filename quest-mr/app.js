@@ -2,6 +2,8 @@ import * as THREE from "three";
 import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js";
 import { OBJLoader } from "three/addons/loaders/OBJLoader.js";
 import { MTLLoader } from "three/addons/loaders/MTLLoader.js";
+import { XRControllerModelFactory } from "three/addons/webxr/XRControllerModelFactory.js";
+import { XRHandModelFactory } from "three/addons/webxr/XRHandModelFactory.js";
 
 const statusEl = document.querySelector("#status");
 const vrButton = document.querySelector("#vrButton");
@@ -2808,7 +2810,7 @@ async function enterXr(mode) {
     const options =
       mode === "immersive-ar"
         ? {
-            optionalFeatures: ["local-floor", "dom-overlay"],
+            optionalFeatures: ["local-floor", "dom-overlay", "hand-tracking"],
             domOverlay: { root: document.body },
           }
         : {
@@ -2834,6 +2836,7 @@ async function enterXr(mode) {
       poseDebugXrButton.visible = false;
       poseDebugXrHitArea.visible = false;
       poseDebugXrPanel.visible = false;
+      setHandPresenceVisible(false);
       setControllerHelpVisible(false);
       currentMode = "preview";
       updateSpaceBackdropMode();
@@ -4008,6 +4011,126 @@ const tempMatrix = new THREE.Matrix4();
 const poseDebugButtonRight = new THREE.Vector3();
 const poseDebugButtonUp = new THREE.Vector3();
 const poseDebugButtonForward = new THREE.Vector3();
+const controllerModelFactory = new XRControllerModelFactory();
+const handModelFactory = new XRHandModelFactory();
+const handPresence = [];
+const HAND_PRESENCE_ROOM_PAD = 0.45;
+
+function makeDistanceRay() {
+  const group = new THREE.Group();
+  const line = new THREE.Line(
+    new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(0, 0, -0.05), new THREE.Vector3(0, 0, -0.82)]),
+    new THREE.LineBasicMaterial({
+      color: 0x82f7ff,
+      transparent: true,
+      opacity: 0.58,
+      depthTest: false,
+    })
+  );
+  line.renderOrder = 1200;
+  group.add(line);
+
+  const beadMaterial = new THREE.MeshBasicMaterial({
+    color: 0x8effff,
+    transparent: true,
+    opacity: 0.76,
+    depthTest: false,
+  });
+  for (const z of [-0.28, -0.54, -0.82]) {
+    const bead = new THREE.Mesh(new THREE.SphereGeometry(0.012, 16, 10), beadMaterial);
+    bead.position.z = z;
+    bead.renderOrder = 1201;
+    group.add(bead);
+  }
+  return group;
+}
+
+function makeFallbackQuestController(side) {
+  const group = new THREE.Group();
+  const shellMaterial = new THREE.MeshStandardMaterial({
+    color: 0x101820,
+    metalness: 0.32,
+    roughness: 0.42,
+    transparent: true,
+    opacity: 0.92,
+  });
+  const gripMaterial = new THREE.MeshStandardMaterial({
+    color: 0x05080c,
+    metalness: 0.25,
+    roughness: 0.5,
+    transparent: true,
+    opacity: 0.88,
+  });
+  const accentMaterial = new THREE.MeshBasicMaterial({
+    color: 0x1d9dff,
+    transparent: true,
+    opacity: 0.82,
+    depthTest: false,
+  });
+  const handMaterial = new THREE.MeshStandardMaterial({
+    color: 0x9aa4ae,
+    transparent: true,
+    opacity: 0.22,
+    roughness: 0.75,
+    depthWrite: false,
+  });
+
+  const handle = new THREE.Mesh(new THREE.CapsuleGeometry(0.027, 0.105, 8, 18), gripMaterial);
+  handle.position.set(0, -0.055, 0.018);
+  handle.rotation.x = -0.2;
+  group.add(handle);
+
+  const face = new THREE.Mesh(new THREE.CylinderGeometry(0.047, 0.04, 0.026, 32), shellMaterial);
+  face.position.set(0, 0.018, -0.02);
+  face.rotation.x = Math.PI / 2;
+  group.add(face);
+
+  const thumb = new THREE.Mesh(new THREE.SphereGeometry(0.012, 16, 10), accentMaterial);
+  thumb.position.set(side === "left" ? 0.02 : -0.02, 0.028, -0.055);
+  thumb.renderOrder = 1202;
+  group.add(thumb);
+
+  const palm = new THREE.Mesh(new THREE.SphereGeometry(0.05, 24, 14), handMaterial);
+  palm.scale.set(0.7, 1.0, 0.42);
+  palm.position.set(side === "left" ? -0.045 : 0.045, -0.035, 0.035);
+  palm.renderOrder = 1198;
+  group.add(palm);
+
+  for (let i = 0; i < 4; i += 1) {
+    const finger = new THREE.Mesh(new THREE.CapsuleGeometry(0.008, 0.052, 5, 10), handMaterial);
+    finger.position.set((side === "left" ? -1 : 1) * (0.012 + i * 0.01), -0.01 - i * 0.008, -0.02);
+    finger.rotation.x = 0.9;
+    finger.rotation.z = (side === "left" ? -1 : 1) * (0.15 + i * 0.04);
+    finger.renderOrder = 1198;
+    group.add(finger);
+  }
+
+  group.add(makeDistanceRay());
+  return group;
+}
+
+function isViewerInsideEarthFrame() {
+  if (!renderer.xr.isPresenting) return false;
+  getViewerPose(viewerWorld);
+  tmpVec.copy(viewerWorld).sub(roomCenter);
+  return (
+    Math.abs(tmpVec.x) <= roomHalf.x + HAND_PRESENCE_ROOM_PAD &&
+    Math.abs(tmpVec.y) <= roomHalf.y + HAND_PRESENCE_ROOM_PAD &&
+    Math.abs(tmpVec.z) <= roomHalf.z + HAND_PRESENCE_ROOM_PAD
+  );
+}
+
+function setHandPresenceVisible(visible) {
+  for (const item of handPresence) {
+    item.root.visible = visible;
+    if (item.model && item.fallback) item.fallback.visible = item.model.children.length === 0;
+  }
+}
+
+function updateHandPresence() {
+  const visible = isViewerInsideEarthFrame();
+  setHandPresenceVisible(visible);
+}
 
 // ---------------------------------------------------------------------------
 // XR controllers: touch the Earth to launch it; trigger launches along the
@@ -4021,12 +4144,32 @@ const poseDebugTouching = []; // latch so one hand press records once
 
 for (let index = 0; index < 2; index += 1) {
   const grip = renderer.xr.getControllerGrip(index);
+  const side = index === 0 ? "left" : "right";
+  const presenceRoot = new THREE.Group();
+  presenceRoot.visible = false;
+  const fallbackController = makeFallbackQuestController(side);
+  const controllerModel = controllerModelFactory.createControllerModel(grip);
   const marker = new THREE.Mesh(
     new THREE.SphereGeometry(0.025, 18, 14),
     new THREE.MeshStandardMaterial({ color: 0x9be7ff, emissive: 0x0a2230, roughness: 0.4 })
   );
-  grip.add(marker);
+  marker.renderOrder = 1203;
+  presenceRoot.add(fallbackController);
+  presenceRoot.add(controllerModel);
+  presenceRoot.add(marker);
+  grip.add(presenceRoot);
   scene.add(grip);
+  handPresence.push({ root: presenceRoot, fallback: fallbackController, model: controllerModel });
+
+  const hand = renderer.xr.getHand(index);
+  const handRoot = new THREE.Group();
+  handRoot.visible = false;
+  const handModel = handModelFactory.createHandModel(hand, "spheres");
+  handRoot.add(handModel);
+  hand.add(handRoot);
+  scene.add(hand);
+  handPresence.push({ root: handRoot });
+
   grips.push(grip);
   gripPrev.push(new THREE.Vector3());
   gripValid.push(false);
@@ -6337,6 +6480,7 @@ renderer.setAnimationLoop((timestamp) => {
   lastFrameTime = timestamp;
 
   keyboardSteer();
+  updateHandPresence();
   updateHandTouch(dt);
   updateLocomotion(dt);
 
