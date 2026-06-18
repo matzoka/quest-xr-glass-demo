@@ -142,16 +142,18 @@ function seededRandom(seed) {
 
 function makeStarTexture() {
   const canvas = document.createElement("canvas");
-  canvas.width = 32;
-  canvas.height = 32;
+  canvas.width = 64;
+  canvas.height = 64;
   const ctx = canvas.getContext("2d");
-  const g = ctx.createRadialGradient(16, 16, 0, 16, 16, 16);
+  const g = ctx.createRadialGradient(32, 32, 0, 32, 32, 32);
   g.addColorStop(0, "rgba(255,255,255,1)");
-  g.addColorStop(0.22, "rgba(210,230,255,0.92)");
-  g.addColorStop(0.55, "rgba(130,170,255,0.24)");
+  g.addColorStop(0.06, "rgba(255,255,255,1)");
+  g.addColorStop(0.14, "rgba(220,235,255,0.72)");
+  g.addColorStop(0.24, "rgba(145,180,255,0.11)");
+  g.addColorStop(0.34, "rgba(95,135,255,0.02)");
   g.addColorStop(1, "rgba(90,130,255,0)");
   ctx.fillStyle = g;
-  ctx.fillRect(0, 0, 32, 32);
+  ctx.fillRect(0, 0, 64, 64);
   const tex = new THREE.CanvasTexture(canvas);
   tex.colorSpace = THREE.SRGBColorSpace;
   return tex;
@@ -546,6 +548,7 @@ function makeStarPoints(count, radius, size, opacity, seed) {
     sizeAttenuation: false,
     transparent: true,
     opacity,
+    alphaTest: 0.09,
     vertexColors: true,
     depthWrite: false,
     blending: THREE.AdditiveBlending,
@@ -560,7 +563,9 @@ function makeMilkyWayBand() {
   const rows = 18;
   const positions = [];
   const uvs = [];
+  const colors = [];
   const indices = [];
+  const brightCenter = 0.75;
 
   for (let row = 0; row <= rows; row += 1) {
     const v = row / rows;
@@ -577,6 +582,10 @@ function makeMilkyWayBand() {
         Math.sin(longitude) * cosLat * radius
       );
       uvs.push(u, v);
+      const wrappedDistance = Math.abs(((u - brightCenter + 0.5) % 1) - 0.5);
+      const fadeT = smoothFade01((wrappedDistance - 0.24) / 0.1);
+      const brightness = THREE.MathUtils.lerp(1, 0.14, fadeT);
+      colors.push(brightness, brightness, brightness);
     }
   }
 
@@ -593,6 +602,7 @@ function makeMilkyWayBand() {
   const geometry = new THREE.BufferGeometry();
   geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
   geometry.setAttribute("uv", new THREE.Float32BufferAttribute(uvs, 2));
+  geometry.setAttribute("color", new THREE.Float32BufferAttribute(colors, 3));
   geometry.setIndex(indices);
   geometry.computeBoundingSphere();
 
@@ -604,6 +614,7 @@ function makeMilkyWayBand() {
       transparent: true,
       opacity: 0.8,
       alphaTest: 0.004,
+      vertexColors: true,
       depthWrite: false,
       side: THREE.DoubleSide,
       blending: THREE.AdditiveBlending,
@@ -618,11 +629,11 @@ const spaceBackdrop = new THREE.Group();
 const spaceNebulaMaterials = [];
 spaceBackdrop.position.copy(roomCenter);
 spaceBackdrop.add(makeMilkyWayBand());
-spaceBackdrop.add(makeStarPoints(5600, 265, 0.72, 0.46, 67531));
-spaceBackdrop.add(makeStarPoints(3300, 185, 1.15, 0.84, 12077));
-spaceBackdrop.add(makeStarPoints(920, 212, 1.55, 0.58, 43789));
-spaceBackdrop.add(makeStarPoints(260, 178, 2.45, 0.98, 87103));
-spaceBackdrop.add(makeStarPoints(45, 172, 3.6, 0.96, 34129));
+spaceBackdrop.add(makeStarPoints(5600, 265, 0.54, 0.68, 67531));
+spaceBackdrop.add(makeStarPoints(3300, 185, 0.86, 0.98, 12077));
+spaceBackdrop.add(makeStarPoints(920, 212, 1.12, 0.82, 43789));
+spaceBackdrop.add(makeStarPoints(260, 178, 1.72, 1.0, 87103));
+spaceBackdrop.add(makeStarPoints(45, 172, 2.35, 0.96, 34129));
 
 function addGalaxyBand(position, width, height, opacity, rotationZ, seed) {
   const galaxy = new THREE.Mesh(
