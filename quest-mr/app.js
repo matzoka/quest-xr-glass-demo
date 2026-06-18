@@ -3541,6 +3541,9 @@ scene.add(poseDebugXrButton);
 
 const raycaster = new THREE.Raycaster();
 const tempMatrix = new THREE.Matrix4();
+const poseDebugButtonRight = new THREE.Vector3();
+const poseDebugButtonUp = new THREE.Vector3();
+const poseDebugButtonForward = new THREE.Vector3();
 
 // ---------------------------------------------------------------------------
 // XR controllers: touch the Earth to launch it; trigger launches along the
@@ -3752,6 +3755,21 @@ function capturePoseDebugUrl() {
 window.__questXrDebug = Object.assign(window.__questXrDebug || {}, {
   capturePoseDebugUrl,
 });
+
+function updatePoseDebugButton() {
+  if (!poseDebugXrButton.visible || !renderer.xr.isPresenting) return;
+  const cam = renderer.xr.getCamera(camera);
+  cam.getWorldPosition(viewerWorld);
+  cam.getWorldDirection(poseDebugButtonForward);
+  poseDebugButtonRight.set(1, 0, 0).applyQuaternion(cam.quaternion).normalize();
+  poseDebugButtonUp.set(0, 1, 0).applyQuaternion(cam.quaternion).normalize();
+  poseDebugXrButton.position
+    .copy(viewerWorld)
+    .addScaledVector(poseDebugButtonForward, 0.78)
+    .addScaledVector(poseDebugButtonRight, 0.22)
+    .addScaledVector(poseDebugButtonUp, -0.28);
+  poseDebugXrButton.quaternion.copy(cam.quaternion);
+}
 
 function updateLocomotion(dt) {
   const session = renderer.xr.getSession();
@@ -5786,6 +5804,7 @@ renderer.setAnimationLoop((timestamp) => {
   updateKlingon(dt);
   updateEnterprise(dt);
   updateLightning(dt);
+  updatePoseDebugButton();
 
   applyDebugTopCamera();
   renderer.render(scene, camera);
