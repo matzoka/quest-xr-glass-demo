@@ -95,6 +95,21 @@ p {
   opacity: 0.72;
 }
 
+.poseDebugOutput {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 92px;
+  margin-top: 12px;
+  padding: 10px;
+  border: 1px solid rgba(117, 255, 168, 0.38);
+  border-radius: 8px;
+  background: rgba(3, 9, 12, 0.86);
+  color: #d9fff0;
+  font: 12px/1.35 Consolas, "Courier New", monospace;
+  resize: vertical;
+  pointer-events: auto;
+}
+
 @media (max-width: 520px) {
   .panel {
     left: 12px;

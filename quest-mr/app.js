@@ -8,6 +8,7 @@ const vrButton = document.querySelector("#vrButton");
 const arButton = document.querySelector("#arButton");
 const enterpriseOrbitButton = document.querySelector("#enterpriseOrbitButton");
 const klingonButton = document.querySelector("#klingonButton");
+const poseDebugOutputEl = document.querySelector("#poseDebugOutput");
 const DEBUG_TOP_VIEW = new URLSearchParams(window.location.search).has("topDebug");
 const DEBUG_TOP_VIEW_DISTANCE = Number(new URLSearchParams(window.location.search).get("topDebugDist"));
 const DEBUG_BLACK_HOLE_VIEW = new URLSearchParams(window.location.search).has("blackHoleDebug");
@@ -15,6 +16,8 @@ const DEBUG_BLACK_HOLE_FALL = new URLSearchParams(window.location.search).has("b
 const DEBUG_BLACK_HOLE_BACK_VIEW = new URLSearchParams(window.location.search).has("blackHoleBackDebug");
 const DEBUG_SOLAR_SPOT_VIEW = new URLSearchParams(window.location.search).has("solarSpotDebug");
 const DEBUG_COMET_VIEW = new URLSearchParams(window.location.search).has("cometDebug");
+const DEBUG_CAMERA_VIEW = new URLSearchParams(window.location.search).has("cameraDebug");
+const DEBUG_POSE_CAPTURE = new URLSearchParams(window.location.search).has("poseDebug");
 
 // ---------------------------------------------------------------------------
 // Scene / renderer
@@ -78,6 +81,17 @@ camera.position.set(0, roomCenter.y, roomCenter.z + fitDist + roomHalf.z + 0.5);
 camera.lookAt(roomCenter);
 
 function applyDebugTopCamera() {
+  if (DEBUG_CAMERA_VIEW && !renderer.xr.isPresenting) {
+    const params = new URLSearchParams(window.location.search);
+    const read = (name, fallback) => {
+      const value = Number(params.get(name));
+      return Number.isFinite(value) ? value : fallback;
+    };
+    camera.up.set(0, 1, 0);
+    camera.position.set(read("camX", 0), read("camY", 2.2), read("camZ", 8));
+    camera.lookAt(read("lookX", roomCenter.x), read("lookY", roomCenter.y), read("lookZ", roomCenter.z));
+    return;
+  }
   if (DEBUG_COMET_VIEW && !renderer.xr.isPresenting) {
     camera.up.set(0, 1, 0);
     camera.position.set(-12, 42, 12);
@@ -2802,6 +2816,7 @@ async function enterXr(mode) {
       resetButton.visible = false;
       enterpriseOrbitXrButton.visible = false;
       klingonXrButton.visible = false;
+      poseDebugXrButton.visible = false;
       currentMode = "preview";
       updateSpaceBackdropMode();
       statusEl.textContent = `${label} を終了しました。もう一度入るには VR/AR を選んでください。`;
@@ -2828,6 +2843,7 @@ async function enterXr(mode) {
     resetButton.visible = true; // show the in-XR Exit / Reset buttons
     enterpriseOrbitXrButton.visible = true;
     klingonXrButton.visible = true;
+    poseDebugXrButton.visible = DEBUG_POSE_CAPTURE;
     statusEl.textContent = `${label} 起動中。左スティックで水平移動／右スティック上下で昇降。グリップでホームに復帰。地球に触れて弾く。終了は「終了」ボタンを指してトリガー。`;
   } catch (error) {
     console.error(error);
@@ -3509,6 +3525,20 @@ klingonXrButton.renderOrder = 999;
 klingonXrButton.visible = false;
 scene.add(klingonXrButton);
 
+const poseDebugXrButton = new THREE.Mesh(
+  new THREE.PlaneGeometry(0.42, 0.15),
+  new THREE.MeshBasicMaterial({
+    map: makeButtonTexture("視線記録", "rgba(90,62,150,0.95)"),
+    transparent: true,
+    depthTest: false,
+    side: THREE.DoubleSide,
+  })
+);
+poseDebugXrButton.position.set(0, 2.2, -0.5);
+poseDebugXrButton.renderOrder = 999;
+poseDebugXrButton.visible = false;
+scene.add(poseDebugXrButton);
+
 const raycaster = new THREE.Raycaster();
 const tempMatrix = new THREE.Matrix4();
 
@@ -3542,12 +3572,15 @@ for (let index = 0; index < 2; index += 1) {
       tempMatrix.identity().extractRotation(controller.matrixWorld);
       raycaster.ray.origin.setFromMatrixPosition(controller.matrixWorld);
       raycaster.ray.direction.set(0, 0, -1).applyMatrix4(tempMatrix);
-      const uiHit = raycaster.intersectObjects([exitButton, resetButton, enterpriseOrbitXrButton, klingonXrButton])[0];
+      const uiTargets = [exitButton, resetButton, enterpriseOrbitXrButton, klingonXrButton];
+      if (poseDebugXrButton.visible) uiTargets.push(poseDebugXrButton);
+      const uiHit = raycaster.intersectObjects(uiTargets)[0];
       if (uiHit) {
         if (uiHit.object === exitButton) renderer.xr.getSession()?.end();
         else if (uiHit.object === resetButton) resetBall();
         else if (uiHit.object === enterpriseOrbitXrButton) requestEnterpriseRareOrbit();
         else if (uiHit.object === klingonXrButton) requestKlingonPass();
+        else if (uiHit.object === poseDebugXrButton) capturePoseDebugUrl();
         return;
       }
     }
@@ -3676,6 +3709,49 @@ function getViewerPose(out) {
   cam.getWorldDirection(viewerForward);
   return cam;
 }
+
+function formatPoseNumber(value) {
+  return Number(value).toFixed(3).replace(/\.?0+$/, "");
+}
+
+function capturePoseDebugUrl() {
+  const cam = getViewerPose(viewerWorld);
+  const pos = viewerWorld.clone();
+  const forward = viewerForward.clone().normalize();
+  const look = pos.clone().addScaledVector(forward, 80);
+  const url = new URL(window.location.href);
+  url.search = "";
+  url.searchParams.set("cameraDebug", "1");
+  url.searchParams.set("camX", formatPoseNumber(pos.x));
+  url.searchParams.set("camY", formatPoseNumber(pos.y));
+  url.searchParams.set("camZ", formatPoseNumber(pos.z));
+  url.searchParams.set("lookX", formatPoseNumber(look.x));
+  url.searchParams.set("lookY", formatPoseNumber(look.y));
+  url.searchParams.set("lookZ", formatPoseNumber(look.z));
+  const debugUrl = url.toString();
+
+  if (poseDebugOutputEl) {
+    poseDebugOutputEl.hidden = false;
+    poseDebugOutputEl.value = debugUrl;
+    poseDebugOutputEl.focus?.();
+    poseDebugOutputEl.select?.();
+  }
+
+  statusEl.textContent = "視線を記録しました。HUDのURLをPCで開くと同じ視線を再現できます。";
+  console.log("Pose debug URL:", debugUrl, "cameraQuaternion:", cam.quaternion.toArray().map(formatPoseNumber).join(","));
+
+  if (navigator.clipboard?.writeText) {
+    navigator.clipboard.writeText(debugUrl).catch(() => {
+      /* Quest Browser may block clipboard writes; the HUD still shows the URL. */
+    });
+  }
+
+  return debugUrl;
+}
+
+window.__questXrDebug = Object.assign(window.__questXrDebug || {}, {
+  capturePoseDebugUrl,
+});
 
 function updateLocomotion(dt) {
   const session = renderer.xr.getSession();
