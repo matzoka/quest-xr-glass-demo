@@ -6,6 +6,8 @@ import { MTLLoader } from "three/addons/loaders/MTLLoader.js";
 const statusEl = document.querySelector("#status");
 const vrButton = document.querySelector("#vrButton");
 const arButton = document.querySelector("#arButton");
+const enterpriseOrbitButton = document.querySelector("#enterpriseOrbitButton");
+const klingonButton = document.querySelector("#klingonButton");
 
 // ---------------------------------------------------------------------------
 // Scene / renderer
@@ -1359,6 +1361,7 @@ let shipAfterRoomT = 0;
 let shipWarpT = 0;
 let shipWarpDuration = 0.75;
 let shipWarpAudioEnded = true;
+let enterpriseRarePending = false;
 let shipWarpTrailScale = 1;
 let nextShipAt = new URLSearchParams(window.location.search).has("klingon") ? Number.POSITIVE_INFINITY : 3.0;
 const shipRareEarthCenter = new THREE.Vector3();
@@ -1565,6 +1568,19 @@ function spawnEnterprise() {
   } else {
     spawnEnterpriseNormal();
   }
+}
+
+function requestEnterpriseRareOrbit() {
+  initAudio();
+  enterpriseRarePending = true;
+  nextShipAt = Math.min(nextShipAt, elapsed);
+  if (!shipActive && !klingonActive && !klingonPending) {
+    enterpriseRarePending = false;
+    spawnEnterpriseRareOrbit();
+    statusEl.textContent = "Enterprise周回演出を開始しました。";
+    return;
+  }
+  statusEl.textContent = "Enterprise周回演出を予約しました。現在の演出が終わると開始します。";
 }
 
 function enterpriseInsideRoomFrame() {
@@ -1959,6 +1975,19 @@ function spawnKlingonPass() {
   playKlingonArrivalSound();
 }
 
+function requestKlingonPass() {
+  initAudio();
+  klingonPending = true;
+  nextKlingonAt = Math.min(nextKlingonAt, elapsed);
+  loadKlingonBuffer();
+  loadKlingonModel();
+  if (!shipActive && !klingonActive) {
+    statusEl.textContent = "クリンゴン船の登場を開始します。";
+    return;
+  }
+  statusEl.textContent = "クリンゴン船の登場を予約しました。現在の演出が終わると開始します。";
+}
+
 function orientKlingonAlongVelocity() {
   // The current Klingon OBJ faces along the same convention as the previous
   // ship after centering, so target behind the model to keep its nose leading.
@@ -2034,6 +2063,11 @@ function updateKlingon(dt) {
 
 function updateEnterprise(dt) {
   if (!shipActive) {
+    if (enterpriseRarePending && !klingonActive && !klingonPending) {
+      enterpriseRarePending = false;
+      spawnEnterpriseRareOrbit();
+      return;
+    }
     if (elapsed >= nextShipAt && !klingonActive && !klingonPending) spawnEnterprise();
     return;
   }
@@ -2144,6 +2178,8 @@ async function enterXr(mode) {
       floor.visible = true;
       exitButton.visible = false;
       resetButton.visible = false;
+      enterpriseOrbitXrButton.visible = false;
+      klingonXrButton.visible = false;
       currentMode = "preview";
       updateSpaceBackdropMode();
       statusEl.textContent = `${label} を終了しました。もう一度入るには VR/AR を選んでください。`;
@@ -2168,6 +2204,8 @@ async function enterXr(mode) {
     button.textContent = `Exit ${label}`;
     exitButton.visible = true;
     resetButton.visible = true; // show the in-XR Exit / Reset buttons
+    enterpriseOrbitXrButton.visible = true;
+    klingonXrButton.visible = true;
     statusEl.textContent = `${label} 起動中。左スティックで水平移動／右スティック上下で昇降。グリップでホームに復帰。地球に触れて弾く。終了は「終了」ボタンを指してトリガー。`;
   } catch (error) {
     console.error(error);
@@ -2194,6 +2232,9 @@ arButton?.addEventListener("click", () => {
   }
   enterXr("immersive-ar");
 });
+
+enterpriseOrbitButton?.addEventListener("click", requestEnterpriseRareOrbit);
+klingonButton?.addEventListener("click", requestKlingonPass);
 
 updateXrAvailability();
 
@@ -2713,6 +2754,34 @@ resetButton.renderOrder = 999;
 resetButton.visible = false;
 scene.add(resetButton);
 
+const enterpriseOrbitXrButton = new THREE.Mesh(
+  new THREE.PlaneGeometry(0.42, 0.15),
+  new THREE.MeshBasicMaterial({
+    map: makeButtonTexture("Enterprise 周回", "rgba(20,85,135,0.95)"),
+    transparent: true,
+    depthTest: false,
+    side: THREE.DoubleSide,
+  })
+);
+enterpriseOrbitXrButton.position.set(0, 1.8, -0.5);
+enterpriseOrbitXrButton.renderOrder = 999;
+enterpriseOrbitXrButton.visible = false;
+scene.add(enterpriseOrbitXrButton);
+
+const klingonXrButton = new THREE.Mesh(
+  new THREE.PlaneGeometry(0.42, 0.15),
+  new THREE.MeshBasicMaterial({
+    map: makeButtonTexture("クリンゴン登場", "rgba(22,105,62,0.95)"),
+    transparent: true,
+    depthTest: false,
+    side: THREE.DoubleSide,
+  })
+);
+klingonXrButton.position.set(0, 2.0, -0.5);
+klingonXrButton.renderOrder = 999;
+klingonXrButton.visible = false;
+scene.add(klingonXrButton);
+
 const raycaster = new THREE.Raycaster();
 const tempMatrix = new THREE.Matrix4();
 
@@ -2746,10 +2815,12 @@ for (let index = 0; index < 2; index += 1) {
       tempMatrix.identity().extractRotation(controller.matrixWorld);
       raycaster.ray.origin.setFromMatrixPosition(controller.matrixWorld);
       raycaster.ray.direction.set(0, 0, -1).applyMatrix4(tempMatrix);
-      const uiHit = raycaster.intersectObjects([exitButton, resetButton])[0];
+      const uiHit = raycaster.intersectObjects([exitButton, resetButton, enterpriseOrbitXrButton, klingonXrButton])[0];
       if (uiHit) {
         if (uiHit.object === exitButton) renderer.xr.getSession()?.end();
-        else resetBall();
+        else if (uiHit.object === resetButton) resetBall();
+        else if (uiHit.object === enterpriseOrbitXrButton) requestEnterpriseRareOrbit();
+        else if (uiHit.object === klingonXrButton) requestKlingonPass();
         return;
       }
     }

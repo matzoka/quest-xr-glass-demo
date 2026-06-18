@@ -51,6 +51,11 @@ p {
   display: flex;
   gap: 10px;
   margin-top: 12px;
+  flex-wrap: wrap;
+}
+
+.demoActions {
+  margin-top: 10px;
 }
 
 .actionButton {
@@ -70,6 +75,19 @@ p {
 .actionButton.secondary {
   border-color: rgba(255, 255, 255, 0.22);
   background: #161d28;
+}
+
+.actionButton.demo {
+  min-height: 36px;
+  padding: 0 13px;
+  border-color: rgba(132, 220, 255, 0.36);
+  background: #102b3a;
+  font-size: 13px;
+}
+
+.actionButton.demo.klingon {
+  border-color: rgba(117, 255, 168, 0.36);
+  background: #10291f;
 }
 
 .actionButton:disabled {
