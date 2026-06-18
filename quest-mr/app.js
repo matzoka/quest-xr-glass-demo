@@ -263,6 +263,103 @@ function makeNebulaTexture(seed = 48211, hue = 0.6) {
   return tex;
 }
 
+function makeSpiralGalaxyTexture(seed = 25103) {
+  const rand = seededRandom(seed);
+  const canvas = document.createElement("canvas");
+  canvas.width = 384;
+  canvas.height = 384;
+  const ctx = canvas.getContext("2d");
+  const center = canvas.width * 0.5;
+  const tilt = 0.56 + rand() * 0.22;
+  const turns = 1.58 + rand() * 0.72;
+  const armCount = 2 + Math.floor(rand() * 2);
+  const diskRotation = (rand() - 0.5) * 0.7;
+
+  const halo = ctx.createRadialGradient(center, center, 8, center, center, center * 0.92);
+  halo.addColorStop(0, "rgba(255,238,205,0.36)");
+  halo.addColorStop(0.18, "rgba(150,180,255,0.2)");
+  halo.addColorStop(0.58, "rgba(80,125,220,0.07)");
+  halo.addColorStop(1, "rgba(0,0,0,0)");
+  ctx.fillStyle = halo;
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  ctx.save();
+  ctx.translate(center, center);
+  ctx.rotate(diskRotation);
+  ctx.scale(1, tilt);
+  ctx.globalCompositeOperation = "lighter";
+  for (let arm = 0; arm < armCount; arm += 1) {
+    const armOffset = (arm / armCount) * Math.PI * 2;
+    for (let lane = 0; lane < 2; lane += 1) {
+      ctx.beginPath();
+      for (let step = 0; step <= 92; step += 1) {
+        const t = step / 92;
+        const radius = 14 + t * 150 + lane * 4;
+        const angle = armOffset + t * turns * Math.PI * 2 + (lane - 0.5) * 0.11;
+        const x = Math.cos(angle) * radius;
+        const y = Math.sin(angle) * radius;
+        if (step === 0) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
+      }
+      ctx.strokeStyle = lane === 0 ? "rgba(150,185,255,0.13)" : "rgba(255,215,190,0.065)";
+      ctx.lineWidth = 2.2 + rand() * 1.4;
+      ctx.stroke();
+    }
+  }
+  for (let arm = 0; arm < armCount; arm += 1) {
+    const armOffset = (arm / armCount) * Math.PI * 2;
+    for (let i = 0; i < 840; i += 1) {
+      const t = Math.pow(rand(), 0.72);
+      const radius = 10 + t * 160;
+      const angle = armOffset + t * turns * Math.PI * 2 + (rand() - 0.5) * (0.34 - t * 0.16);
+      const armWidth = 1.8 + t * 8.5 + rand() * 2.6;
+      const x = Math.cos(angle) * radius + (rand() - 0.5) * armWidth;
+      const y = Math.sin(angle) * radius + (rand() - 0.5) * armWidth;
+      const warmKnot = rand() < 0.09;
+      const alpha = warmKnot ? 0.22 + rand() * 0.28 : 0.05 + rand() * 0.16;
+      const dot = warmKnot ? 0.45 + rand() * 1.35 : 0.28 + rand() * 0.9;
+      ctx.fillStyle = warmKnot
+        ? `rgba(255,178,170,${alpha})`
+        : `rgba(${155 + rand() * 80},${180 + rand() * 55},255,${alpha})`;
+      ctx.beginPath();
+      ctx.arc(x, y, dot, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+
+  for (let i = 0; i < 420; i += 1) {
+    const radius = Math.pow(rand(), 0.92) * 168;
+    const angle = rand() * Math.PI * 2;
+    const x = Math.cos(angle) * radius;
+    const y = Math.sin(angle) * radius;
+    const alpha = 0.018 + rand() * 0.052;
+    ctx.fillStyle = `rgba(185,205,255,${alpha})`;
+    ctx.fillRect(x, y, 0.6 + rand() * 1.6, 0.6 + rand() * 1.6);
+  }
+  ctx.restore();
+
+  ctx.save();
+  ctx.translate(center, center);
+  ctx.rotate(diskRotation + 0.58);
+  ctx.scale(1.35, 0.42);
+  ctx.globalCompositeOperation = "lighter";
+  const core = ctx.createRadialGradient(0, 0, 0, 0, 0, 44);
+  core.addColorStop(0, "rgba(255,240,185,0.82)");
+  core.addColorStop(0.38, "rgba(255,218,150,0.36)");
+  core.addColorStop(1, "rgba(255,205,135,0)");
+  ctx.fillStyle = core;
+  ctx.beginPath();
+  ctx.arc(0, 0, 50, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+
+  applyCanvasEdgeFade(ctx, canvas.width, canvas.height, 0.2, 0.2);
+
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+
 function makeStarPoints(count, radius, size, opacity, seed) {
   const rand = seededRandom(seed);
   const positions = [];
@@ -356,6 +453,48 @@ function addNebulaCloud(position, width, height, opacity, rotationZ, seed, hue) 
   return nebula;
 }
 
+function addSpiralGalaxy(position, width, height, opacity, rotationZ, seed) {
+  const spiral = new THREE.Mesh(
+    new THREE.PlaneGeometry(width, height),
+    new THREE.MeshBasicMaterial({
+      map: makeSpiralGalaxyTexture(seed),
+      color: 0xffffff,
+      transparent: true,
+      opacity,
+      alphaTest: 0.004,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+      blending: THREE.AdditiveBlending,
+    })
+  );
+  spiral.position.copy(position);
+  spiral.rotation.z = rotationZ;
+  spaceBackdrop.add(spiral);
+  return spiral;
+}
+
+function addDistantSpiralGalaxies() {
+  const rand = seededRandom(509773);
+  for (let i = 0; i < 34; i += 1) {
+    const sideBias = rand() < 0.58 ? Math.sign(rand() - 0.5) * (72 + rand() * 96) : (rand() - 0.5) * 126;
+    const x = sideBias + (rand() - 0.5) * 18;
+    const y = (rand() - 0.5) * 142;
+    const z = -230 - rand() * 104;
+    const size = 5.8 + Math.pow(rand(), 1.35) * 17.5;
+    const aspect = 0.82 + rand() * 0.32;
+    const opacity = 0.11 + rand() * 0.17;
+    const seed = 190001 + i * 7919 + Math.floor(rand() * 4000);
+    addSpiralGalaxy(
+      new THREE.Vector3(x, y, z),
+      size,
+      size * aspect,
+      opacity,
+      (rand() - 0.5) * Math.PI,
+      seed
+    );
+  }
+}
+
 addGalaxyBand(new THREE.Vector3(-70, 22, -180), 170, 70, 0.78, 0.0, 71701);
 addGalaxyBand(new THREE.Vector3(78, 38, -225), 62, 24, 0.44, -0.38, 36017);
 addGalaxyBand(new THREE.Vector3(108, -34, -245), 48, 18, 0.34, 0.28, 90163);
@@ -368,6 +507,7 @@ addGalaxyBand(new THREE.Vector3(46, -76, -318), 22, 8, 0.13, -0.28, 75931);
 addNebulaCloud(new THREE.Vector3(-122, 42, -270), 130, 58, 0.22, -0.16, 88121, 0.6);
 addNebulaCloud(new THREE.Vector3(96, -6, -286), 112, 46, 0.16, 0.34, 47237, 0.55);
 addNebulaCloud(new THREE.Vector3(14, -66, -302), 150, 50, 0.14, -0.48, 13967, 0.69);
+addDistantSpiralGalaxies();
 scene.add(spaceBackdrop);
 
 function updateSpaceBackdropMode() {
