@@ -3832,7 +3832,7 @@ function loadControllerHelpDTexture() {
 
 let poseDebugPanelTexture = makePoseDebugPanelTexture();
 const CONTROLLER_HELP_AUTO_HIDE = 24;
-const CONTROLLER_HELP_D_ASPECT = 1280 / 856;
+const CONTROLLER_HELP_D_ASPECT = 1552 / 1013;
 const controllerHelpPanelHeight = roomHalf.y * 1.72;
 const controllerHelpPanelWidth = Math.min(roomHalf.z * 1.86, controllerHelpPanelHeight * CONTROLLER_HELP_D_ASPECT);
 let controllerHelpActive = false;
