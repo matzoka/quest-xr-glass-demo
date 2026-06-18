@@ -3814,19 +3814,52 @@ function addPlanetMoonSystem(parent, specs, options = {}) {
     orbitLine.renderOrder = 1;
     orbit.add(orbitLine);
 
+    const moonLighting = spec.texture
+      ? makeSunlitPlanetMaterial(spec.texture, {
+          texWidth: 1024,
+          texHeight: 512,
+          night: spec.night ?? 0.20,
+          day: spec.day ?? 0.70,
+          direct: spec.direct ?? 0.42,
+          relief: spec.relief ?? 1.25,
+          softness: spec.softness ?? 0.20,
+          tintDay: spec.tintDay ?? 0xffffff,
+          tintNight: spec.tintNight ?? 0x4b5260,
+        })
+      : null;
+    const moonGroup = new THREE.Group();
+    moonGroup.position.set(spec.orbitRadius, 0, 0);
+
     const moonMesh = new THREE.Mesh(
       new THREE.SphereGeometry(spec.radius, 18, 12),
-      new THREE.MeshStandardMaterial({
-        color: spec.color,
-        roughness: 0.92,
-        metalness: 0,
-        emissive: new THREE.Color(spec.color).multiplyScalar(0.045),
-      })
+      moonLighting
+        ? moonLighting.material
+        : new THREE.MeshStandardMaterial({
+            color: spec.color,
+            roughness: spec.roughness ?? 0.94,
+            metalness: 0,
+            emissive: new THREE.Color(spec.emissive ?? spec.color ?? 0xffffff).multiplyScalar(spec.emissiveScale ?? 0.035),
+          })
     );
-    moonMesh.position.set(spec.orbitRadius, 0, 0);
-    orbit.add(moonMesh);
+    moonGroup.add(moonMesh);
+
+    if (spec.atmosphereColor) {
+      const haze = new THREE.Mesh(
+        new THREE.SphereGeometry(spec.radius * (spec.atmosphereScale ?? 1.16), 18, 12),
+        new THREE.MeshBasicMaterial({
+          color: spec.atmosphereColor,
+          transparent: true,
+          opacity: spec.atmosphereOpacity ?? 0.16,
+          blending: THREE.AdditiveBlending,
+          depthWrite: false,
+        })
+      );
+      moonGroup.add(haze);
+    }
+
+    orbit.add(moonGroup);
     system.add(orbit);
-    moons.push({ orbit, mesh: moonMesh, speed: spec.speed, spin: spec.spin ?? spec.speed * 0.35 });
+    moons.push({ orbit, mesh: moonMesh, speed: spec.speed, spin: spec.spin ?? spec.speed * 0.35, sunDir: moonLighting && moonLighting.sunDir });
   }
 
   planetMoonSystems.push({ system, moons });
@@ -3834,10 +3867,18 @@ function addPlanetMoonSystem(parent, specs, options = {}) {
 }
 
 function updatePlanetMoonSystems(dt) {
+  sunMesh.getWorldPosition(planetSunWorld);
   for (const moonSystem of planetMoonSystems) {
     for (const moon of moonSystem.moons) {
       moon.orbit.rotation.y += dt * moon.speed;
       moon.mesh.rotation.y += dt * moon.spin;
+      if (moon.sunDir) {
+        moon.mesh.updateWorldMatrix(true, false);
+        planetSunLocal.copy(planetSunWorld);
+        moon.mesh.worldToLocal(planetSunLocal);
+        planetSunLocal.normalize();
+        moon.sunDir.copy(planetSunLocal);
+      }
     }
   }
 }
@@ -3845,10 +3886,22 @@ function updatePlanetMoonSystems(dt) {
 addPlanetMoonSystem(
   saturnGroup,
   [
-    { orbitRadius: SATURN_R * 2.75, radius: EARTH_RADIUS * 0.18, color: 0xd8c09a, speed: 0.045, phase: 0.2, orbitOpacity: 0.026 }, // Titan
-    { orbitRadius: SATURN_R * 2.38, radius: EARTH_RADIUS * 0.095, color: 0xbfc6c8, speed: -0.062, phase: 1.7, orbitOpacity: 0.022 }, // Rhea
-    { orbitRadius: SATURN_R * 2.08, radius: EARTH_RADIUS * 0.078, color: 0xcfd7d9, speed: 0.078, phase: 3.5, orbitOpacity: 0.020 }, // Dione
-    { orbitRadius: SATURN_R * 1.82, radius: EARTH_RADIUS * 0.068, color: 0xdde5e5, speed: -0.093, phase: 4.8, orbitOpacity: 0.018 }, // Enceladus
+    {
+      orbitRadius: SATURN_R * 2.75,
+      radius: EARTH_RADIUS * 0.18,
+      color: 0xd8c09a,
+      texture: "moon_titan_1024.jpg",
+      speed: 0.045,
+      phase: 0.2,
+      orbitOpacity: 0.026,
+      emissiveScale: 0.02,
+      atmosphereColor: 0xffa34c,
+      atmosphereOpacity: 0.12,
+      atmosphereScale: 1.18,
+    }, // Titan
+    { orbitRadius: SATURN_R * 2.38, radius: EARTH_RADIUS * 0.095, color: 0xbfc6c8, texture: "moon_rhea_1024.jpg", speed: -0.062, phase: 1.7, orbitOpacity: 0.022 }, // Rhea
+    { orbitRadius: SATURN_R * 2.08, radius: EARTH_RADIUS * 0.078, color: 0xcfd7d9, texture: "moon_dione_1024.jpg", speed: 0.078, phase: 3.5, orbitOpacity: 0.020 }, // Dione
+    { orbitRadius: SATURN_R * 1.82, radius: EARTH_RADIUS * 0.068, color: 0xdde5e5, texture: "moon_enceladus_1024.jpg", speed: -0.093, phase: 4.8, orbitOpacity: 0.018 }, // Enceladus
   ],
   { inclinationDeg: 5.2 }
 );
@@ -3913,10 +3966,10 @@ const jupiterBall = addPlanet("2k_jupiter.jpg", EARTH_RADIUS * 20, new THREE.Vec
 addPlanetMoonSystem(
   jupiterBall.parent,
   [
-    { orbitRadius: EARTH_RADIUS * 23.5, radius: EARTH_RADIUS * 0.13, color: 0xe6c287, speed: 0.058, phase: 0.4, orbitOpacity: 0.034 }, // Io
-    { orbitRadius: EARTH_RADIUS * 27.5, radius: EARTH_RADIUS * 0.12, color: 0xd9d2bd, speed: -0.046, phase: 1.8, orbitOpacity: 0.030 }, // Europa
-    { orbitRadius: EARTH_RADIUS * 32.0, radius: EARTH_RADIUS * 0.16, color: 0xa99886, speed: 0.035, phase: 3.1, orbitOpacity: 0.027 }, // Ganymede
-    { orbitRadius: EARTH_RADIUS * 38.5, radius: EARTH_RADIUS * 0.15, color: 0x8b7868, speed: -0.026, phase: 5.2, orbitOpacity: 0.024 }, // Callisto
+    { orbitRadius: EARTH_RADIUS * 23.5, radius: EARTH_RADIUS * 0.13, color: 0xe6c287, texture: "moon_io_1024.jpg", speed: 0.058, phase: 0.4, orbitOpacity: 0.034 }, // Io
+    { orbitRadius: EARTH_RADIUS * 27.5, radius: EARTH_RADIUS * 0.12, color: 0xd9d2bd, texture: "moon_europa_1024.jpg", speed: -0.046, phase: 1.8, orbitOpacity: 0.030 }, // Europa
+    { orbitRadius: EARTH_RADIUS * 32.0, radius: EARTH_RADIUS * 0.16, color: 0xa99886, texture: "moon_ganymede_1024.jpg", speed: 0.035, phase: 3.1, orbitOpacity: 0.027 }, // Ganymede
+    { orbitRadius: EARTH_RADIUS * 38.5, radius: EARTH_RADIUS * 0.15, color: 0x8b7868, texture: "moon_callisto_1024.jpg", speed: -0.026, phase: 5.2, orbitOpacity: 0.024 }, // Callisto
   ],
   { inclinationDeg: 2.1 }
 );

@@ -5,7 +5,9 @@
 雲のレイヤーが地表とは別の速度で流れます。可視の太陽方向から昼夜を計算し、夜側だけに
 主要都市ライトとオーロラが出ます。人工衛星（ISS風）は地球を周回し、夜側では暗くなります。
 月・火星・金星・木星・土星本体にも太陽方向に合わせた陰影が入り、木星にはガリレオ衛星風の小衛星、
-土星にはタイタンなどの小衛星が公転します。太陽ではフレア、プロミネンス、黒点が一定期間だけ発生します。
+土星にはタイタンなどの小衛星が公転します。これらの小衛星にはNASA / USGS / JPL由来の全球モザイク画像を
+1024pxテクスチャとして貼り、太陽方向に合わせた昼夜の陰影も出しています。太陽ではフレア、
+プロミネンス、黒点が一定期間だけ発生します。
 
 USS Enterprise風の宇宙船は地球の部屋枠を通過した後、何もない宇宙空間へ向けてワープし、
 ワープ音の終わりに船体・航跡・前方スパークが同時に消えます。低確率では地球近くを周回する
@@ -74,6 +76,8 @@ Quest の AR / VR セッションは **HTTPS（セキュアコンテキスト）
 - `assets/2k_sun.jpg` … 太陽テクスチャ
 - `assets/2k_mars.jpg` / `assets/2k_venus_atmosphere.jpg` / `assets/2k_jupiter.jpg` … 火星・金星・木星テクスチャ
 - `assets/2k_saturn.jpg` / `assets/2k_saturn_ring_alpha.png` … 土星本体とリングのテクスチャ
+- `assets/moon_io_1024.jpg` / `assets/moon_europa_1024.jpg` / `assets/moon_ganymede_1024.jpg` / `assets/moon_callisto_1024.jpg` … 木星のガリレオ衛星用テクスチャ
+- `assets/moon_titan_1024.jpg` / `assets/moon_rhea_1024.jpg` / `assets/moon_dione_1024.jpg` / `assets/moon_enceladus_1024.jpg` … 土星の小衛星用テクスチャ
 - `assets/NCC-1701/` … Enterprise風宇宙船のOBJ / MTLモデルとテクスチャ一式
 - `assets/enterprise_theme.mp3` … Enterprise風宇宙船の登場時に再生する音声
 - `assets/warp.mp3` … Enterprise風宇宙船のワープ時に再生する音声
