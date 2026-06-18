@@ -2817,6 +2817,7 @@ async function enterXr(mode) {
       enterpriseOrbitXrButton.visible = false;
       klingonXrButton.visible = false;
       poseDebugXrButton.visible = false;
+      poseDebugXrPanel.visible = false;
       currentMode = "preview";
       updateSpaceBackdropMode();
       statusEl.textContent = `${label} を終了しました。もう一度入るには VR/AR を選んでください。`;
@@ -2844,6 +2845,7 @@ async function enterXr(mode) {
     enterpriseOrbitXrButton.visible = true;
     klingonXrButton.visible = true;
     poseDebugXrButton.visible = DEBUG_POSE_CAPTURE;
+    poseDebugXrPanel.visible = DEBUG_POSE_CAPTURE;
     statusEl.textContent = `${label} 起動中。左スティックで水平移動／右スティック上下で昇降。グリップでホームに復帰。地球に触れて弾く。終了は「終了」ボタンを指してトリガー。`;
   } catch (error) {
     console.error(error);
@@ -2926,6 +2928,41 @@ function playCollisionSound() {
   overtone.start(now);
   main.stop(now + 0.14);
   overtone.stop(now + 0.1);
+}
+
+function playPoseRecordSound() {
+  if (!audioContext) return;
+  if (audioContext.state === "suspended") {
+    audioContext.resume().then(() => {
+      if (audioContext?.state === "running") playPoseRecordSound();
+    }).catch(() => {});
+    return;
+  }
+  if (audioContext.state !== "running") return;
+  const now = audioContext.currentTime;
+  const master = audioContext.createGain();
+  master.gain.setValueAtTime(0.0001, now);
+  master.gain.exponentialRampToValueAtTime(0.09, now + 0.012);
+  master.gain.exponentialRampToValueAtTime(0.0001, now + 0.28);
+  master.connect(audioContext.destination);
+
+  [
+    [880, 0.0, 0.12],
+    [1320, 0.11, 0.14],
+  ].forEach(([freq, delay, duration]) => {
+    const osc = audioContext.createOscillator();
+    const gain = audioContext.createGain();
+    const start = now + delay;
+    osc.type = "sine";
+    osc.frequency.setValueAtTime(freq, start);
+    gain.gain.setValueAtTime(0.0001, start);
+    gain.gain.exponentialRampToValueAtTime(0.8, start + 0.01);
+    gain.gain.exponentialRampToValueAtTime(0.0001, start + duration);
+    osc.connect(gain);
+    gain.connect(master);
+    osc.start(start);
+    osc.stop(start + duration + 0.03);
+  });
 }
 
 // A short original triumphant fanfare for the Enterprise's entrance. Not a
@@ -3469,6 +3506,67 @@ function makeButtonTexture(label, bg) {
   tex.anisotropy = maxAnisotropy;
   return tex;
 }
+
+function makePoseDebugPanelTexture(values = null) {
+  const c = document.createElement("canvas");
+  c.width = 768;
+  c.height = 440;
+  const ctx = c.getContext("2d");
+  ctx.fillStyle = "#ffffff";
+  ctx.fillRect(0, 0, c.width, c.height);
+  ctx.lineWidth = 8;
+  ctx.strokeStyle = "#1c2733";
+  ctx.strokeRect(8, 8, c.width - 16, c.height - 16);
+
+  ctx.fillStyle = "#111820";
+  ctx.font = "bold 42px sans-serif";
+  ctx.textAlign = "left";
+  ctx.textBaseline = "top";
+  ctx.fillText("視線記録", 34, 26);
+
+  ctx.fillStyle = values ? "#0d5c36" : "#745200";
+  ctx.font = "bold 28px sans-serif";
+  ctx.fillText(values ? "記録済み: 下の6つを控えてください" : "未記録: ボタンを押してください", 34, 78);
+
+  const rows = values
+    ? [
+        ["camX", values.camX],
+        ["camY", values.camY],
+        ["camZ", values.camZ],
+        ["lookX", values.lookX],
+        ["lookY", values.lookY],
+        ["lookZ", values.lookZ],
+      ]
+    : [
+        ["camX", "---"],
+        ["camY", "---"],
+        ["camZ", "---"],
+        ["lookX", "---"],
+        ["lookY", "---"],
+        ["lookZ", "---"],
+      ];
+
+  ctx.font = "bold 36px Consolas, 'Courier New', monospace";
+  ctx.textBaseline = "middle";
+  for (let i = 0; i < rows.length; i += 1) {
+    const y = 145 + i * 46;
+    ctx.fillStyle = i % 2 === 0 ? "#f0f4f8" : "#ffffff";
+    ctx.fillRect(28, y - 21, c.width - 56, 42);
+    ctx.fillStyle = "#1c2733";
+    ctx.fillText(rows[i][0], 46, y);
+    ctx.textAlign = "right";
+    ctx.fillText(rows[i][1], c.width - 48, y);
+    ctx.textAlign = "left";
+  }
+
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.anisotropy = maxAnisotropy;
+  return tex;
+}
+
+let poseDebugPanelTexture = makePoseDebugPanelTexture();
+
 const exitButton = new THREE.Mesh(
   new THREE.PlaneGeometry(0.34, 0.15),
   new THREE.MeshBasicMaterial({
@@ -3526,7 +3624,7 @@ klingonXrButton.visible = false;
 scene.add(klingonXrButton);
 
 const poseDebugXrButton = new THREE.Mesh(
-  new THREE.PlaneGeometry(0.42, 0.15),
+  new THREE.PlaneGeometry(0.5, 0.18),
   new THREE.MeshBasicMaterial({
     map: makeButtonTexture("視線記録", "rgba(90,62,150,0.95)"),
     transparent: true,
@@ -3538,6 +3636,20 @@ poseDebugXrButton.position.set(0, 2.2, -0.5);
 poseDebugXrButton.renderOrder = 999;
 poseDebugXrButton.visible = false;
 scene.add(poseDebugXrButton);
+
+const poseDebugXrPanel = new THREE.Mesh(
+  new THREE.PlaneGeometry(0.76, 0.44),
+  new THREE.MeshBasicMaterial({
+    map: poseDebugPanelTexture,
+    depthTest: false,
+    depthWrite: false,
+    side: THREE.DoubleSide,
+  })
+);
+poseDebugXrPanel.position.set(0, 1.82, -0.5);
+poseDebugXrPanel.renderOrder = 998;
+poseDebugXrPanel.visible = false;
+scene.add(poseDebugXrPanel);
 
 const raycaster = new THREE.Raycaster();
 const tempMatrix = new THREE.Matrix4();
@@ -3717,21 +3829,41 @@ function formatPoseNumber(value) {
   return Number(value).toFixed(3).replace(/\.?0+$/, "");
 }
 
+function setPoseDebugPanelValues(values) {
+  const nextTexture = makePoseDebugPanelTexture(values);
+  const prevTexture = poseDebugPanelTexture;
+  poseDebugPanelTexture = nextTexture;
+  poseDebugXrPanel.material.map = poseDebugPanelTexture;
+  poseDebugXrPanel.material.needsUpdate = true;
+  prevTexture?.dispose?.();
+}
+
 function capturePoseDebugUrl() {
   const cam = getViewerPose(viewerWorld);
   const pos = viewerWorld.clone();
   const forward = viewerForward.clone().normalize();
   const look = pos.clone().addScaledVector(forward, 80);
+  const values = {
+    camX: formatPoseNumber(pos.x),
+    camY: formatPoseNumber(pos.y),
+    camZ: formatPoseNumber(pos.z),
+    lookX: formatPoseNumber(look.x),
+    lookY: formatPoseNumber(look.y),
+    lookZ: formatPoseNumber(look.z),
+  };
   const url = new URL(window.location.href);
   url.search = "";
   url.searchParams.set("cameraDebug", "1");
-  url.searchParams.set("camX", formatPoseNumber(pos.x));
-  url.searchParams.set("camY", formatPoseNumber(pos.y));
-  url.searchParams.set("camZ", formatPoseNumber(pos.z));
-  url.searchParams.set("lookX", formatPoseNumber(look.x));
-  url.searchParams.set("lookY", formatPoseNumber(look.y));
-  url.searchParams.set("lookZ", formatPoseNumber(look.z));
+  url.searchParams.set("camX", values.camX);
+  url.searchParams.set("camY", values.camY);
+  url.searchParams.set("camZ", values.camZ);
+  url.searchParams.set("lookX", values.lookX);
+  url.searchParams.set("lookY", values.lookY);
+  url.searchParams.set("lookZ", values.lookZ);
   const debugUrl = url.toString();
+
+  setPoseDebugPanelValues(values);
+  playPoseRecordSound();
 
   if (poseDebugOutputEl) {
     poseDebugOutputEl.hidden = false;
@@ -3740,8 +3872,8 @@ function capturePoseDebugUrl() {
     poseDebugOutputEl.select?.();
   }
 
-  statusEl.textContent = "視線を記録しました。HUDのURLをPCで開くと同じ視線を再現できます。";
-  console.log("Pose debug URL:", debugUrl, "cameraQuaternion:", cam.quaternion.toArray().map(formatPoseNumber).join(","));
+  statusEl.textContent = "視線を記録しました。XR内の白いパネルに6つの数字を表示しています。";
+  console.log("Pose debug values:", values, "Pose debug URL:", debugUrl, "cameraQuaternion:", cam.quaternion.toArray().map(formatPoseNumber).join(","));
 
   if (navigator.clipboard?.writeText) {
     navigator.clipboard.writeText(debugUrl).catch(() => {
@@ -3766,9 +3898,15 @@ function updatePoseDebugButton() {
   poseDebugXrButton.position
     .copy(viewerWorld)
     .addScaledVector(poseDebugButtonForward, 0.45)
-    .addScaledVector(poseDebugButtonRight, 0.22)
+    .addScaledVector(poseDebugButtonRight, 0.3)
     .addScaledVector(poseDebugButtonUp, -0.28);
+  poseDebugXrPanel.position
+    .copy(viewerWorld)
+    .addScaledVector(poseDebugButtonForward, 0.46)
+    .addScaledVector(poseDebugButtonRight, 0.3)
+    .addScaledVector(poseDebugButtonUp, -0.62);
   poseDebugXrButton.quaternion.copy(cam.quaternion);
+  poseDebugXrPanel.quaternion.copy(cam.quaternion);
 }
 
 function updateLocomotion(dt) {
