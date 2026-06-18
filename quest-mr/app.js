@@ -534,7 +534,8 @@ function makeStarPoints(count, radius, size, opacity, seed) {
     const c = palette[Math.floor(rand() * palette.length)];
     const distanceT = THREE.MathUtils.clamp((d / radius - 0.86) / 0.14, 0, 1);
     const depthBrightness = THREE.MathUtils.lerp(1.28, 0.78, distanceT);
-    const twinkle = (0.82 + rand() * 0.68) * depthBrightness;
+    const dimFactor = 0.38 + rand() * 0.24;
+    const twinkle = (0.82 + rand() * 0.68) * depthBrightness * dimFactor;
     colors.push(c.r * twinkle, c.g * twinkle, c.b * twinkle);
   }
 
@@ -628,11 +629,11 @@ const spaceBackdrop = new THREE.Group();
 const spaceNebulaMaterials = [];
 spaceBackdrop.position.copy(roomCenter);
 spaceBackdrop.add(makeMilkyWayBand());
-spaceBackdrop.add(makeStarPoints(4100, 265, 1.0, 0.94, 67531));
-spaceBackdrop.add(makeStarPoints(2600, 185, 1.35, 0.98, 12077));
-spaceBackdrop.add(makeStarPoints(650, 212, 1.75, 0.92, 43789));
-spaceBackdrop.add(makeStarPoints(170, 178, 2.35, 0.98, 87103));
-spaceBackdrop.add(makeStarPoints(30, 172, 3.05, 0.95, 34129));
+spaceBackdrop.add(makeStarPoints(2050, 265, 1.0, 0.94, 67531));
+spaceBackdrop.add(makeStarPoints(1300, 185, 1.35, 0.98, 12077));
+spaceBackdrop.add(makeStarPoints(325, 212, 1.75, 0.92, 43789));
+spaceBackdrop.add(makeStarPoints(85, 178, 2.35, 0.98, 87103));
+spaceBackdrop.add(makeStarPoints(15, 172, 3.05, 0.95, 34129));
 
 function addGalaxyBand(position, width, height, opacity, rotationZ, seed) {
   const galaxy = new THREE.Mesh(
@@ -763,10 +764,57 @@ function makeSpiralGalaxyField(seed, textureSeed, count, radiusMin, radiusMax, o
 }
 
 function addDistantSpiralGalaxies() {
-  const fieldSeeds = [509773, 612049, 771221, 884399];
-  for (let i = 0; i < fieldSeeds.length; i += 1) {
-    const field = makeSpiralGalaxyField(fieldSeeds[i], 190001 + i * 137, 400, 238 + i * 10, 344 + i * 8, 0.04);
-    spaceBackdrop.add(field);
+  const rand = seededRandom(407219);
+  const placements = [
+    { theta: -2.65, y: 0.38, size: 42, opacity: 0.5 },
+    { theta: -2.08, y: -0.24, size: 24, opacity: 0.38 },
+    { theta: -1.34, y: 0.68, size: 18, opacity: 0.32 },
+    { theta: -0.58, y: -0.56, size: 34, opacity: 0.44 },
+    { theta: 0.22, y: 0.18, size: 21, opacity: 0.34 },
+    { theta: 0.84, y: -0.74, size: 16, opacity: 0.28 },
+    { theta: 1.42, y: 0.52, size: 30, opacity: 0.4 },
+    { theta: 2.06, y: -0.12, size: 22, opacity: 0.34 },
+    { theta: 2.58, y: 0.78, size: 14, opacity: 0.26 },
+    { theta: 3.02, y: -0.42, size: 38, opacity: 0.46 },
+    { theta: -2.88, y: -0.7, size: 18, opacity: 0.3 },
+    { theta: -2.42, y: 0.06, size: 28, opacity: 0.38 },
+    { theta: -1.72, y: 0.84, size: 12, opacity: 0.24 },
+    { theta: -1.02, y: -0.36, size: 32, opacity: 0.42 },
+    { theta: -0.2, y: 0.72, size: 16, opacity: 0.28 },
+    { theta: 0.48, y: -0.02, size: 26, opacity: 0.36 },
+    { theta: 1.1, y: -0.58, size: 20, opacity: 0.32 },
+    { theta: 1.74, y: 0.26, size: 36, opacity: 0.44 },
+    { theta: 2.32, y: -0.82, size: 13, opacity: 0.24 },
+    { theta: 2.86, y: 0.08, size: 30, opacity: 0.4 },
+  ];
+  const normal = new THREE.Vector3();
+  const position = new THREE.Vector3();
+  const worldUp = new THREE.Vector3(0, 1, 0);
+
+  for (let i = 0; i < placements.length; i += 1) {
+    const p = placements[i];
+    const radial = Math.sqrt(Math.max(0, 1 - p.y * p.y));
+    normal.set(Math.cos(p.theta) * radial, p.y, Math.sin(p.theta) * radial).normalize();
+    position.copy(normal).multiplyScalar(286 + rand() * 56);
+    const aspect = 0.78 + rand() * 0.28;
+    const galaxy = new THREE.Mesh(
+      new THREE.PlaneGeometry(p.size, p.size * aspect),
+      new THREE.MeshBasicMaterial({
+        map: makeSpiralGalaxyTexture(260001 + i * 947),
+        color: 0xffffff,
+        transparent: true,
+        opacity: p.opacity,
+        alphaTest: 0.006,
+        depthWrite: false,
+        side: THREE.DoubleSide,
+        blending: THREE.AdditiveBlending,
+      })
+    );
+    galaxy.position.copy(position);
+    galaxy.lookAt(roomCenter);
+    galaxy.rotateZ(rand() * Math.PI * 2);
+    if (Math.abs(normal.dot(worldUp)) > 0.98) galaxy.rotateZ(0.4);
+    spaceBackdrop.add(galaxy);
   }
 }
 
