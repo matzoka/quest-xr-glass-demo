@@ -1386,6 +1386,12 @@ const shipRarePrevPos = new THREE.Vector3();
 const shipRareViewDir = new THREE.Vector3();
 const shipRareViewRight = new THREE.Vector3();
 const shipRareViewUp = new THREE.Vector3();
+const shipRouteStart = new THREE.Vector3();
+const shipRouteControl = new THREE.Vector3();
+const shipRouteEnd = new THREE.Vector3();
+const shipRoutePrev = new THREE.Vector3();
+let shipRouteT = 0;
+let shipRouteDuration = 1;
 
 const enterpriseWarp = new THREE.Mesh(
   new THREE.CylinderGeometry(0.018, 0.055, 1, 18, 1, true),
@@ -1536,17 +1542,23 @@ function setRareDepartCourse() {
 function spawnEnterpriseNormal() {
   const side = Math.random() < 0.5 ? -1 : 1;
   const target = side < 0 ? shipTargetEmptyRight : shipTargetEmptyLeft;
+  const speed = 2.1 + Math.random() * 0.35;
   shipMode = ENTERPRISE_MODE_NORMAL;
   enterprise.position.set(
     roomCenter.x + side * (roomHalf.x + 1.2),
     roomCenter.y + roomHalf.y * (0.05 + Math.random() * 0.75),
     roomCenter.z + (Math.random() * 2 - 1) * roomHalf.z * 0.65
   );
-  shipVel
-    .copy(target)
-    .sub(enterprise.position)
+  shipRouteStart.copy(enterprise.position);
+  shipRouteEnd.copy(target);
+  const routeLength = planSafeFlightRoute(shipRouteStart, shipRouteEnd, shipRouteControl, {
+    shipClearance: EARTH_RADIUS * 1.65,
+  });
+  shipRouteT = 0;
+  shipRouteDuration = Math.max(0.1, routeLength / speed);
+  sampleFlightRouteTangent(shipRouteStart, shipRouteControl, shipRouteEnd, 0, shipVel)
     .normalize()
-    .multiplyScalar(2.1 + Math.random() * 0.35);
+    .multiplyScalar(speed);
   resetEnterpriseVisitState();
   playShipEntrance();
 }
@@ -1802,9 +1814,11 @@ let klingonPassDuration = KLINGON_PASS_DURATION_FALLBACK;
 let klingonDepartureSoundPlayed = false;
 let nextKlingonAt = KLINGON_FORCE ? 2.5 : 120 + Math.random() * 120;
 const klingonStart = new THREE.Vector3();
+const klingonControl = new THREE.Vector3();
 const klingonEnd = new THREE.Vector3();
 const klingonVel = new THREE.Vector3();
 const klingonTmp = new THREE.Vector3();
+const klingonPrevPos = new THREE.Vector3();
 const klingonMaterials = [];
 const klingonDebugArrow = new THREE.ArrowHelper(new THREE.Vector3(1, 0, 0), new THREE.Vector3(), 1.2, 0xffff66, 0.28, 0.16);
 klingonDebugArrow.visible = false;
@@ -1978,7 +1992,11 @@ function spawnKlingonPass() {
     cruiseZ
   );
   klingonPassDuration = playKlingonTheme();
-  klingonVel.copy(klingonEnd).sub(klingonStart).multiplyScalar(1 / klingonPassDuration);
+  planSafeFlightRoute(klingonStart, klingonEnd, klingonControl, {
+    shipClearance: EARTH_RADIUS * 2.0,
+  });
+  sampleFlightRouteTangent(klingonStart, klingonControl, klingonEnd, 0, klingonVel)
+    .multiplyScalar(1 / klingonPassDuration);
   klingon.position.copy(klingonStart);
   orientKlingonAlongVelocity();
   klingonT = 0;
@@ -2043,7 +2061,14 @@ function updateKlingon(dt) {
   const fadeIn = THREE.MathUtils.smoothstep(klingonT, 0, KLINGON_FADE_IN);
   const fadeOut = 1 - THREE.MathUtils.smoothstep(klingonT, klingonPassDuration - KLINGON_FADE_OUT, klingonPassDuration);
   const alpha = fadeIn * fadeOut;
-  klingon.position.lerpVectors(klingonStart, klingonEnd, p);
+  klingonPrevPos.copy(klingon.position);
+  sampleFlightRoutePoint(klingonStart, klingonControl, klingonEnd, p, klingon.position);
+  klingonVel.copy(klingon.position).sub(klingonPrevPos);
+  if (dt > 1e-5) klingonVel.multiplyScalar(1 / dt);
+  if (klingonVel.lengthSq() < 1e-6) {
+    sampleFlightRouteTangent(klingonStart, klingonControl, klingonEnd, p, klingonVel)
+      .multiplyScalar(1 / klingonPassDuration);
+  }
   orientKlingonAlongVelocity();
   if (DEBUG_TOP_VIEW) {
     klingonDebugArrow.visible = true;
@@ -2120,7 +2145,21 @@ function updateEnterprise(dt) {
     return;
   }
 
-  enterprise.position.addScaledVector(shipVel, dt);
+  shipRoutePrev.copy(enterprise.position);
+  shipRouteT += dt;
+  const routeP = THREE.MathUtils.clamp(shipRouteT / shipRouteDuration, 0, 1);
+  if (routeP < 1) {
+    sampleFlightRoutePoint(shipRouteStart, shipRouteControl, shipRouteEnd, routeP, enterprise.position);
+    shipVel.copy(enterprise.position).sub(shipRoutePrev);
+    if (dt > 1e-5) shipVel.multiplyScalar(1 / dt);
+    if (shipVel.lengthSq() < 1e-6) {
+      sampleFlightRouteTangent(shipRouteStart, shipRouteControl, shipRouteEnd, routeP, shipVel)
+        .normalize()
+        .multiplyScalar(Math.max(2.1, shipRouteEnd.distanceTo(shipRouteStart) / shipRouteDuration));
+    }
+  } else {
+    enterprise.position.addScaledVector(shipVel, dt);
+  }
   // Object3D.lookAt aims +Z at the target, so look "backward" to put the bow
   // (-Z, the saucer) forward and keep local +Z as the stern/trail side.
   orientEnterpriseAlongVelocity();
@@ -3733,7 +3772,7 @@ function addPlanet(file, radius, position, tiltDeg, spin, options = {}) {
   );
   group.add(mesh);
   scene.add(group);
-  planets.push({ mesh, spin, sunDir: lit && lit.sunDir });
+  planets.push({ mesh, radius, spin, sunDir: lit && lit.sunDir });
   return mesh;
 }
 
@@ -3794,6 +3833,132 @@ addPlanet("2k_jupiter.jpg", EARTH_RADIUS * 20, new THREE.Vector3(-42, 6, 26), 3.
   tintDay: 0xffead2,
   tintNight: 0x56483e,
 });
+
+// ---------------------------------------------------------------------------
+// Ship flight safety: Enterprise and Klingon passes are cinematic, but they
+// should still respect obvious physical obstacles. At spawn time, build the
+// current obstacle list in world space and bend a route only when its straight
+// path would cut through a protected sphere.
+// ---------------------------------------------------------------------------
+const FLIGHT_ROUTE_SAMPLES = 32;
+const FLIGHT_ROUTE_SOLVE_PASSES = 4;
+const flightObstacles = [];
+const flightSeg = new THREE.Vector3();
+const flightDir = new THREE.Vector3();
+const flightClosest = new THREE.Vector3();
+const flightAvoid = new THREE.Vector3();
+const flightSample = new THREE.Vector3();
+const flightMid = new THREE.Vector3();
+const flightFallbackSide = new THREE.Vector3();
+const flightTmpCenter = new THREE.Vector3();
+
+function addFlightObstacle(name, object3d, radius, shipClearance, extraClearance = 0) {
+  object3d.updateWorldMatrix(true, false);
+  object3d.getWorldPosition(flightTmpCenter);
+  flightObstacles.push({
+    name,
+    center: flightTmpCenter.clone(),
+    radius: radius + shipClearance + extraClearance,
+  });
+}
+
+function collectFlightObstacles(shipClearance) {
+  flightObstacles.length = 0;
+  addFlightObstacle("Earth", ballGroup, EARTH_RADIUS, shipClearance, EARTH_RADIUS * 0.25);
+  addFlightObstacle("Moon", moon, MOON_RADIUS, shipClearance, EARTH_RADIUS * 0.9);
+  addFlightObstacle("Sun", sunMesh, SUN_RADIUS, shipClearance, SUN_RADIUS * 0.04);
+  addFlightObstacle("Saturn", saturnBall, SATURN_R * 2.35, shipClearance, EARTH_RADIUS * 0.8);
+  for (const planet of planets) {
+    addFlightObstacle("Planet", planet.mesh, planet.radius, shipClearance, EARTH_RADIUS * 0.35);
+  }
+  return flightObstacles;
+}
+
+function sampleFlightRoutePoint(start, control, end, t, out) {
+  const u = 1 - t;
+  return out
+    .copy(start)
+    .multiplyScalar(u * u)
+    .addScaledVector(control, 2 * u * t)
+    .addScaledVector(end, t * t);
+}
+
+function sampleFlightRouteTangent(start, control, end, t, out) {
+  return out
+    .copy(control)
+    .sub(start)
+    .multiplyScalar(2 * (1 - t))
+    .addScaledVector(flightMid.copy(end).sub(control), 2 * t);
+}
+
+function estimateFlightRouteLength(start, control, end) {
+  let length = 0;
+  flightMid.copy(start);
+  for (let i = 1; i <= FLIGHT_ROUTE_SAMPLES; i += 1) {
+    sampleFlightRoutePoint(start, control, end, i / FLIGHT_ROUTE_SAMPLES, flightSample);
+    length += flightSample.distanceTo(flightMid);
+    flightMid.copy(flightSample);
+  }
+  return Math.max(0.001, length);
+}
+
+function addFlightAvoidanceOffset(point, body, routeDir, extraDistance) {
+  flightAvoid.copy(point).sub(body.center).projectOnPlane(routeDir);
+  if (flightAvoid.lengthSq() < 1e-6) {
+    flightFallbackSide.crossVectors(routeDir, worldUp);
+    if (flightFallbackSide.lengthSq() < 1e-6) flightFallbackSide.set(1, 0, 0);
+    flightAvoid.copy(flightFallbackSide);
+  }
+  flightAvoid.normalize();
+  return flightAvoid.multiplyScalar(extraDistance);
+}
+
+function planSafeFlightRoute(start, end, control, options = {}) {
+  const shipClearance = options.shipClearance ?? EARTH_RADIUS * 1.5;
+  control.copy(start).lerp(end, 0.5);
+  flightSeg.copy(end).sub(start);
+  const routeLength = flightSeg.length();
+  if (routeLength < 1e-5) return 0.001;
+  flightDir.copy(flightSeg).multiplyScalar(1 / routeLength);
+
+  const bodies = collectFlightObstacles(shipClearance);
+  let adjusted = false;
+  for (const body of bodies) {
+    const t = THREE.MathUtils.clamp(flightTmpCenter.copy(body.center).sub(start).dot(flightSeg) / (routeLength * routeLength), 0, 1);
+    if (t <= 0.03 || t >= 0.97) continue;
+    flightClosest.copy(start).addScaledVector(flightSeg, t);
+    const missDistance = flightClosest.distanceTo(body.center);
+    if (missDistance >= body.radius) continue;
+    const push = body.radius - missDistance + shipClearance * 0.55;
+    control.add(addFlightAvoidanceOffset(flightClosest, body, flightDir, push));
+    adjusted = true;
+  }
+
+  if (!adjusted) return routeLength;
+
+  for (let pass = 0; pass < FLIGHT_ROUTE_SOLVE_PASSES; pass += 1) {
+    let worstBody = null;
+    let worstPoint = null;
+    let worstPenetration = 0;
+    for (const body of bodies) {
+      for (let i = 1; i < FLIGHT_ROUTE_SAMPLES; i += 1) {
+        sampleFlightRoutePoint(start, control, end, i / FLIGHT_ROUTE_SAMPLES, flightSample);
+        const dist = flightSample.distanceTo(body.center);
+        const penetration = body.radius - dist;
+        if (penetration > worstPenetration) {
+          worstPenetration = penetration;
+          worstBody = body;
+          if (!worstPoint) worstPoint = new THREE.Vector3();
+          worstPoint.copy(flightSample);
+        }
+      }
+    }
+    if (!worstBody || !worstPoint) break;
+    control.add(addFlightAvoidanceOffset(worstPoint, worstBody, flightDir, worstPenetration + shipClearance * 0.35));
+  }
+
+  return estimateFlightRouteLength(start, control, end);
+}
 
 // ---------------------------------------------------------------------------
 // Apollo 11-inspired mission. The scale and timing are still compressed for the
