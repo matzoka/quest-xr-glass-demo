@@ -3935,15 +3935,15 @@ function updatePoseDebugButton() {
   poseDebugButtonUp.set(0, 1, 0).applyQuaternion(cam.quaternion).normalize();
   poseDebugXrButton.position
     .copy(viewerWorld)
-    .addScaledVector(poseDebugButtonForward, 0.6)
+    .addScaledVector(poseDebugButtonForward, 0.62)
     .addScaledVector(poseDebugButtonRight, 0.18)
-    .addScaledVector(poseDebugButtonUp, -0.14);
+    .addScaledVector(poseDebugButtonUp, -0.44);
   poseDebugXrHitArea.position.copy(poseDebugXrButton.position);
   poseDebugXrPanel.position
     .copy(viewerWorld)
-    .addScaledVector(poseDebugButtonForward, 0.61)
+    .addScaledVector(poseDebugButtonForward, 0.64)
     .addScaledVector(poseDebugButtonRight, 0.18)
-    .addScaledVector(poseDebugButtonUp, -0.48);
+    .addScaledVector(poseDebugButtonUp, -0.06);
   poseDebugXrButton.quaternion.copy(cam.quaternion);
   poseDebugXrHitArea.quaternion.copy(cam.quaternion);
   poseDebugXrPanel.quaternion.copy(cam.quaternion);
