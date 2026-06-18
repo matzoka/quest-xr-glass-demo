@@ -3765,7 +3765,7 @@ function updatePoseDebugButton() {
   poseDebugButtonUp.set(0, 1, 0).applyQuaternion(cam.quaternion).normalize();
   poseDebugXrButton.position
     .copy(viewerWorld)
-    .addScaledVector(poseDebugButtonForward, 0.78)
+    .addScaledVector(poseDebugButtonForward, 0.45)
     .addScaledVector(poseDebugButtonRight, 0.22)
     .addScaledVector(poseDebugButtonUp, -0.28);
   poseDebugXrButton.quaternion.copy(cam.quaternion);
