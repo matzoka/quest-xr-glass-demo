@@ -3826,12 +3826,12 @@ function makeControllerHelpTexture() {
 }
 
 function loadControllerHelpDTexture() {
-  return loadApprovedAssetTexture("./assets/controller-help-d.png", "controller-help-d.png");
+  return loadApprovedAssetTexture("./assets/controller-help-panel-d.png", "controller-help-panel-d.png");
 }
 
 let poseDebugPanelTexture = makePoseDebugPanelTexture();
 const CONTROLLER_HELP_AUTO_HIDE = 24;
-const CONTROLLER_HELP_D_ASPECT = 861 / 504;
+const CONTROLLER_HELP_D_ASPECT = 1280 / 856;
 const controllerHelpPanelHeight = roomHalf.y * 1.72;
 const controllerHelpPanelWidth = Math.min(roomHalf.z * 1.86, controllerHelpPanelHeight * CONTROLLER_HELP_D_ASPECT);
 let controllerHelpActive = false;
@@ -3847,8 +3847,7 @@ const controllerHelpPanel = new THREE.Mesh(
     toneMapped: false,
   })
 );
-controllerHelpPanel.position.set(roomCenter.x + roomHalf.x - 0.025, roomCenter.y + 0.02, roomCenter.z);
-controllerHelpPanel.rotation.y = -Math.PI / 2;
+controllerHelpPanel.position.set(roomCenter.x + 1.35, roomCenter.y + 0.02, roomCenter.z - roomHalf.z + 0.04);
 controllerHelpPanel.renderOrder = 72;
 controllerHelpPanel.visible = false;
 scene.add(controllerHelpPanel);
@@ -3858,7 +3857,7 @@ function setControllerHelpVisible(visible) {
   controllerHelpPanel.visible = visible;
   controllerHelpHideAt = visible ? elapsed + CONTROLLER_HELP_AUTO_HIDE : 0;
   statusEl.textContent = visible
-    ? "右側の壁面に操作HELPを表示しました。もう一度HELPを押すと閉じます。"
+    ? "操作HELPパネルを表示しました。もう一度HELPを押すと閉じます。"
     : "操作HELPを閉じました。";
 }
 
