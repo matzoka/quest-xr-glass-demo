@@ -3848,7 +3848,8 @@ const controllerHelpPanel = new THREE.Mesh(
     toneMapped: false,
   })
 );
-controllerHelpPanel.position.set(roomCenter.x + 1.35, roomCenter.y + 0.02, roomCenter.z - roomHalf.z + 0.04);
+controllerHelpPanel.position.set(roomCenter.x + roomHalf.x - 0.025, roomCenter.y + 0.02, roomCenter.z);
+controllerHelpPanel.rotation.y = -Math.PI / 2;
 controllerHelpPanel.renderOrder = 72;
 controllerHelpPanel.visible = false;
 scene.add(controllerHelpPanel);
@@ -3858,7 +3859,7 @@ function setControllerHelpVisible(visible) {
   controllerHelpPanel.visible = visible;
   controllerHelpHideAt = visible ? elapsed + CONTROLLER_HELP_AUTO_HIDE : 0;
   statusEl.textContent = visible
-    ? "操作HELPパネルを表示しました。もう一度HELPを押すと閉じます。"
+    ? "右側に操作HELPパネルを表示しました。もう一度HELPを押すと閉じます。"
     : "操作HELPを閉じました。";
 }
 
