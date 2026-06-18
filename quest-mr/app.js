@@ -3731,26 +3731,130 @@ const saturnBall = new THREE.Mesh(
   saturnLighting.material
 );
 saturnGroup.add(saturnBall);
-const ringGeo = new THREE.RingGeometry(SATURN_R * 1.2, SATURN_R * 2.3, 128);
+
+function saturnRingDensity(t) {
+  const innerFade = THREE.MathUtils.smoothstep(t, 0.02, 0.1);
+  const outerFade = 1 - THREE.MathUtils.smoothstep(t, 0.9, 1.0);
+  const bRing = Math.exp(-Math.pow((t - 0.32) / 0.18, 2)) * 0.95;
+  const aRing = Math.exp(-Math.pow((t - 0.76) / 0.22, 2)) * 0.72;
+  const cRing = Math.exp(-Math.pow((t - 0.08) / 0.07, 2)) * 0.26;
+  const cassiniGap = 1 - Math.exp(-Math.pow((t - 0.61) / 0.035, 2)) * 0.92;
+  const enckeGap = 1 - Math.exp(-Math.pow((t - 0.83) / 0.012, 2)) * 0.72;
+  const fineBanding = 0.82 + 0.1 * Math.sin(t * 92) + 0.06 * Math.sin(t * 227);
+  return THREE.MathUtils.clamp((bRing + aRing + cRing) * innerFade * outerFade * cassiniGap * enckeGap * fineBanding, 0, 1);
+}
+
+function makeSaturnRingBandTexture() {
+  const rand = seededRandom(91027);
+  const canvas = document.createElement("canvas");
+  canvas.width = 2048;
+  canvas.height = 96;
+  const ctx = canvas.getContext("2d");
+  const img = ctx.createImageData(canvas.width, canvas.height);
+  for (let x = 0; x < canvas.width; x += 1) {
+    const t = x / (canvas.width - 1);
+    const density = saturnRingDensity(t);
+    const warm = 0.78 + 0.14 * Math.sin(t * 17.5) + 0.08 * Math.sin(t * 53.0);
+    for (let y = 0; y < canvas.height; y += 1) {
+      const edge = Math.abs((y + 0.5) / canvas.height - 0.5);
+      const verticalFade = 1 - THREE.MathUtils.smoothstep(edge, 0.36, 0.5);
+      const grain = 0.68 + rand() * 0.56;
+      const sparkle = rand() > 0.983 ? 0.34 + rand() * 0.42 : 0;
+      const alpha = THREE.MathUtils.clamp((density * verticalFade * grain + sparkle * density) * 210, 0, 230);
+      const i = (y * canvas.width + x) * 4;
+      img.data[i + 0] = Math.round(178 + 42 * warm + rand() * 14);
+      img.data[i + 1] = Math.round(160 + 38 * warm + rand() * 12);
+      img.data[i + 2] = Math.round(132 + 34 * warm + rand() * 10);
+      img.data[i + 3] = alpha;
+    }
+  }
+  ctx.putImageData(img, 0, 0);
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.anisotropy = maxAnisotropy;
+  tex.wrapS = THREE.ClampToEdgeWrapping;
+  tex.wrapT = THREE.ClampToEdgeWrapping;
+  return tex;
+}
+
+function makeSaturnRingParticleTexture() {
+  const canvas = document.createElement("canvas");
+  canvas.width = 32;
+  canvas.height = 32;
+  const ctx = canvas.getContext("2d");
+  const g = ctx.createRadialGradient(16, 16, 0, 16, 16, 16);
+  g.addColorStop(0, "rgba(255,246,224,1)");
+  g.addColorStop(0.42, "rgba(238,216,176,0.78)");
+  g.addColorStop(1, "rgba(190,160,110,0)");
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, 32, 32);
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+
+function makeSaturnRingParticles(innerRadius, outerRadius, count) {
+  const rand = seededRandom(53191);
+  const positions = [];
+  const colors = [];
+  const span = outerRadius - innerRadius;
+  for (let i = 0; i < count; i += 1) {
+    let t = rand();
+    for (let tries = 0; tries < 6 && rand() > saturnRingDensity(t); tries += 1) {
+      t = rand();
+    }
+    const radius = innerRadius + span * t + (rand() - 0.5) * span * 0.006;
+    const angle = rand() * Math.PI * 2;
+    const vertical = (rand() - 0.5) * SATURN_R * 0.018;
+    positions.push(Math.cos(angle) * radius, vertical, Math.sin(angle) * radius);
+    const density = saturnRingDensity(t);
+    const brightness = (0.46 + density * 0.46) * (0.7 + rand() * 0.45);
+    colors.push(1.0 * brightness, 0.88 * brightness, 0.62 * brightness);
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+  geo.setAttribute("color", new THREE.Float32BufferAttribute(colors, 3));
+  return new THREE.Points(
+    geo,
+    new THREE.PointsMaterial({
+      map: makeSaturnRingParticleTexture(),
+      size: SATURN_R * 0.035,
+      sizeAttenuation: true,
+      transparent: true,
+      opacity: 0.72,
+      vertexColors: true,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+    })
+  );
+}
+
+const saturnRingInner = SATURN_R * 1.2;
+const saturnRingOuter = SATURN_R * 2.3;
+const ringGeo = new THREE.RingGeometry(saturnRingInner, saturnRingOuter, 256, 3);
 const rpos = ringGeo.attributes.position;
 const ruv = ringGeo.attributes.uv;
 const rvec = new THREE.Vector3();
 for (let i = 0; i < rpos.count; i += 1) {
   rvec.fromBufferAttribute(rpos, i);
-  const u = (rvec.length() - SATURN_R * 1.2) / (SATURN_R * 2.3 - SATURN_R * 1.2);
-  ruv.setXY(i, u, 1);
+  const u = (rvec.length() - saturnRingInner) / (saturnRingOuter - saturnRingInner);
+  const v = (Math.atan2(rvec.y, rvec.x) + Math.PI) / (Math.PI * 2);
+  ruv.setXY(i, u, v);
 }
 const saturnRing = new THREE.Mesh(
   ringGeo,
   new THREE.MeshBasicMaterial({
-    map: loadTex("2k_saturn_ring_alpha.png"),
+    map: makeSaturnRingBandTexture(),
     transparent: true,
+    opacity: 0.9,
     side: THREE.DoubleSide,
     depthWrite: false,
   })
 );
 saturnRing.rotation.x = -Math.PI / 2; // lay flat in the equatorial plane
 saturnGroup.add(saturnRing);
+const saturnRingParticles = makeSaturnRingParticles(saturnRingInner, saturnRingOuter, 9000);
+saturnGroup.add(saturnRingParticles);
 
 // ---------------------------------------------------------------------------
 // Other planets, scattered well outside the room so they read as distant
