@@ -3597,16 +3597,28 @@ function loadApprovedXrIconTexture(kind) {
 }
 
 const XR_ICON_SPIN = 1.35;
-const XR_BUTTON_Z = -0.5;
-const XR_BUTTON_X = -0.04;
+const XR_BUTTON_X = -1.08;
+const XR_BUTTON_Z = 0.86;
+const XR_BUTTON_ROT_Y = Math.PI / 2;
+const XR_BUTTON_Y0 = 1.42;
+const XR_BUTTON_STEP = 0.165;
 const XR_BUTTON_W = 0.62;
 const XR_BUTTON_H = 0.135;
-const XR_ICON_X = 0.42;
+const XR_ICON_Z = 0.39;
 const XR_ICON_SIZE = 0.19;
 const XR_ICON_ASPECT_H = 100 / 170;
 const xrButtonIcons = [];
 
-function makeXrIcon(kind, x, y, size = 0.17) {
+function xrButtonY(row) {
+  return XR_BUTTON_Y0 + row * XR_BUTTON_STEP;
+}
+
+function placeXrButton(mesh, row) {
+  mesh.position.set(XR_BUTTON_X, xrButtonY(row), XR_BUTTON_Z);
+  mesh.rotation.y = XR_BUTTON_ROT_Y;
+}
+
+function makeXrIcon(kind, row, size = 0.17) {
   const icon = new THREE.Mesh(
     new THREE.PlaneGeometry(size, size * XR_ICON_ASPECT_H),
     new THREE.MeshBasicMaterial({
@@ -3618,7 +3630,8 @@ function makeXrIcon(kind, x, y, size = 0.17) {
       toneMapped: false,
     })
   );
-  icon.position.set(x, y, -0.49);
+  icon.position.set(XR_BUTTON_X - 0.006, xrButtonY(row), XR_ICON_Z);
+  icon.rotation.y = XR_BUTTON_ROT_Y;
   icon.renderOrder = 1001;
   icon.visible = false;
   scene.add(icon);
@@ -3885,7 +3898,7 @@ const exitButton = new THREE.Mesh(
     side: THREE.DoubleSide,
   })
 );
-exitButton.position.set(XR_BUTTON_X, 1.4, XR_BUTTON_Z); // in front of the user, a bit low
+placeXrButton(exitButton, 0);
 exitButton.renderOrder = 999;
 exitButton.visible = false;
 scene.add(exitButton);
@@ -3899,7 +3912,7 @@ const resetButton = new THREE.Mesh(
     side: THREE.DoubleSide,
   })
 );
-resetButton.position.set(XR_BUTTON_X, 1.6, XR_BUTTON_Z); // just above the Exit button
+placeXrButton(resetButton, 1);
 resetButton.renderOrder = 999;
 resetButton.visible = false;
 scene.add(resetButton);
@@ -3913,11 +3926,11 @@ const enterpriseOrbitXrButton = new THREE.Mesh(
     side: THREE.DoubleSide,
   })
 );
-enterpriseOrbitXrButton.position.set(XR_BUTTON_X, 1.8, XR_BUTTON_Z);
+placeXrButton(enterpriseOrbitXrButton, 2);
 enterpriseOrbitXrButton.renderOrder = 999;
 enterpriseOrbitXrButton.visible = false;
 scene.add(enterpriseOrbitXrButton);
-const enterpriseOrbitXrIcon = makeXrIcon("enterprise", XR_ICON_X, 1.8, XR_ICON_SIZE);
+const enterpriseOrbitXrIcon = makeXrIcon("enterprise", 2, XR_ICON_SIZE);
 
 const klingonXrButton = new THREE.Mesh(
   new THREE.PlaneGeometry(XR_BUTTON_W, XR_BUTTON_H),
@@ -3928,11 +3941,11 @@ const klingonXrButton = new THREE.Mesh(
     side: THREE.DoubleSide,
   })
 );
-klingonXrButton.position.set(XR_BUTTON_X, 2.0, XR_BUTTON_Z);
+placeXrButton(klingonXrButton, 3);
 klingonXrButton.renderOrder = 999;
 klingonXrButton.visible = false;
 scene.add(klingonXrButton);
-const klingonXrIcon = makeXrIcon("klingon", XR_ICON_X, 2.0, XR_ICON_SIZE);
+const klingonXrIcon = makeXrIcon("klingon", 3, XR_ICON_SIZE);
 
 const blackHoleTourXrButton = new THREE.Mesh(
   new THREE.PlaneGeometry(XR_BUTTON_W, XR_BUTTON_H),
@@ -3943,11 +3956,11 @@ const blackHoleTourXrButton = new THREE.Mesh(
     side: THREE.DoubleSide,
   })
 );
-blackHoleTourXrButton.position.set(XR_BUTTON_X, 2.2, XR_BUTTON_Z);
+placeXrButton(blackHoleTourXrButton, 4);
 blackHoleTourXrButton.renderOrder = 999;
 blackHoleTourXrButton.visible = false;
 scene.add(blackHoleTourXrButton);
-const blackHoleTourXrIcon = makeXrIcon("blackHole", XR_ICON_X, 2.2, XR_ICON_SIZE);
+const blackHoleTourXrIcon = makeXrIcon("blackHole", 4, XR_ICON_SIZE);
 
 const controllerHelpXrButton = new THREE.Mesh(
   new THREE.PlaneGeometry(XR_BUTTON_W, XR_BUTTON_H),
@@ -3958,7 +3971,7 @@ const controllerHelpXrButton = new THREE.Mesh(
     side: THREE.DoubleSide,
   })
 );
-controllerHelpXrButton.position.set(XR_BUTTON_X, 2.4, XR_BUTTON_Z);
+placeXrButton(controllerHelpXrButton, 5);
 controllerHelpXrButton.renderOrder = 999;
 controllerHelpXrButton.visible = false;
 scene.add(controllerHelpXrButton);
