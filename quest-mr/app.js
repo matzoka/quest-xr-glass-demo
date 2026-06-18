@@ -8,6 +8,7 @@ const vrButton = document.querySelector("#vrButton");
 const arButton = document.querySelector("#arButton");
 const enterpriseOrbitButton = document.querySelector("#enterpriseOrbitButton");
 const klingonButton = document.querySelector("#klingonButton");
+const DEBUG_TOP_VIEW = new URLSearchParams(window.location.search).has("topDebug");
 
 // ---------------------------------------------------------------------------
 // Scene / renderer
@@ -68,6 +69,13 @@ const halfFovX = Math.atan(Math.tan(halfFovY) * camera.aspect);
 const fitDist = Math.max(roomHalf.y / Math.tan(halfFovY), roomHalf.x / Math.tan(halfFovX));
 camera.position.set(0, roomCenter.y, roomCenter.z + fitDist + roomHalf.z + 0.5);
 camera.lookAt(roomCenter);
+
+function applyDebugTopCamera() {
+  if (!DEBUG_TOP_VIEW || renderer.xr.isPresenting) return;
+  camera.up.set(0, 0, -1);
+  camera.position.set(roomCenter.x, roomCenter.y + 18, roomCenter.z);
+  camera.lookAt(roomCenter);
+}
 
 // ---------------------------------------------------------------------------
 // Lights
@@ -1781,6 +1789,7 @@ const KLINGON_FADE_OUT = 5.4;
 const KLINGON_PASS_DURATION_FALLBACK = 29;
 const KLINGON_TARGET_LENGTH = EARTH_RADIUS * 5.75;
 const KLINGON_MODEL_ROLL_FIX = Math.PI / 2;
+const KLINGON_MODEL_YAW_FIX = THREE.MathUtils.degToRad(-24);
 const KLINGON_ASSET_PATH = "./assets/klingon_ship/";
 const KLINGON_MTL_FILE = "klingon_ship.mtl";
 const KLINGON_OBJ_FILE = "klingon_ship.obj";
@@ -1797,6 +1806,9 @@ const klingonEnd = new THREE.Vector3();
 const klingonVel = new THREE.Vector3();
 const klingonTmp = new THREE.Vector3();
 const klingonMaterials = [];
+const klingonDebugArrow = new THREE.ArrowHelper(new THREE.Vector3(1, 0, 0), new THREE.Vector3(), 1.2, 0xffff66, 0.28, 0.16);
+klingonDebugArrow.visible = false;
+scene.add(klingonDebugArrow);
 
 function scheduleNextKlingon() {
   nextKlingonAt = elapsed + 220 + Math.random() * 180;
@@ -1909,7 +1921,10 @@ function loadKlingonModel() {
             obj.scale.setScalar(KLINGON_TARGET_LENGTH / maxDim);
             // The OBJ's physical up axis is local +X, while Object3D.lookAt
             // stabilizes local +Y as up. Roll the mesh once so the warship
-            // travels level instead of banking on its side.
+            // travels level instead of banking on its side. The generated mesh
+            // also has a slight built-in yaw, so align the visual bow with the
+            // parent group's forward axis.
+            obj.rotation.y = KLINGON_MODEL_YAW_FIX;
             obj.rotation.z = KLINGON_MODEL_ROLL_FIX;
             obj.updateMatrixWorld(true);
             const fittedBox = new THREE.Box3().setFromObject(obj);
@@ -1957,15 +1972,16 @@ function loadKlingonModel() {
 function spawnKlingonPass() {
   const side = Math.random() < 0.5 ? -1 : 1;
   const cruiseY = roomCenter.y - roomHalf.y * 0.35;
+  const cruiseZ = roomCenter.z - roomHalf.z * 0.62;
   klingonStart.set(
     roomCenter.x + side * (roomHalf.x + 3.8),
     cruiseY,
-    roomCenter.z - roomHalf.z * 1.08
+    cruiseZ
   );
   klingonEnd.set(
     roomCenter.x - side * (roomHalf.x + 4.6),
     cruiseY,
-    roomCenter.z + roomHalf.z * 0.08
+    cruiseZ
   );
   klingonPassDuration = playKlingonTheme();
   klingonVel.copy(klingonEnd).sub(klingonStart).multiplyScalar(1 / klingonPassDuration);
@@ -2035,6 +2051,13 @@ function updateKlingon(dt) {
   const alpha = fadeIn * fadeOut;
   klingon.position.lerpVectors(klingonStart, klingonEnd, p);
   orientKlingonAlongVelocity();
+  if (DEBUG_TOP_VIEW) {
+    klingonDebugArrow.visible = true;
+    klingonDebugArrow.position.copy(klingon.position);
+    klingonDebugArrow.setDirection(klingonTmp.copy(klingonVel).normalize());
+  } else {
+    klingonDebugArrow.visible = false;
+  }
   setKlingonOpacity(alpha);
 
   klingonCloakField.visible = false;
@@ -2061,6 +2084,7 @@ function updateKlingon(dt) {
     klingon.visible = false;
     klingonFlash.visible = false;
     klingonCloakField.visible = false;
+    klingonDebugArrow.visible = false;
     setKlingonOpacity(0);
     stopKlingonTheme();
     scheduleNextKlingon();
@@ -4311,6 +4335,7 @@ renderer.setAnimationLoop((timestamp) => {
   updateEnterprise(dt);
   updateLightning(dt);
 
+  applyDebugTopCamera();
   renderer.render(scene, camera);
 });
 
