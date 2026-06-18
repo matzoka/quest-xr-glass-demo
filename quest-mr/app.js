@@ -13,7 +13,7 @@ const klingonButton = document.querySelector("#klingonButton");
 const blackHoleTourButton = document.querySelector("#blackHoleTourButton");
 const controllerHelpButton = document.querySelector("#controllerHelpButton");
 const poseDebugOutputEl = document.querySelector("#poseDebugOutput");
-const APP_VERSION = "v2026.06.19.27";
+const APP_VERSION = "v2026.06.19.28";
 const DEBUG_TOP_VIEW = new URLSearchParams(window.location.search).has("topDebug");
 const DEBUG_TOP_VIEW_DISTANCE = Number(new URLSearchParams(window.location.search).get("topDebugDist"));
 const DEBUG_BLACK_HOLE_VIEW = new URLSearchParams(window.location.search).has("blackHoleDebug");
@@ -4084,8 +4084,8 @@ const controllerHelpPanel = new THREE.Mesh(
     toneMapped: false,
   })
 );
-controllerHelpPanel.position.set(roomCenter.x + roomHalf.x - 0.025, roomCenter.y + 0.02, roomCenter.z);
-controllerHelpPanel.rotation.y = -Math.PI / 2;
+controllerHelpPanel.position.set(roomCenter.x - roomHalf.x + 0.025, roomCenter.y + 0.02, roomCenter.z);
+controllerHelpPanel.rotation.y = Math.PI / 2;
 controllerHelpPanel.renderOrder = 72;
 controllerHelpPanel.visible = false;
 scene.add(controllerHelpPanel);
@@ -4095,7 +4095,7 @@ function setControllerHelpVisible(visible) {
   controllerHelpPanel.visible = visible;
   controllerHelpHideAt = visible ? elapsed + CONTROLLER_HELP_AUTO_HIDE : 0;
   statusEl.textContent = visible
-    ? "右側に操作HELPパネルを表示しました。もう一度HELPを押すと閉じます。"
+    ? "左側に操作HELPパネルを表示しました。もう一度HELPを押すと閉じます。"
     : "操作HELPを閉じました。";
 }
 
