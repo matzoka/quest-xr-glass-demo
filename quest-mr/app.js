@@ -41,7 +41,7 @@ scene.environment = pmrem.fromScene(new RoomEnvironment(renderer), 0.04).texture
 // ---------------------------------------------------------------------------
 const roomCenter = new THREE.Vector3(0, 2.2, -2.2); // world position of the box center
 const roomHalf = new THREE.Vector3(4.5, 2.2, 4.5); // half extents (box is 9 x 4.4 x 9 m)
-const BLACK_HOLE_POSITION = new THREE.Vector3(16.5, 6.4, -24.5);
+const BLACK_HOLE_POSITION = new THREE.Vector3(24, 11, -48);
 let ballRadius = 0.36; // set from the Earth radius below
 const collisionHalf = new THREE.Vector3(); // roomHalf - ballRadius, per axis
 
@@ -77,8 +77,8 @@ camera.lookAt(roomCenter);
 function applyDebugTopCamera() {
   if (DEBUG_BLACK_HOLE_VIEW && !renderer.xr.isPresenting) {
     camera.up.set(0, 1, 0);
-    camera.position.copy(BLACK_HOLE_POSITION).add(new THREE.Vector3(0, 1.6, 11));
-    camera.lookAt(BLACK_HOLE_POSITION);
+    camera.position.copy(BLACK_HOLE_POSITION).add(new THREE.Vector3(-1.4, 1.15, 8.9));
+    camera.lookAt(blackHoleTmp.copy(BLACK_HOLE_POSITION).add(new THREE.Vector3(0.45, -0.12, 0)));
     return;
   }
   if (!DEBUG_TOP_VIEW || renderer.xr.isPresenting) return;
@@ -4600,9 +4600,9 @@ addPlanetMoonSystem(
 // dark event horizon, bright accretion disk, view-dependent lensing arcs, and
 // a short safe fall-through experience when the viewer crosses the horizon.
 // ---------------------------------------------------------------------------
-const BLACK_HOLE_HORIZON_R = EARTH_RADIUS * 3.15;
-const BLACK_HOLE_DISK_INNER = BLACK_HOLE_HORIZON_R * 1.36;
-const BLACK_HOLE_DISK_OUTER = BLACK_HOLE_HORIZON_R * 6.0;
+const BLACK_HOLE_HORIZON_R = EARTH_RADIUS * 3.75;
+const BLACK_HOLE_DISK_INNER = BLACK_HOLE_HORIZON_R * 1.24;
+const BLACK_HOLE_DISK_OUTER = BLACK_HOLE_HORIZON_R * 6.4;
 const BLACK_HOLE_PULL_R = BLACK_HOLE_DISK_OUTER * 1.38;
 const BLACK_HOLE_TRIGGER_R = BLACK_HOLE_HORIZON_R * 1.08;
 const BLACK_HOLE_RETURN_COOLDOWN = 5.0;
@@ -4661,13 +4661,15 @@ void main(){
   float lane=fbm(vec2(a*2.4-uTime*0.02,t*11.0+3.7));
   bands*=0.72+0.34*dust;
   float doppler=0.72+0.28*smoothstep(-0.35,0.88,sin(a-0.42));
-  float alpha=edge*(0.16+0.54*bands+0.18*dust)*(0.58+inner*1.45)*doppler*(0.76+0.28*lane);
+  float hotLane=exp(-pow((t-0.105)/0.065,2.0));
+  float alpha=edge*(0.18+0.58*bands+0.2*dust)*(0.58+inner*1.65+hotLane*1.35)*doppler*(0.76+0.28*lane);
   vec3 hot=vec3(1.0,0.92,0.76);
   vec3 amber=vec3(1.0,0.46,0.12);
   vec3 ember=vec3(0.65,0.12,0.035);
-  vec3 col=mix(amber,hot,inner*0.9+smoothstep(0.62,1.0,bands)*0.35);
+  vec3 col=mix(amber,hot,inner*0.98+hotLane*0.82+smoothstep(0.62,1.0,bands)*0.35);
   col=mix(col,ember,smoothstep(0.52,1.0,t)*0.55);
-  col*=0.8+inner*1.75+dust*0.24;
+  col*=0.95+inner*2.15+hotLane*2.7+dust*0.24;
+  if(alpha<0.004) discard;
   gl_FragColor=vec4(col,alpha);
 }`;
 
@@ -4681,15 +4683,17 @@ void main(){
   vec2 p=(vUv-0.5)*2.0;
   float r=length(p);
   float angle=atan(p.y,p.x);
-  float horizon=smoothstep(0.34,0.28,r);
-  float photon=ring(r,0.37,0.026)*(0.82+0.18*sin(angle*9.0+uTime*0.45));
-  float upper=ring(length(vec2(p.x*0.78,(p.y-0.23)*1.85)),0.55,0.055)*smoothstep(-0.06,0.36,p.y);
-  float lower=ring(length(vec2(p.x*0.82,(p.y+0.23)*1.75)),0.55,0.07)*(1.0-smoothstep(-0.42,0.1,p.y));
-  float lens=photon+upper*0.72+lower*0.45;
+  float horizon=1.0-smoothstep(0.28,0.34,r);
+  float photon=ring(r,0.42,0.022)*(0.88+0.12*sin(angle*9.0+uTime*0.45));
+  float outer=ring(r,0.66,0.018)*(0.58+0.42*smoothstep(-0.25,0.85,p.x));
+  float upper=ring(length(vec2((p.x+0.12)*0.72,(p.y-0.3)*1.7)),0.62,0.054)*smoothstep(-0.04,0.44,p.y);
+  float lower=ring(length(vec2((p.x-0.05)*0.78,(p.y+0.32)*1.58)),0.62,0.07)*(1.0-smoothstep(-0.5,0.12,p.y));
+  float lens=photon*1.45+outer*1.1+upper*1.02+lower*0.72;
   vec3 white=vec3(1.0,0.94,0.82);
   vec3 orange=vec3(1.0,0.46,0.12);
-  vec3 col=mix(orange,white,photon*0.78+upper*0.36);
-  float alpha=clamp(lens,0.0,1.0)*(1.0-horizon)*0.88;
+  vec3 col=mix(orange,white,photon*0.96+outer*0.82+upper*0.45);
+  float alpha=clamp(lens,0.0,1.0)*(1.0-horizon)*0.96;
+  if(alpha<0.004) discard;
   gl_FragColor=vec4(col,alpha);
 }`;
 
@@ -4712,7 +4716,7 @@ const blackHoleDisk = new THREE.Mesh(
   new THREE.RingGeometry(BLACK_HOLE_DISK_INNER, BLACK_HOLE_DISK_OUTER, 256, 18),
   blackHoleDiskMaterial
 );
-blackHoleDisk.rotation.set(THREE.MathUtils.degToRad(66), THREE.MathUtils.degToRad(-14), THREE.MathUtils.degToRad(8));
+blackHoleDisk.rotation.set(THREE.MathUtils.degToRad(72), THREE.MathUtils.degToRad(-24), THREE.MathUtils.degToRad(-10));
 blackHoleDisk.renderOrder = 5;
 blackHoleGroup.add(blackHoleDisk);
 
@@ -4750,7 +4754,6 @@ const blackHoleCore = new THREE.Mesh(
   new THREE.MeshBasicMaterial({ color: 0x000000, toneMapped: false })
 );
 blackHoleCore.renderOrder = 8;
-blackHoleGroup.add(blackHoleCore);
 
 const blackHoleParticlePositions = [];
 const blackHoleParticleColors = [];
