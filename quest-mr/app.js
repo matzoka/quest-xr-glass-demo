@@ -13,7 +13,7 @@ const klingonButton = document.querySelector("#klingonButton");
 const blackHoleTourButton = document.querySelector("#blackHoleTourButton");
 const controllerHelpButton = document.querySelector("#controllerHelpButton");
 const poseDebugOutputEl = document.querySelector("#poseDebugOutput");
-const APP_VERSION = "v2026.06.19.23";
+const APP_VERSION = "v2026.06.19.24";
 const DEBUG_TOP_VIEW = new URLSearchParams(window.location.search).has("topDebug");
 const DEBUG_TOP_VIEW_DISTANCE = Number(new URLSearchParams(window.location.search).get("topDebugDist"));
 const DEBUG_BLACK_HOLE_VIEW = new URLSearchParams(window.location.search).has("blackHoleDebug");
@@ -2839,6 +2839,12 @@ async function enterXr(mode) {
       poseDebugXrButton.visible = false;
       poseDebugXrHitArea.visible = false;
       poseDebugXrPanel.visible = false;
+      blackHoleTourCountdownActive = false;
+      if (blackHoleTourCountdownTimer) {
+        clearTimeout(blackHoleTourCountdownTimer);
+        blackHoleTourCountdownTimer = null;
+      }
+      blackHoleWarpHud.visible = false;
       setHandPresenceVisible(false);
       setControllerHelpVisible(false);
       currentMode = "preview";
@@ -2907,7 +2913,7 @@ arButton?.addEventListener("click", () => {
 
 enterpriseOrbitButton?.addEventListener("click", requestEnterpriseRareOrbit);
 klingonButton?.addEventListener("click", requestKlingonPass);
-blackHoleTourButton?.addEventListener("click", teleportToBlackHoleTour);
+blackHoleTourButton?.addEventListener("click", requestBlackHoleTour);
 controllerHelpButton?.addEventListener("click", toggleControllerHelp);
 
 updateXrAvailability();
@@ -4394,7 +4400,7 @@ function activateXrButtonAction(action) {
   else if (action === "reset") resetBall();
   else if (action === "enterprise") requestEnterpriseRareOrbit();
   else if (action === "klingon") requestKlingonPass();
-  else if (action === "blackHole") teleportToBlackHoleTour();
+  else if (action === "blackHole") requestBlackHoleTour();
   else if (action === "help") toggleControllerHelp();
   else return false;
 
@@ -6055,10 +6061,126 @@ const blackHoleTmp = new THREE.Vector3();
 const blackHoleLookDir = new THREE.Vector3();
 const blackHoleTourTarget = new THREE.Vector3();
 const blackHoleTourDelta = new THREE.Vector3();
+let blackHoleWarpHudTexture = null;
 let blackHoleFallActive = false;
 let blackHoleFallT = 0;
 let blackHoleCooldown = 0;
 let blackHoleStatusArmed = true;
+let blackHoleTourCountdownActive = false;
+let blackHoleTourCountdownStart = 0;
+let blackHoleTourCountdownTimer = null;
+let blackHoleTourCountdownTextureTick = -1;
+let blackHoleTourCountdownBeep = -1;
+const BLACK_HOLE_TOUR_COUNTDOWN = 3.2;
+
+function makeBlackHoleWarpHudTexture(secondsLeft = 3, progress = 0) {
+  const c = document.createElement("canvas");
+  c.width = 1280;
+  c.height = 640;
+  const ctx = c.getContext("2d");
+  ctx.clearRect(0, 0, c.width, c.height);
+
+  const bg = ctx.createLinearGradient(0, 0, c.width, c.height);
+  bg.addColorStop(0, "rgba(34,9,12,0.9)");
+  bg.addColorStop(0.46, "rgba(8,12,18,0.88)");
+  bg.addColorStop(1, "rgba(36,21,6,0.9)");
+  ctx.fillStyle = bg;
+  ctx.beginPath();
+  ctx.roundRect(28, 28, c.width - 56, c.height - 56, 38);
+  ctx.fill();
+
+  ctx.strokeStyle = "rgba(255,188,105,0.86)";
+  ctx.lineWidth = 5;
+  ctx.beginPath();
+  ctx.roundRect(36, 36, c.width - 72, c.height - 72, 34);
+  ctx.stroke();
+
+  ctx.strokeStyle = "rgba(255,92,110,0.38)";
+  ctx.lineWidth = 2;
+  for (let x = 92; x < c.width - 70; x += 78) {
+    ctx.beginPath();
+    ctx.moveTo(x, 48);
+    ctx.lineTo(x, c.height - 48);
+    ctx.stroke();
+  }
+  for (let y = 100; y < c.height - 64; y += 58) {
+    ctx.beginPath();
+    ctx.moveTo(52, y);
+    ctx.lineTo(c.width - 52, y);
+    ctx.stroke();
+  }
+
+  ctx.fillStyle = "rgba(255,92,110,0.95)";
+  ctx.font = "900 46px Arial, Helvetica, sans-serif";
+  ctx.textAlign = "left";
+  ctx.textBaseline = "top";
+  ctx.shadowColor = "rgba(255,92,110,0.55)";
+  ctx.shadowBlur = 18;
+  ctx.fillText("WARNING", 86, 72);
+  ctx.shadowBlur = 0;
+
+  ctx.fillStyle = "#fff3df";
+  ctx.font = "900 76px Arial, Helvetica, sans-serif";
+  ctx.fillText("BLACK HOLE TOUR", 86, 136);
+
+  ctx.fillStyle = "rgba(255,236,210,0.94)";
+  ctx.font = "700 34px Arial, Helvetica, sans-serif";
+  ctx.fillText("重力航路をロックしました。ワープ前安全確認を開始します。", 88, 244);
+  ctx.fillText("姿勢を保ち、視界中央のカウントダウンを確認してください。", 88, 292);
+
+  const countText = String(Math.max(0, secondsLeft)).padStart(2, "0");
+  ctx.fillStyle = "rgba(255,188,105,0.96)";
+  ctx.font = "900 54px Arial, Helvetica, sans-serif";
+  ctx.fillText("WARP IN", 88, 386);
+  ctx.font = "900 154px Arial, Helvetica, sans-serif";
+  ctx.textAlign = "right";
+  ctx.fillText(countText, c.width - 112, 330);
+  ctx.textAlign = "left";
+
+  const barX = 88;
+  const barY = 540;
+  const barW = c.width - 176;
+  const barH = 28;
+  ctx.fillStyle = "rgba(255,255,255,0.12)";
+  ctx.beginPath();
+  ctx.roundRect(barX, barY, barW, barH, 14);
+  ctx.fill();
+  const fill = Math.max(0.02, THREE.MathUtils.clamp(progress, 0, 1));
+  const bar = ctx.createLinearGradient(barX, 0, barX + barW, 0);
+  bar.addColorStop(0, "rgba(255,92,110,0.94)");
+  bar.addColorStop(0.5, "rgba(255,188,105,0.96)");
+  bar.addColorStop(1, "rgba(122,255,167,0.92)");
+  ctx.fillStyle = bar;
+  ctx.beginPath();
+  ctx.roundRect(barX, barY, barW * fill, barH, 14);
+  ctx.fill();
+
+  ctx.fillStyle = "rgba(122,255,167,0.88)";
+  ctx.font = "700 24px Arial, Helvetica, sans-serif";
+  ctx.fillText("GRAVITY LINK: ARMED", 88, 588);
+
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.anisotropy = maxAnisotropy;
+  return tex;
+}
+
+blackHoleWarpHudTexture = makeBlackHoleWarpHudTexture(3, 0);
+const blackHoleWarpHud = new THREE.Mesh(
+  new THREE.PlaneGeometry(1.62, 0.81),
+  new THREE.MeshBasicMaterial({
+    map: blackHoleWarpHudTexture,
+    transparent: true,
+    opacity: 0.96,
+    depthTest: false,
+    depthWrite: false,
+    side: THREE.DoubleSide,
+    toneMapped: false,
+  })
+);
+blackHoleWarpHud.renderOrder = 1300;
+blackHoleWarpHud.visible = false;
+scene.add(blackHoleWarpHud);
 
 function startBlackHoleFall() {
   if (blackHoleFallActive || blackHoleCooldown > 0) return;
@@ -6084,6 +6206,90 @@ function getBlackHoleTourTarget(out) {
   if (blackHoleTmp.lengthSq() < 1e-6) blackHoleTmp.set(0, 0, -1);
   blackHoleTmp.normalize();
   return out.copy(BLACK_HOLE_POSITION).addScaledVector(blackHoleTmp, -BLACK_HOLE_SOUND_START_R * BLACK_HOLE_TOUR_START_EDGE);
+}
+
+function playBlackHoleCountdownBeep(secondsLeft) {
+  if (!audioContext || audioContext.state !== "running") return;
+  const now = audioContext.currentTime;
+  const osc = audioContext.createOscillator();
+  const gain = audioContext.createGain();
+  osc.type = secondsLeft <= 0 ? "sawtooth" : "triangle";
+  osc.frequency.setValueAtTime(secondsLeft <= 0 ? 220 : 440 + secondsLeft * 90, now);
+  osc.frequency.exponentialRampToValueAtTime(secondsLeft <= 0 ? 88 : 220, now + 0.18);
+  gain.gain.setValueAtTime(0.0001, now);
+  gain.gain.exponentialRampToValueAtTime(secondsLeft <= 0 ? 0.18 : 0.1, now + 0.012);
+  gain.gain.exponentialRampToValueAtTime(0.0001, now + (secondsLeft <= 0 ? 0.42 : 0.2));
+  osc.connect(gain);
+  gain.connect(audioContext.destination);
+  osc.start(now);
+  osc.stop(now + (secondsLeft <= 0 ? 0.46 : 0.24));
+}
+
+function refreshBlackHoleWarpHud(secondsLeft, progress) {
+  const nextTexture = makeBlackHoleWarpHudTexture(secondsLeft, progress);
+  const prevTexture = blackHoleWarpHudTexture;
+  blackHoleWarpHudTexture = nextTexture;
+  blackHoleWarpHud.material.map = blackHoleWarpHudTexture;
+  blackHoleWarpHud.material.needsUpdate = true;
+  prevTexture?.dispose?.();
+}
+
+function requestBlackHoleTour() {
+  initAudio();
+  if (audioContext?.state === "suspended") audioContext.resume();
+  if (!blackHoleBuffer && !blackHoleBufferPromise && !blackHoleBufferTried) loadBlackHoleBuffer();
+  if (blackHoleTourCountdownTimer) clearTimeout(blackHoleTourCountdownTimer);
+  blackHoleTourCountdownActive = true;
+  blackHoleTourCountdownStart = elapsed;
+  blackHoleTourCountdownTextureTick = -1;
+  blackHoleTourCountdownBeep = -1;
+  blackHoleWarpHud.visible = true;
+  refreshBlackHoleWarpHud(3, 0);
+  blackHoleTourCountdownTimer = window.setTimeout(() => {
+    finishBlackHoleTourCountdown();
+  }, BLACK_HOLE_TOUR_COUNTDOWN * 1000);
+  statusEl.textContent = "ブラックホール探訪: ワープ前警告シーケンスを開始します。";
+}
+
+function finishBlackHoleTourCountdown() {
+  if (!blackHoleTourCountdownActive) return;
+  blackHoleTourCountdownActive = false;
+  if (blackHoleTourCountdownTimer) {
+    clearTimeout(blackHoleTourCountdownTimer);
+    blackHoleTourCountdownTimer = null;
+  }
+  blackHoleWarpHud.visible = false;
+  teleportToBlackHoleTour();
+}
+
+function updateBlackHoleTourCountdown() {
+  if (!blackHoleTourCountdownActive) {
+    blackHoleWarpHud.visible = false;
+    return;
+  }
+
+  const t = elapsed - blackHoleTourCountdownStart;
+  const progress = THREE.MathUtils.clamp(t / BLACK_HOLE_TOUR_COUNTDOWN, 0, 1);
+  const secondsLeft = Math.max(0, Math.ceil(BLACK_HOLE_TOUR_COUNTDOWN - t));
+  const textureTick = Math.floor(progress * 24);
+  if (textureTick !== blackHoleTourCountdownTextureTick) {
+    blackHoleTourCountdownTextureTick = textureTick;
+    refreshBlackHoleWarpHud(secondsLeft, progress);
+  }
+  if (secondsLeft !== blackHoleTourCountdownBeep) {
+    blackHoleTourCountdownBeep = secondsLeft;
+    playBlackHoleCountdownBeep(secondsLeft);
+  }
+
+  const cam = getViewerPose(viewerWorld);
+  blackHoleWarpHud.position.copy(viewerWorld).addScaledVector(viewerForward, 1.08);
+  blackHoleWarpHud.quaternion.copy(cam.quaternion);
+  blackHoleWarpHud.scale.setScalar(1 + Math.sin(elapsed * 18) * 0.012);
+  blackHoleWarpHud.visible = true;
+
+  if (progress >= 1) {
+    finishBlackHoleTourCountdown();
+  }
 }
 
 function teleportToBlackHoleTour() {
@@ -6813,6 +7019,7 @@ renderer.setAnimationLoop((timestamp) => {
   updatePlanetMoonSystems(dt);
   updatePlanetLighting();
   updateBlackHole(dt, elapsed);
+  updateBlackHoleTourCountdown();
 
   // Refresh world matrices so the Apollo mission can read the live Moon
   // position (the Moon both orbits the Earth and the Earth roams the room).
