@@ -3933,17 +3933,20 @@ function updatePoseDebugButton() {
   cam.getWorldDirection(poseDebugButtonForward);
   poseDebugButtonRight.set(1, 0, 0).applyQuaternion(cam.quaternion).normalize();
   poseDebugButtonUp.set(0, 1, 0).applyQuaternion(cam.quaternion).normalize();
+  // Panel sits near eye level so all six numbers stay readable; the button is
+  // parked well below it. The panel bottom is at up -0.20 and the button's hit
+  // area top is at up -0.33, leaving a clear 0.13 gap that never overlaps.
   poseDebugXrButton.position
     .copy(viewerWorld)
     .addScaledVector(poseDebugButtonForward, 0.62)
     .addScaledVector(poseDebugButtonRight, -0.28)
-    .addScaledVector(poseDebugButtonUp, -0.62);
+    .addScaledVector(poseDebugButtonUp, -0.50);
   poseDebugXrHitArea.position.copy(poseDebugXrButton.position);
   poseDebugXrPanel.position
     .copy(viewerWorld)
     .addScaledVector(poseDebugButtonForward, 0.64)
     .addScaledVector(poseDebugButtonRight, -0.28)
-    .addScaledVector(poseDebugButtonUp, -0.18);
+    .addScaledVector(poseDebugButtonUp, 0.06);
   poseDebugXrButton.quaternion.copy(cam.quaternion);
   poseDebugXrHitArea.quaternion.copy(cam.quaternion);
   poseDebugXrPanel.quaternion.copy(cam.quaternion);
