@@ -1790,7 +1790,6 @@ const KLINGON_FADE_IN = 4.2;
 const KLINGON_FADE_OUT = 5.4;
 const KLINGON_PASS_DURATION_FALLBACK = 29;
 const KLINGON_TARGET_LENGTH = EARTH_RADIUS * 5.75;
-const KLINGON_MODEL_TO_THREE_FIX = -Math.PI / 2;
 const KLINGON_ASSET_PATH = "./assets/klingon_ship/";
 const KLINGON_MTL_FILE = "klingon_ship.mtl";
 const KLINGON_OBJ_FILE = "klingon_ship.obj";
@@ -1920,9 +1919,7 @@ function loadKlingonModel() {
             const size = box.getSize(new THREE.Vector3());
             const maxDim = Math.max(size.x, size.y, size.z) || 1;
             obj.scale.setScalar(KLINGON_TARGET_LENGTH / maxDim);
-            // The OBJ is normalized for Blender's Z-up view. Convert that to
-            // Three.js Y-up without applying model-specific yaw correction.
-            obj.rotation.x = KLINGON_MODEL_TO_THREE_FIX;
+            // The OBJ is normalized for Three.js: Y-up, level in XZ, bow on +Z.
             obj.updateMatrixWorld(true);
             const fittedBox = new THREE.Box3().setFromObject(obj);
             const fittedCenter = fittedBox.getCenter(new THREE.Vector3());
@@ -2008,9 +2005,9 @@ function requestKlingonPass() {
 }
 
 function orientKlingonAlongVelocity() {
-  // The normalized model's bow follows local +Z after the Blender-to-Three
-  // axis conversion, so point local +Z along the travel vector.
-  klingon.lookAt(klingonTmp.copy(klingon.position).sub(klingonVel));
+  // Object3D.lookAt points local -Z at the target. The normalized Klingon bow
+  // is local -Z, so look ahead to make the bow lead the route.
+  klingon.lookAt(klingonTmp.copy(klingon.position).add(klingonVel));
 }
 
 function updateKlingon(dt) {
