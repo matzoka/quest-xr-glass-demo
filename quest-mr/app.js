@@ -3557,7 +3557,7 @@ function makePoseDebugPanelTexture(values = null) {
     ctx.fillStyle = "#1c2733";
     ctx.fillText(rows[i][0], 46, y);
     ctx.textAlign = "right";
-    ctx.fillText(rows[i][1], c.width - 48, y);
+    ctx.fillText(rows[i][1], c.width - 104, y);
     ctx.textAlign = "left";
   }
 
@@ -3936,13 +3936,13 @@ function updatePoseDebugButton() {
   poseDebugXrButton.position
     .copy(viewerWorld)
     .addScaledVector(poseDebugButtonForward, 0.62)
-    .addScaledVector(poseDebugButtonRight, 0.18)
+    .addScaledVector(poseDebugButtonRight, -0.28)
     .addScaledVector(poseDebugButtonUp, -0.3);
   poseDebugXrHitArea.position.copy(poseDebugXrButton.position);
   poseDebugXrPanel.position
     .copy(viewerWorld)
     .addScaledVector(poseDebugButtonForward, 0.64)
-    .addScaledVector(poseDebugButtonRight, 0.18)
+    .addScaledVector(poseDebugButtonRight, -0.28)
     .addScaledVector(poseDebugButtonUp, 0.34);
   poseDebugXrButton.quaternion.copy(cam.quaternion);
   poseDebugXrHitArea.quaternion.copy(cam.quaternion);
