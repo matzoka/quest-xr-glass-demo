@@ -9,6 +9,8 @@ const arButton = document.querySelector("#arButton");
 const enterpriseOrbitButton = document.querySelector("#enterpriseOrbitButton");
 const klingonButton = document.querySelector("#klingonButton");
 const DEBUG_TOP_VIEW = new URLSearchParams(window.location.search).has("topDebug");
+const DEBUG_KLINGON_YAW_DEG = Number(new URLSearchParams(window.location.search).get("klingonYawDeg"));
+const DEBUG_TOP_VIEW_DISTANCE = Number(new URLSearchParams(window.location.search).get("topDebugDist"));
 
 // ---------------------------------------------------------------------------
 // Scene / renderer
@@ -73,7 +75,8 @@ camera.lookAt(roomCenter);
 function applyDebugTopCamera() {
   if (!DEBUG_TOP_VIEW || renderer.xr.isPresenting) return;
   camera.up.set(0, 0, -1);
-  camera.position.set(roomCenter.x, roomCenter.y + 18, roomCenter.z);
+  const distance = Number.isFinite(DEBUG_TOP_VIEW_DISTANCE) ? DEBUG_TOP_VIEW_DISTANCE : 18;
+  camera.position.set(roomCenter.x, roomCenter.y + distance, roomCenter.z);
   camera.lookAt(roomCenter);
 }
 
@@ -1789,7 +1792,7 @@ const KLINGON_FADE_OUT = 5.4;
 const KLINGON_PASS_DURATION_FALLBACK = 29;
 const KLINGON_TARGET_LENGTH = EARTH_RADIUS * 5.75;
 const KLINGON_MODEL_ROLL_FIX = Math.PI / 2;
-const KLINGON_MODEL_YAW_FIX = THREE.MathUtils.degToRad(-24);
+const KLINGON_MODEL_YAW_FIX = THREE.MathUtils.degToRad(Number.isFinite(DEBUG_KLINGON_YAW_DEG) ? DEBUG_KLINGON_YAW_DEG : -32);
 const KLINGON_ASSET_PATH = "./assets/klingon_ship/";
 const KLINGON_MTL_FILE = "klingon_ship.mtl";
 const KLINGON_OBJ_FILE = "klingon_ship.obj";
