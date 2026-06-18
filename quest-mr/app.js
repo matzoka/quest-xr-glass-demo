@@ -1956,16 +1956,16 @@ function loadKlingonModel() {
 
 function spawnKlingonPass() {
   const side = Math.random() < 0.5 ? -1 : 1;
-  const cruiseY = roomCenter.y + roomHalf.y * 0.34;
+  const cruiseY = roomCenter.y - roomHalf.y * 0.35;
   klingonStart.set(
-    roomCenter.x + side * (roomHalf.x + 7.2),
+    roomCenter.x + side * (roomHalf.x + 3.8),
     cruiseY,
-    roomCenter.z - roomHalf.z * 0.62
+    roomCenter.z - roomHalf.z * 1.08
   );
   klingonEnd.set(
-    roomCenter.x - side * (roomHalf.x + 8.2),
+    roomCenter.x - side * (roomHalf.x + 4.6),
     cruiseY,
-    roomCenter.z - roomHalf.z * 0.38
+    roomCenter.z + roomHalf.z * 0.08
   );
   klingonPassDuration = playKlingonTheme();
   klingonVel.copy(klingonEnd).sub(klingonStart).multiplyScalar(1 / klingonPassDuration);
