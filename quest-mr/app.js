@@ -3758,6 +3758,7 @@ saturnGroup.add(saturnRing);
 // per-second rotation applied in the animation loop.
 // ---------------------------------------------------------------------------
 const planets = [];
+const planetMoonSystems = [];
 
 function addPlanet(file, radius, position, tiltDeg, spin, options = {}) {
   const group = new THREE.Group();
@@ -3775,6 +3776,82 @@ function addPlanet(file, radius, position, tiltDeg, spin, options = {}) {
   planets.push({ mesh, radius, spin, sunDir: lit && lit.sunDir });
   return mesh;
 }
+
+function makePlanetMoonOrbit(radius, color, opacity) {
+  const points = [];
+  const segments = 96;
+  for (let i = 0; i < segments; i += 1) {
+    const a = (i / segments) * Math.PI * 2;
+    points.push(new THREE.Vector3(Math.cos(a) * radius, 0, Math.sin(a) * radius));
+  }
+  return new THREE.LineLoop(
+    new THREE.BufferGeometry().setFromPoints(points),
+    new THREE.LineBasicMaterial({
+      color,
+      transparent: true,
+      opacity,
+      depthWrite: false,
+    })
+  );
+}
+
+function addPlanetMoonSystem(parent, specs, options = {}) {
+  const system = new THREE.Group();
+  system.rotation.x = THREE.MathUtils.degToRad(options.inclinationDeg ?? 0);
+  parent.add(system);
+  const moons = [];
+
+  for (const spec of specs) {
+    const orbit = new THREE.Group();
+    orbit.rotation.y = spec.phase ?? 0;
+    orbit.rotation.z = THREE.MathUtils.degToRad(spec.tiltDeg ?? 0);
+
+    const orbitLine = makePlanetMoonOrbit(
+      spec.orbitRadius,
+      spec.orbitColor ?? 0x9fb8c9,
+      spec.orbitOpacity ?? 0.13
+    );
+    orbitLine.renderOrder = 1;
+    orbit.add(orbitLine);
+
+    const moonMesh = new THREE.Mesh(
+      new THREE.SphereGeometry(spec.radius, 18, 12),
+      new THREE.MeshStandardMaterial({
+        color: spec.color,
+        roughness: 0.92,
+        metalness: 0,
+        emissive: new THREE.Color(spec.color).multiplyScalar(0.045),
+      })
+    );
+    moonMesh.position.set(spec.orbitRadius, 0, 0);
+    orbit.add(moonMesh);
+    system.add(orbit);
+    moons.push({ orbit, mesh: moonMesh, speed: spec.speed, spin: spec.spin ?? spec.speed * 0.35 });
+  }
+
+  planetMoonSystems.push({ system, moons });
+  return system;
+}
+
+function updatePlanetMoonSystems(dt) {
+  for (const moonSystem of planetMoonSystems) {
+    for (const moon of moonSystem.moons) {
+      moon.orbit.rotation.y += dt * moon.speed;
+      moon.mesh.rotation.y += dt * moon.spin;
+    }
+  }
+}
+
+addPlanetMoonSystem(
+  saturnGroup,
+  [
+    { orbitRadius: SATURN_R * 2.75, radius: EARTH_RADIUS * 0.18, color: 0xd8c09a, speed: 0.045, phase: 0.2, orbitOpacity: 0.026 }, // Titan
+    { orbitRadius: SATURN_R * 2.38, radius: EARTH_RADIUS * 0.095, color: 0xbfc6c8, speed: -0.062, phase: 1.7, orbitOpacity: 0.022 }, // Rhea
+    { orbitRadius: SATURN_R * 2.08, radius: EARTH_RADIUS * 0.078, color: 0xcfd7d9, speed: 0.078, phase: 3.5, orbitOpacity: 0.020 }, // Dione
+    { orbitRadius: SATURN_R * 1.82, radius: EARTH_RADIUS * 0.068, color: 0xdde5e5, speed: -0.093, phase: 4.8, orbitOpacity: 0.018 }, // Enceladus
+  ],
+  { inclinationDeg: 5.2 }
+);
 
 function updatePlanetLighting() {
   sunMesh.getWorldPosition(planetSunWorld);
@@ -3821,7 +3898,7 @@ addPlanet("2k_venus_atmosphere.jpg", EARTH_RADIUS * 1.0, new THREE.Vector3(-5.6,
   tintNight: 0x6a5c4a,
 });
 // Jupiter — 20x Earth, banded giant, far to the left-behind.
-addPlanet("2k_jupiter.jpg", EARTH_RADIUS * 20, new THREE.Vector3(-42, 6, 26), 3.1, 0.22, {
+const jupiterBall = addPlanet("2k_jupiter.jpg", EARTH_RADIUS * 20, new THREE.Vector3(-42, 6, 26), 3.1, 0.22, {
   sunlit: true,
   texWidth: 2048,
   texHeight: 1024,
@@ -3833,6 +3910,16 @@ addPlanet("2k_jupiter.jpg", EARTH_RADIUS * 20, new THREE.Vector3(-42, 6, 26), 3.
   tintDay: 0xffead2,
   tintNight: 0x56483e,
 });
+addPlanetMoonSystem(
+  jupiterBall.parent,
+  [
+    { orbitRadius: EARTH_RADIUS * 23.5, radius: EARTH_RADIUS * 0.13, color: 0xe6c287, speed: 0.058, phase: 0.4, orbitOpacity: 0.034 }, // Io
+    { orbitRadius: EARTH_RADIUS * 27.5, radius: EARTH_RADIUS * 0.12, color: 0xd9d2bd, speed: -0.046, phase: 1.8, orbitOpacity: 0.030 }, // Europa
+    { orbitRadius: EARTH_RADIUS * 32.0, radius: EARTH_RADIUS * 0.16, color: 0xa99886, speed: 0.035, phase: 3.1, orbitOpacity: 0.027 }, // Ganymede
+    { orbitRadius: EARTH_RADIUS * 38.5, radius: EARTH_RADIUS * 0.15, color: 0x8b7868, speed: -0.026, phase: 5.2, orbitOpacity: 0.024 }, // Callisto
+  ],
+  { inclinationDeg: 2.1 }
+);
 
 // ---------------------------------------------------------------------------
 // Ship flight safety: Enterprise and Klingon passes are cinematic, but they
@@ -4471,6 +4558,7 @@ renderer.setAnimationLoop((timestamp) => {
   sunMesh.rotation.y += dt * 0.03;
   saturnBall.rotation.y += dt * 0.1;
   for (const p of planets) p.mesh.rotation.y += dt * p.spin;
+  updatePlanetMoonSystems(dt);
   updatePlanetLighting();
 
   // Refresh world matrices so the Apollo mission can read the live Moon
