@@ -13,6 +13,7 @@ const klingonButton = document.querySelector("#klingonButton");
 const blackHoleTourButton = document.querySelector("#blackHoleTourButton");
 const controllerHelpButton = document.querySelector("#controllerHelpButton");
 const poseDebugOutputEl = document.querySelector("#poseDebugOutput");
+const APP_VERSION = "v2026.06.19.23";
 const DEBUG_TOP_VIEW = new URLSearchParams(window.location.search).has("topDebug");
 const DEBUG_TOP_VIEW_DISTANCE = Number(new URLSearchParams(window.location.search).get("topDebugDist"));
 const DEBUG_BLACK_HOLE_VIEW = new URLSearchParams(window.location.search).has("blackHoleDebug");
@@ -2834,6 +2835,7 @@ async function enterXr(mode) {
       klingonXrIcon.visible = false;
       blackHoleTourXrIcon.visible = false;
       helpXrIcon.visible = false;
+      welcomePanel.visible = false;
       poseDebugXrButton.visible = false;
       poseDebugXrHitArea.visible = false;
       poseDebugXrPanel.visible = false;
@@ -2870,6 +2872,7 @@ async function enterXr(mode) {
     klingonXrIcon.visible = true;
     blackHoleTourXrIcon.visible = true;
     helpXrIcon.visible = true;
+    welcomePanel.visible = true;
     setXrButtonVolumesVisible(true);
     poseDebugXrButton.visible = DEBUG_POSE_CAPTURE;
     poseDebugXrHitArea.visible = DEBUG_POSE_CAPTURE;
@@ -3593,6 +3596,7 @@ const APPROVED_XR_ICON_URLS = {
   blackHole: "./assets/icon-blackhole-c.png",
   help: "./assets/icon-help-b.png",
 };
+const WELCOME_HOST_ICON_URL = "./assets/welcome-host-matzoka.png";
 const RAW_APPROVED_ASSET_BASE = "https://raw.githubusercontent.com/matzoka/quest-xr-glass-demo/master/quest-mr/assets/";
 
 function loadApprovedAssetTexture(localUrl, fileName) {
@@ -3757,6 +3761,131 @@ function makeXrIcon(kind, row, size = 0.17, action = null) {
 
   return icon;
 }
+
+function makeWelcomePanelTexture() {
+  const c = document.createElement("canvas");
+  c.width = 1180;
+  c.height = 620;
+  const ctx = c.getContext("2d");
+
+  ctx.clearRect(0, 0, c.width, c.height);
+  const bg = ctx.createLinearGradient(0, 0, c.width, c.height);
+  bg.addColorStop(0, "rgba(9,20,31,0.82)");
+  bg.addColorStop(0.56, "rgba(5,11,18,0.76)");
+  bg.addColorStop(1, "rgba(8,23,30,0.8)");
+  ctx.fillStyle = bg;
+  ctx.beginPath();
+  ctx.roundRect(18, 18, c.width - 36, c.height - 36, 32);
+  ctx.fill();
+
+  ctx.strokeStyle = "rgba(122,255,167,0.72)";
+  ctx.lineWidth = 4;
+  ctx.beginPath();
+  ctx.roundRect(24, 24, c.width - 48, c.height - 48, 28);
+  ctx.stroke();
+
+  ctx.strokeStyle = "rgba(111,233,255,0.34)";
+  ctx.lineWidth = 2;
+  for (let x = 72; x < c.width - 48; x += 64) {
+    ctx.beginPath();
+    ctx.moveTo(x, 32);
+    ctx.lineTo(x, c.height - 32);
+    ctx.stroke();
+  }
+  for (let y = 80; y < c.height - 48; y += 54) {
+    ctx.beginPath();
+    ctx.moveTo(34, y);
+    ctx.lineTo(c.width - 34, y);
+    ctx.stroke();
+  }
+
+  const accent = ctx.createLinearGradient(44, 0, 360, 0);
+  accent.addColorStop(0, "rgba(122,255,167,0.95)");
+  accent.addColorStop(1, "rgba(111,233,255,0.55)");
+  ctx.fillStyle = accent;
+  ctx.beginPath();
+  ctx.roundRect(48, 54, 12, 512, 6);
+  ctx.fill();
+
+  ctx.fillStyle = "#dfffee";
+  ctx.font = "700 62px Arial, Helvetica, sans-serif";
+  ctx.textAlign = "left";
+  ctx.textBaseline = "top";
+  ctx.shadowColor = "rgba(122,255,167,0.46)";
+  ctx.shadowBlur = 16;
+  ctx.fillText("ようこそ、地球XRラウンジへ", 108, 62);
+  ctx.shadowBlur = 0;
+
+  ctx.fillStyle = "rgba(235,248,255,0.94)";
+  ctx.font = "500 34px Arial, Helvetica, sans-serif";
+  const lines = [
+    "ここは、地球を手で弾きながら宇宙を眺める",
+    "Quest向けのVR/AR体験スペースです。",
+    "左のボタンやアイコンから、Enterprise周回、",
+    "クリンゴン登場、ブラックホール探訪へ移動できます。",
+    "HELPアイコンでは操作ガイドを確認できます。",
+  ];
+  let y = 168;
+  for (const line of lines) {
+    ctx.fillText(line, 108, y);
+    y += 48;
+  }
+
+  ctx.fillStyle = "rgba(122,255,167,0.96)";
+  ctx.font = "700 34px Arial, Helvetica, sans-serif";
+  ctx.fillText("X: @matzoka", 108, 476);
+
+  ctx.fillStyle = "rgba(235,248,255,0.76)";
+  ctx.font = "700 28px Arial, Helvetica, sans-serif";
+  ctx.fillText(`Version: ${APP_VERSION}`, 352, 479);
+
+  ctx.fillStyle = "rgba(111,233,255,0.5)";
+  ctx.font = "600 24px Arial, Helvetica, sans-serif";
+  ctx.fillText("Touch the Earth. Choose a mission. Drift into space.", 108, 532);
+
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.anisotropy = maxAnisotropy;
+  return tex;
+}
+
+const welcomeHostTexture = loadApprovedAssetTexture(WELCOME_HOST_ICON_URL, "welcome-host-matzoka.png");
+const welcomePanel = new THREE.Group();
+welcomePanel.visible = false;
+
+const welcomePanelBack = new THREE.Mesh(
+  new THREE.PlaneGeometry(1.88, 0.98),
+  new THREE.MeshBasicMaterial({
+    map: makeWelcomePanelTexture(),
+    transparent: true,
+    opacity: 0.94,
+    depthTest: false,
+    depthWrite: false,
+    side: THREE.DoubleSide,
+    toneMapped: false,
+  })
+);
+welcomePanelBack.renderOrder = 990;
+welcomePanel.add(welcomePanelBack);
+
+const welcomeHostIcon = new THREE.Mesh(
+  new THREE.PlaneGeometry(0.34, 0.34),
+  new THREE.MeshBasicMaterial({
+    map: welcomeHostTexture,
+    transparent: true,
+    depthTest: false,
+    depthWrite: false,
+    side: THREE.DoubleSide,
+    toneMapped: false,
+  })
+);
+welcomeHostIcon.position.set(0.72, 0.24, 0.012);
+welcomeHostIcon.renderOrder = 1002;
+welcomePanel.add(welcomeHostIcon);
+
+welcomePanel.position.set(XR_BUTTON_X + 0.006, 1.98, XR_BUTTON_Z + 1.16);
+welcomePanel.rotation.y = XR_BUTTON_ROT_Y;
+scene.add(welcomePanel);
 
 function makePoseDebugPanelTexture(values = null) {
   const c = document.createElement("canvas");
