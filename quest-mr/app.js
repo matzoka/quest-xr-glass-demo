@@ -9,6 +9,7 @@ const arButton = document.querySelector("#arButton");
 const enterpriseOrbitButton = document.querySelector("#enterpriseOrbitButton");
 const klingonButton = document.querySelector("#klingonButton");
 const blackHoleTourButton = document.querySelector("#blackHoleTourButton");
+const controllerHelpButton = document.querySelector("#controllerHelpButton");
 const poseDebugOutputEl = document.querySelector("#poseDebugOutput");
 const DEBUG_TOP_VIEW = new URLSearchParams(window.location.search).has("topDebug");
 const DEBUG_TOP_VIEW_DISTANCE = Number(new URLSearchParams(window.location.search).get("topDebugDist"));
@@ -2826,12 +2827,14 @@ async function enterXr(mode) {
       enterpriseOrbitXrButton.visible = false;
       klingonXrButton.visible = false;
       blackHoleTourXrButton.visible = false;
+      controllerHelpXrButton.visible = false;
       enterpriseOrbitXrIcon.visible = false;
       klingonXrIcon.visible = false;
       blackHoleTourXrIcon.visible = false;
       poseDebugXrButton.visible = false;
       poseDebugXrHitArea.visible = false;
       poseDebugXrPanel.visible = false;
+      setControllerHelpVisible(false);
       currentMode = "preview";
       updateSpaceBackdropMode();
       statusEl.textContent = `${label} を終了しました。もう一度入るには VR/AR を選んでください。`;
@@ -2859,6 +2862,7 @@ async function enterXr(mode) {
     enterpriseOrbitXrButton.visible = true;
     klingonXrButton.visible = true;
     blackHoleTourXrButton.visible = true;
+    controllerHelpXrButton.visible = true;
     enterpriseOrbitXrIcon.visible = true;
     klingonXrIcon.visible = true;
     blackHoleTourXrIcon.visible = true;
@@ -2895,6 +2899,7 @@ arButton?.addEventListener("click", () => {
 enterpriseOrbitButton?.addEventListener("click", requestEnterpriseRareOrbit);
 klingonButton?.addEventListener("click", requestKlingonPass);
 blackHoleTourButton?.addEventListener("click", teleportToBlackHoleTour);
+controllerHelpButton?.addEventListener("click", toggleControllerHelp);
 
 updateXrAvailability();
 
@@ -3730,7 +3735,190 @@ function makePoseDebugPanelTexture(values = null) {
   return tex;
 }
 
+function makeControllerHelpTexture() {
+  const c = document.createElement("canvas");
+  c.width = 2048;
+  c.height = 1024;
+  const ctx = c.getContext("2d");
+
+  const bg = ctx.createLinearGradient(0, 0, c.width, c.height);
+  bg.addColorStop(0, "rgba(5,12,18,0.96)");
+  bg.addColorStop(0.48, "rgba(7,18,26,0.94)");
+  bg.addColorStop(1, "rgba(18,13,7,0.94)");
+  ctx.fillStyle = bg;
+  ctx.fillRect(0, 0, c.width, c.height);
+
+  ctx.strokeStyle = "rgba(100,220,255,0.22)";
+  ctx.lineWidth = 2;
+  for (let x = 72; x < c.width; x += 92) {
+    ctx.beginPath();
+    ctx.moveTo(x, 92);
+    ctx.lineTo(x, c.height - 92);
+    ctx.stroke();
+  }
+  for (let y = 96; y < c.height; y += 82) {
+    ctx.beginPath();
+    ctx.moveTo(72, y);
+    ctx.lineTo(c.width - 72, y);
+    ctx.stroke();
+  }
+
+  ctx.strokeStyle = "rgba(255,185,92,0.36)";
+  ctx.lineWidth = 4;
+  ctx.beginPath();
+  ctx.ellipse(c.width * 0.52, c.height * 0.54, 650, 225, -0.2, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.strokeStyle = "rgba(105,225,255,0.32)";
+  ctx.beginPath();
+  ctx.ellipse(c.width * 0.52, c.height * 0.54, 470, 160, 0.26, 0, Math.PI * 2);
+  ctx.stroke();
+
+  ctx.fillStyle = "#f6fbff";
+  ctx.font = "bold 72px Arial, sans-serif";
+  ctx.textAlign = "left";
+  ctx.textBaseline = "top";
+  ctx.fillText("操作HELP", 96, 70);
+  ctx.fillStyle = "rgba(190,230,245,0.88)";
+  ctx.font = "bold 31px Arial, sans-serif";
+  ctx.fillText("MISSION CONTROL / CONTROLLER GUIDE", 104, 150);
+
+  function controller(cx, cy, side) {
+    ctx.save();
+    ctx.translate(cx, cy);
+    ctx.fillStyle = side === "left" ? "rgba(36,91,114,0.98)" : "rgba(106,70,24,0.98)";
+    ctx.strokeStyle = "rgba(238,252,255,0.86)";
+    ctx.lineWidth = 7;
+    ctx.beginPath();
+    ctx.roundRect(-125, -190, 250, 380, 95);
+    ctx.fill();
+    ctx.stroke();
+    ctx.fillStyle = "rgba(4,9,14,0.95)";
+    ctx.beginPath();
+    ctx.arc(0, -88, 43, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+    ctx.fillStyle = "rgba(122,235,255,0.95)";
+    ctx.beginPath();
+    ctx.arc(0, -88, 19, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = "rgba(255,255,255,0.76)";
+    ctx.lineWidth = 5;
+    ctx.strokeRect(-52, 8, 104, 62);
+    ctx.fillStyle = "#f6fbff";
+    ctx.font = "bold 40px Arial, sans-serif";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText(side === "left" ? "L" : "R", 0, 39);
+    ctx.restore();
+  }
+
+  controller(420, 545, "left");
+  controller(1640, 545, "right");
+
+  function card(num, title, detail, x, y, accent) {
+    ctx.save();
+    ctx.fillStyle = "rgba(7,17,24,0.9)";
+    ctx.strokeStyle = accent;
+    ctx.lineWidth = 4;
+    ctx.beginPath();
+    ctx.roundRect(x, y, 520, 112, 18);
+    ctx.fill();
+    ctx.stroke();
+    ctx.fillStyle = accent;
+    ctx.beginPath();
+    ctx.arc(x + 56, y + 56, 32, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = "#061016";
+    ctx.font = "bold 36px Arial, sans-serif";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText(String(num), x + 56, y + 57);
+    ctx.textAlign = "left";
+    ctx.fillStyle = "#f7fbff";
+    ctx.font = "bold 34px Arial, sans-serif";
+    ctx.fillText(title, x + 104, y + 36);
+    ctx.fillStyle = "rgba(198,222,234,0.88)";
+    ctx.font = "26px Arial, sans-serif";
+    ctx.fillText(detail, x + 104, y + 78);
+    ctx.restore();
+  }
+
+  card(1, "左スティック: 移動", "水平にグライド", 96, 256, "rgba(104,224,255,0.95)");
+  card(2, "右スティック: 上下", "高度を上げ下げ", 96, 728, "rgba(104,224,255,0.95)");
+  card(3, "トリガー: 選択", "ボタン決定 / 地球を弾く", 716, 238, "rgba(255,198,96,0.96)");
+  card(4, "グリップ: ホーム復帰", "開始位置へ戻る", 716, 724, "rgba(255,198,96,0.96)");
+  card(5, "地球に触れる: 弾く", "触れた向きへ発射", 1332, 256, "rgba(115,255,172,0.95)");
+  card(6, "ブラックホール探訪", "近傍へジャンプ", 1332, 728, "rgba(255,160,82,0.96)");
+
+  ctx.strokeStyle = "rgba(255,255,255,0.62)";
+  ctx.lineWidth = 4;
+  ctx.setLineDash([18, 14]);
+  const links = [
+    [616, 312, 812, 320],
+    [616, 784, 812, 780],
+    [1236, 300, 1332, 312],
+    [1236, 786, 1332, 784],
+  ];
+  for (const [x1, y1, x2, y2] of links) {
+    ctx.beginPath();
+    ctx.moveTo(x1, y1);
+    ctx.lineTo(x2, y2);
+    ctx.stroke();
+  }
+  ctx.setLineDash([]);
+
+  ctx.strokeStyle = "rgba(122,235,255,0.72)";
+  ctx.lineWidth = 6;
+  ctx.strokeRect(54, 46, c.width - 108, c.height - 92);
+  ctx.strokeStyle = "rgba(255,190,96,0.8)";
+  ctx.lineWidth = 3;
+  ctx.strokeRect(74, 66, c.width - 148, c.height - 132);
+
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.anisotropy = maxAnisotropy;
+  return tex;
+}
+
 let poseDebugPanelTexture = makePoseDebugPanelTexture();
+const CONTROLLER_HELP_AUTO_HIDE = 24;
+let controllerHelpActive = false;
+let controllerHelpHideAt = 0;
+
+const controllerHelpPanel = new THREE.Mesh(
+  new THREE.PlaneGeometry(roomHalf.z * 1.86, roomHalf.y * 1.72),
+  new THREE.MeshBasicMaterial({
+    map: makeControllerHelpTexture(),
+    transparent: true,
+    opacity: 0.94,
+    depthWrite: false,
+    side: THREE.DoubleSide,
+  })
+);
+controllerHelpPanel.position.set(roomCenter.x + roomHalf.x - 0.025, roomCenter.y + 0.02, roomCenter.z);
+controllerHelpPanel.rotation.y = -Math.PI / 2;
+controllerHelpPanel.renderOrder = 72;
+controllerHelpPanel.visible = false;
+scene.add(controllerHelpPanel);
+
+function setControllerHelpVisible(visible) {
+  controllerHelpActive = visible;
+  controllerHelpPanel.visible = visible;
+  controllerHelpHideAt = visible ? elapsed + CONTROLLER_HELP_AUTO_HIDE : 0;
+  statusEl.textContent = visible
+    ? "右側の壁面に操作HELPを表示しました。もう一度HELPを押すと閉じます。"
+    : "操作HELPを閉じました。";
+}
+
+function toggleControllerHelp() {
+  setControllerHelpVisible(!controllerHelpActive);
+}
+
+function updateControllerHelp() {
+  if (controllerHelpActive && elapsed >= controllerHelpHideAt) {
+    setControllerHelpVisible(false);
+  }
+}
 
 const exitButton = new THREE.Mesh(
   new THREE.PlaneGeometry(0.34, 0.15),
@@ -3805,6 +3993,20 @@ blackHoleTourXrButton.visible = false;
 scene.add(blackHoleTourXrButton);
 const blackHoleTourXrIcon = makeXrIcon("blackHole", 0.42, 2.2, 0.14);
 
+const controllerHelpXrButton = new THREE.Mesh(
+  new THREE.PlaneGeometry(0.34, 0.12),
+  new THREE.MeshBasicMaterial({
+    map: makeButtonTexture("操作HELP", "rgba(120,104,22,0.95)"),
+    transparent: true,
+    depthTest: false,
+    side: THREE.DoubleSide,
+  })
+);
+controllerHelpXrButton.position.set(0, 2.4, -0.5);
+controllerHelpXrButton.renderOrder = 999;
+controllerHelpXrButton.visible = false;
+scene.add(controllerHelpXrButton);
+
 const poseDebugXrButton = new THREE.Mesh(
   new THREE.PlaneGeometry(0.56, 0.2),
   new THREE.MeshBasicMaterial({
@@ -3814,7 +4016,7 @@ const poseDebugXrButton = new THREE.Mesh(
     side: THREE.DoubleSide,
   })
 );
-poseDebugXrButton.position.set(0, 2.4, -0.5);
+poseDebugXrButton.position.set(0, 2.62, -0.5);
 poseDebugXrButton.renderOrder = 999;
 poseDebugXrButton.visible = false;
 scene.add(poseDebugXrButton);
@@ -3829,7 +4031,7 @@ const poseDebugXrHitArea = new THREE.Mesh(
     side: THREE.DoubleSide,
   })
 );
-poseDebugXrHitArea.position.set(0, 2.4, -0.5);
+poseDebugXrHitArea.position.set(0, 2.62, -0.5);
 poseDebugXrHitArea.renderOrder = 1000;
 poseDebugXrHitArea.visible = false;
 scene.add(poseDebugXrHitArea);
@@ -3886,7 +4088,7 @@ for (let index = 0; index < 2; index += 1) {
       tempMatrix.identity().extractRotation(controller.matrixWorld);
       raycaster.ray.origin.setFromMatrixPosition(controller.matrixWorld);
       raycaster.ray.direction.set(0, 0, -1).applyMatrix4(tempMatrix);
-      const uiTargets = [exitButton, resetButton, enterpriseOrbitXrButton, klingonXrButton, blackHoleTourXrButton];
+      const uiTargets = [exitButton, resetButton, enterpriseOrbitXrButton, klingonXrButton, blackHoleTourXrButton, controllerHelpXrButton];
       if (poseDebugXrButton.visible) uiTargets.push(poseDebugXrHitArea, poseDebugXrButton);
       const uiHit = raycaster.intersectObjects(uiTargets)[0];
       if (uiHit) {
@@ -3895,6 +4097,7 @@ for (let index = 0; index < 2; index += 1) {
         else if (uiHit.object === enterpriseOrbitXrButton) requestEnterpriseRareOrbit();
         else if (uiHit.object === klingonXrButton) requestKlingonPass();
         else if (uiHit.object === blackHoleTourXrButton) teleportToBlackHoleTour();
+        else if (uiHit.object === controllerHelpXrButton) toggleControllerHelp();
         else if (uiHit.object === poseDebugXrButton || uiHit.object === poseDebugXrHitArea) capturePoseDebugUrl();
         return;
       }
@@ -6230,6 +6433,7 @@ renderer.setAnimationLoop((timestamp) => {
   updateEnterprise(dt);
   updateLightning(dt);
   updateXrButtonIcons(dt);
+  updateControllerHelp();
   updatePoseDebugButton();
 
   applyDebugTopCamera();

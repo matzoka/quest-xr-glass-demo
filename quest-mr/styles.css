@@ -115,6 +115,14 @@ p {
   background: #2a1a0d;
 }
 
+.actionButton.demo.help {
+  min-height: 32px;
+  padding: 0 11px;
+  border-color: rgba(255, 232, 128, 0.44);
+  background: #2b2610;
+  font-size: 12px;
+}
+
 .actionButton:disabled {
   cursor: default;
   opacity: 0.72;
