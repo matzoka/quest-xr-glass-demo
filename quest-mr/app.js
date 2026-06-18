@@ -25,7 +25,15 @@ const DEBUG_POSE_CAPTURE = new URLSearchParams(window.location.search).has("pose
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x07090c);
 
-const camera = new THREE.PerspectiveCamera(65, window.innerWidth / window.innerHeight, 0.01, 400);
+// Far plane must comfortably exceed the deep-space backdrop radius (the Milky
+// Way shell sits at 372 around roomCenter) PLUS however far the viewer can fly
+// via locomotion. With far=400 the backdrop got clipped to the near-black
+// background the moment the player drifted away from roomCenter, which showed
+// up in-headset as a huge black disc punched through the Milky Way wherever you
+// looked. 2000 keeps the whole backdrop inside the frustum across the explorable
+// space; depth precision is unaffected in practice (no large coplanar surfaces
+// live out at that range).
+const camera = new THREE.PerspectiveCamera(65, window.innerWidth / window.innerHeight, 0.01, 2000);
 
 const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
 renderer.setSize(window.innerWidth, window.innerHeight);
