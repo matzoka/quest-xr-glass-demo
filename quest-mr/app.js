@@ -12,6 +12,7 @@ const DEBUG_TOP_VIEW = new URLSearchParams(window.location.search).has("topDebug
 const DEBUG_TOP_VIEW_DISTANCE = Number(new URLSearchParams(window.location.search).get("topDebugDist"));
 const DEBUG_BLACK_HOLE_VIEW = new URLSearchParams(window.location.search).has("blackHoleDebug");
 const DEBUG_BLACK_HOLE_FALL = new URLSearchParams(window.location.search).has("blackHoleFallDebug");
+const DEBUG_BLACK_HOLE_BACK_VIEW = new URLSearchParams(window.location.search).has("blackHoleBackDebug");
 const DEBUG_SOLAR_SPOT_VIEW = new URLSearchParams(window.location.search).has("solarSpotDebug");
 const DEBUG_COMET_VIEW = new URLSearchParams(window.location.search).has("cometDebug");
 
@@ -87,6 +88,12 @@ function applyDebugTopCamera() {
     camera.up.set(0, 1, 0);
     camera.position.set(-48, 30, -35);
     camera.lookAt(-48, 30, -62);
+    return;
+  }
+  if (DEBUG_BLACK_HOLE_BACK_VIEW && !renderer.xr.isPresenting) {
+    camera.up.set(0, 1, 0);
+    camera.position.copy(BLACK_HOLE_POSITION).lerp(roomCenter, 0.16).add(new THREE.Vector3(0, 0.25, 0));
+    camera.lookAt(roomCenter.x - 2.2, roomCenter.y + 1.4, roomCenter.z - 16);
     return;
   }
   if (DEBUG_BLACK_HOLE_VIEW && !renderer.xr.isPresenting) {
@@ -4960,6 +4967,7 @@ blackHoleVeil.position.z = -1.4;
 blackHoleTunnel.add(blackHoleVeil);
 
 const blackHoleTmp = new THREE.Vector3();
+const blackHoleLookDir = new THREE.Vector3();
 let blackHoleFallActive = false;
 let blackHoleFallT = 0;
 let blackHoleCooldown = 0;
@@ -5021,8 +5029,11 @@ function updateBlackHole(dt, timeSeconds) {
   blackHoleTunnel.quaternion.copy(cam.quaternion);
   blackHoleTunnel.rotation.z += timeSeconds * (1.8 + p * 5.6);
   blackHoleTunnel.scale.setScalar(0.88 + p * 0.7);
-  blackHoleTunnelLines.material.opacity = THREE.MathUtils.lerp(0.18, 0.9, smoothFade01(Math.min(1, p * 1.4)));
-  blackHoleVeil.material.opacity = smoothFade01((p - 0.62) / 0.32) * 0.96;
+  blackHoleLookDir.copy(BLACK_HOLE_POSITION).sub(viewerWorld);
+  const facingBlackHole = blackHoleLookDir.lengthSq() > 1e-6 ? viewerForward.dot(blackHoleLookDir.normalize()) : 1;
+  const forwardFade = smoothFade01((facingBlackHole + 0.08) / 0.48);
+  blackHoleTunnelLines.material.opacity = THREE.MathUtils.lerp(0.18, 0.9, smoothFade01(Math.min(1, p * 1.4))) * forwardFade;
+  blackHoleVeil.material.opacity = smoothFade01((p - 0.62) / 0.32) * 0.96 * forwardFade;
 
   if (renderer.xr.isPresenting && xrBaseRefSpace) {
     blackHoleTmp.copy(BLACK_HOLE_POSITION).sub(viewerWorld);
