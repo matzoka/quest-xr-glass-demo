@@ -453,45 +453,97 @@ function addNebulaCloud(position, width, height, opacity, rotationZ, seed, hue) 
   return nebula;
 }
 
-function addSpiralGalaxy(position, width, height, opacity, rotationZ, seed) {
-  const spiral = new THREE.Mesh(
-    new THREE.PlaneGeometry(width, height),
-    new THREE.MeshBasicMaterial({
-      map: makeSpiralGalaxyTexture(seed),
-      color: 0xffffff,
-      transparent: true,
-      opacity,
-      alphaTest: 0.004,
-      depthWrite: false,
-      side: THREE.DoubleSide,
-      blending: THREE.AdditiveBlending,
-    })
-  );
-  spiral.position.copy(position);
-  spiral.rotation.z = rotationZ;
-  spaceBackdrop.add(spiral);
-  return spiral;
+function makeSpiralGalaxyField(seed, textureSeed, count, radiusMin, radiusMax, opacity) {
+  const rand = seededRandom(seed);
+  const positions = [];
+  const uvs = [];
+  const colors = [];
+  const indices = [];
+  const goldenAngle = Math.PI * (3 - Math.sqrt(5));
+  const normal = new THREE.Vector3();
+  const center = new THREE.Vector3();
+  const right = new THREE.Vector3();
+  const up = new THREE.Vector3();
+  const rotatedRight = new THREE.Vector3();
+  const rotatedUp = new THREE.Vector3();
+  const worldUp = new THREE.Vector3(0, 1, 0);
+  const fallbackUp = new THREE.Vector3(1, 0, 0);
+
+  for (let i = 0; i < count; i += 1) {
+    const y = 1 - (2 * (i + 0.5)) / count;
+    const radial = Math.sqrt(Math.max(0, 1 - y * y));
+    const theta = i * goldenAngle + (rand() - 0.5) * 0.42;
+    const dirX = Math.cos(theta) * radial;
+    const dirY = y + (rand() - 0.5) * 0.016;
+    const dirZ = Math.sin(theta) * radial;
+    normal.set(-dirX, -dirY, -dirZ).normalize();
+
+    const radius = radiusMin + rand() * (radiusMax - radiusMin);
+    center.set(-normal.x * radius, -normal.y * radius, -normal.z * radius);
+
+    const basisUp = Math.abs(normal.dot(worldUp)) > 0.92 ? fallbackUp : worldUp;
+    right.crossVectors(basisUp, normal).normalize();
+    up.crossVectors(normal, right).normalize();
+
+    const angle = rand() * Math.PI * 2;
+    const ca = Math.cos(angle);
+    const sa = Math.sin(angle);
+    rotatedRight.copy(right).multiplyScalar(ca).addScaledVector(up, sa);
+    rotatedUp.copy(up).multiplyScalar(ca).addScaledVector(right, -sa);
+
+    const size = 2.7 + Math.pow(rand(), 1.65) * 9.8;
+    const aspect = 0.78 + rand() * 0.38;
+    const hw = size * 0.5;
+    const hh = size * aspect * 0.5;
+    const brightness = 0.38 + Math.pow(rand(), 1.4) * 0.82;
+    const blueShift = 0.78 + rand() * 0.22;
+    const base = (positions.length / 3) | 0;
+    const corners = [
+      [-1, -1, 0, 0],
+      [1, -1, 1, 0],
+      [1, 1, 1, 1],
+      [-1, 1, 0, 1],
+    ];
+
+    for (const [sx, sy, u, v] of corners) {
+      positions.push(
+        center.x + rotatedRight.x * sx * hw + rotatedUp.x * sy * hh,
+        center.y + rotatedRight.y * sx * hw + rotatedUp.y * sy * hh,
+        center.z + rotatedRight.z * sx * hw + rotatedUp.z * sy * hh
+      );
+      uvs.push(u, v);
+      colors.push(brightness * blueShift, brightness * (0.86 + rand() * 0.14), brightness);
+    }
+    indices.push(base, base + 1, base + 2, base, base + 2, base + 3);
+  }
+
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+  geometry.setAttribute("uv", new THREE.Float32BufferAttribute(uvs, 2));
+  geometry.setAttribute("color", new THREE.Float32BufferAttribute(colors, 3));
+  geometry.setIndex(indices);
+  geometry.computeBoundingSphere();
+
+  const material = new THREE.MeshBasicMaterial({
+    map: makeSpiralGalaxyTexture(textureSeed),
+    color: 0xffffff,
+    transparent: true,
+    opacity,
+    alphaTest: 0.004,
+    vertexColors: true,
+    depthWrite: false,
+    side: THREE.DoubleSide,
+    blending: THREE.AdditiveBlending,
+  });
+
+  return new THREE.Mesh(geometry, material);
 }
 
 function addDistantSpiralGalaxies() {
-  const rand = seededRandom(509773);
-  for (let i = 0; i < 34; i += 1) {
-    const sideBias = rand() < 0.58 ? Math.sign(rand() - 0.5) * (72 + rand() * 96) : (rand() - 0.5) * 126;
-    const x = sideBias + (rand() - 0.5) * 18;
-    const y = (rand() - 0.5) * 142;
-    const z = -230 - rand() * 104;
-    const size = 5.8 + Math.pow(rand(), 1.35) * 17.5;
-    const aspect = 0.82 + rand() * 0.32;
-    const opacity = 0.11 + rand() * 0.17;
-    const seed = 190001 + i * 7919 + Math.floor(rand() * 4000);
-    addSpiralGalaxy(
-      new THREE.Vector3(x, y, z),
-      size,
-      size * aspect,
-      opacity,
-      (rand() - 0.5) * Math.PI,
-      seed
-    );
+  const fieldSeeds = [509773, 612049, 771221, 884399];
+  for (let i = 0; i < fieldSeeds.length; i += 1) {
+    const field = makeSpiralGalaxyField(fieldSeeds[i], 190001 + i * 137, 400, 238 + i * 10, 344 + i * 8, 0.16);
+    spaceBackdrop.add(field);
   }
 }
 
