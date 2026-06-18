@@ -3943,7 +3943,7 @@ function updatePoseDebugButton() {
     .copy(viewerWorld)
     .addScaledVector(poseDebugButtonForward, 0.64)
     .addScaledVector(poseDebugButtonRight, -0.28)
-    .addScaledVector(poseDebugButtonUp, 0.34);
+    .addScaledVector(poseDebugButtonUp, 0.12);
   poseDebugXrButton.quaternion.copy(cam.quaternion);
   poseDebugXrHitArea.quaternion.copy(cam.quaternion);
   poseDebugXrPanel.quaternion.copy(cam.quaternion);
