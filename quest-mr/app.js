@@ -2826,6 +2826,9 @@ async function enterXr(mode) {
       enterpriseOrbitXrButton.visible = false;
       klingonXrButton.visible = false;
       blackHoleTourXrButton.visible = false;
+      enterpriseOrbitXrIcon.visible = false;
+      klingonXrIcon.visible = false;
+      blackHoleTourXrIcon.visible = false;
       poseDebugXrButton.visible = false;
       poseDebugXrHitArea.visible = false;
       poseDebugXrPanel.visible = false;
@@ -2856,6 +2859,9 @@ async function enterXr(mode) {
     enterpriseOrbitXrButton.visible = true;
     klingonXrButton.visible = true;
     blackHoleTourXrButton.visible = true;
+    enterpriseOrbitXrIcon.visible = true;
+    klingonXrIcon.visible = true;
+    blackHoleTourXrIcon.visible = true;
     poseDebugXrButton.visible = DEBUG_POSE_CAPTURE;
     poseDebugXrHitArea.visible = DEBUG_POSE_CAPTURE;
     poseDebugXrPanel.visible = DEBUG_POSE_CAPTURE;
@@ -3521,6 +3527,151 @@ function makeButtonTexture(label, bg) {
   return tex;
 }
 
+function makeXrIconTexture(kind) {
+  const c = document.createElement("canvas");
+  c.width = 256;
+  c.height = 256;
+  const ctx = c.getContext("2d");
+  ctx.clearRect(0, 0, c.width, c.height);
+
+  ctx.save();
+  ctx.beginPath();
+  ctx.arc(128, 128, 112, 0, Math.PI * 2);
+  ctx.clip();
+  ctx.fillStyle = "rgba(6,10,15,0.96)";
+  ctx.fillRect(0, 0, c.width, c.height);
+  const glow = ctx.createRadialGradient(128, 128, 6, 128, 128, 118);
+  glow.addColorStop(0, "rgba(255,255,255,0.34)");
+  glow.addColorStop(0.45, "rgba(255,178,82,0.18)");
+  glow.addColorStop(1, "rgba(255,178,82,0)");
+  ctx.fillStyle = glow;
+  ctx.fillRect(0, 0, c.width, c.height);
+  ctx.restore();
+
+  if (kind === "blackHole") {
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(128, 128, 112, 0, Math.PI * 2);
+    ctx.clip();
+    ctx.translate(128, 128);
+    ctx.rotate(-0.18);
+    for (let i = 0; i < 5; i += 1) {
+      ctx.strokeStyle = `rgba(255, ${190 - i * 18}, ${94 - i * 8}, ${0.9 - i * 0.12})`;
+      ctx.lineWidth = 8 - i;
+      ctx.beginPath();
+      ctx.ellipse(0, 0, 82 - i * 9, 28 - i * 2, 0, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+    ctx.fillStyle = "#000";
+    ctx.beginPath();
+    ctx.arc(0, 0, 34, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = "rgba(255,235,178,0.96)";
+    ctx.lineWidth = 5;
+    ctx.beginPath();
+    ctx.ellipse(0, 0, 56, 52, 0.15, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.restore();
+  } else if (kind === "enterprise") {
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(128, 128, 112, 0, Math.PI * 2);
+    ctx.clip();
+    ctx.translate(128, 132);
+    ctx.rotate(-0.18);
+    ctx.fillStyle = "rgba(230,238,246,0.96)";
+    ctx.strokeStyle = "rgba(120,190,255,0.92)";
+    ctx.lineWidth = 4;
+    ctx.beginPath();
+    ctx.ellipse(-34, -8, 46, 22, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+    ctx.fillRect(4, -13, 62, 12);
+    ctx.fillRect(4, 5, 62, 12);
+    ctx.fillStyle = "rgba(185,205,220,0.96)";
+    ctx.beginPath();
+    ctx.roundRect(-2, -7, 54, 14, 7);
+    ctx.fill();
+    ctx.fillStyle = "rgba(240,248,255,0.96)";
+    ctx.beginPath();
+    ctx.moveTo(40, -17);
+    ctx.lineTo(102, -9);
+    ctx.lineTo(106, 4);
+    ctx.lineTo(40, 15);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+    ctx.restore();
+  } else {
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(128, 128, 112, 0, Math.PI * 2);
+    ctx.clip();
+    ctx.translate(128, 132);
+    ctx.rotate(0.12);
+    ctx.fillStyle = "rgba(105,190,125,0.96)";
+    ctx.strokeStyle = "rgba(180,255,190,0.92)";
+    ctx.lineWidth = 4;
+    ctx.beginPath();
+    ctx.moveTo(-90, -18);
+    ctx.lineTo(-32, -42);
+    ctx.lineTo(22, -14);
+    ctx.lineTo(86, -28);
+    ctx.lineTo(34, 6);
+    ctx.lineTo(88, 38);
+    ctx.lineTo(16, 22);
+    ctx.lineTo(-40, 48);
+    ctx.lineTo(-14, 12);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+    ctx.fillStyle = "rgba(255,80,54,0.9)";
+    ctx.beginPath();
+    ctx.arc(4, -1, 7, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  }
+
+  ctx.lineWidth = 8;
+  ctx.strokeStyle = kind === "klingon" ? "rgba(145,255,178,0.92)" : kind === "enterprise" ? "rgba(155,220,255,0.92)" : "rgba(255,190,96,0.94)";
+  ctx.beginPath();
+  ctx.arc(128, 128, 108, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.lineWidth = 2;
+  ctx.strokeStyle = "rgba(255,255,255,0.74)";
+  ctx.beginPath();
+  ctx.arc(128, 128, 94, 0, Math.PI * 2);
+  ctx.stroke();
+
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.anisotropy = maxAnisotropy;
+  return tex;
+}
+
+const XR_ICON_SPIN = 1.35;
+const xrButtonIcons = [];
+
+function makeXrIcon(kind, x, y, size = 0.17) {
+  const icon = new THREE.Mesh(
+    new THREE.CircleGeometry(size * 0.5, 64),
+    new THREE.MeshBasicMaterial({
+      map: makeXrIconTexture(kind),
+      transparent: true,
+      depthTest: false,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+      toneMapped: false,
+    })
+  );
+  icon.position.set(x, y, -0.49);
+  icon.renderOrder = 1001;
+  icon.visible = false;
+  scene.add(icon);
+  xrButtonIcons.push(icon);
+  return icon;
+}
+
 function makePoseDebugPanelTexture(values = null) {
   const c = document.createElement("canvas");
   c.width = 768;
@@ -3622,6 +3773,7 @@ enterpriseOrbitXrButton.position.set(0, 1.8, -0.5);
 enterpriseOrbitXrButton.renderOrder = 999;
 enterpriseOrbitXrButton.visible = false;
 scene.add(enterpriseOrbitXrButton);
+const enterpriseOrbitXrIcon = makeXrIcon("enterprise", 0.33, 1.8, 0.14);
 
 const klingonXrButton = new THREE.Mesh(
   new THREE.PlaneGeometry(0.42, 0.15),
@@ -3636,6 +3788,7 @@ klingonXrButton.position.set(0, 2.0, -0.5);
 klingonXrButton.renderOrder = 999;
 klingonXrButton.visible = false;
 scene.add(klingonXrButton);
+const klingonXrIcon = makeXrIcon("klingon", 0.33, 2.0, 0.14);
 
 const blackHoleTourXrButton = new THREE.Mesh(
   new THREE.PlaneGeometry(0.56, 0.15),
@@ -3650,6 +3803,7 @@ blackHoleTourXrButton.position.set(0, 2.2, -0.5);
 blackHoleTourXrButton.renderOrder = 999;
 blackHoleTourXrButton.visible = false;
 scene.add(blackHoleTourXrButton);
+const blackHoleTourXrIcon = makeXrIcon("blackHole", 0.42, 2.2, 0.14);
 
 const poseDebugXrButton = new THREE.Mesh(
   new THREE.PlaneGeometry(0.56, 0.2),
@@ -3811,6 +3965,14 @@ function updateHandTouch(dt) {
       playCollisionSound();
     }
     gripTouching[i] = touching;
+  }
+}
+
+function updateXrButtonIcons(dt) {
+  for (let i = 0; i < xrButtonIcons.length; i += 1) {
+    const icon = xrButtonIcons[i];
+    if (!icon.visible) continue;
+    icon.rotation.z += dt * XR_ICON_SPIN * (i % 2 === 0 ? 1 : -1);
   }
 }
 
@@ -6067,6 +6229,7 @@ renderer.setAnimationLoop((timestamp) => {
   updateKlingon(dt);
   updateEnterprise(dt);
   updateLightning(dt);
+  updateXrButtonIcons(dt);
   updatePoseDebugButton();
 
   applyDebugTopCamera();
