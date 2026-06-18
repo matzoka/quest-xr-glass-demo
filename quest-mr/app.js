@@ -10,6 +10,8 @@ const enterpriseOrbitButton = document.querySelector("#enterpriseOrbitButton");
 const klingonButton = document.querySelector("#klingonButton");
 const DEBUG_TOP_VIEW = new URLSearchParams(window.location.search).has("topDebug");
 const DEBUG_TOP_VIEW_DISTANCE = Number(new URLSearchParams(window.location.search).get("topDebugDist"));
+const DEBUG_BLACK_HOLE_VIEW = new URLSearchParams(window.location.search).has("blackHoleDebug");
+const DEBUG_BLACK_HOLE_FALL = new URLSearchParams(window.location.search).has("blackHoleFallDebug");
 
 // ---------------------------------------------------------------------------
 // Scene / renderer
@@ -39,6 +41,7 @@ scene.environment = pmrem.fromScene(new RoomEnvironment(renderer), 0.04).texture
 // ---------------------------------------------------------------------------
 const roomCenter = new THREE.Vector3(0, 2.2, -2.2); // world position of the box center
 const roomHalf = new THREE.Vector3(4.5, 2.2, 4.5); // half extents (box is 9 x 4.4 x 9 m)
+const BLACK_HOLE_POSITION = new THREE.Vector3(16.5, 6.4, -24.5);
 let ballRadius = 0.36; // set from the Earth radius below
 const collisionHalf = new THREE.Vector3(); // roomHalf - ballRadius, per axis
 
@@ -72,6 +75,12 @@ camera.position.set(0, roomCenter.y, roomCenter.z + fitDist + roomHalf.z + 0.5);
 camera.lookAt(roomCenter);
 
 function applyDebugTopCamera() {
+  if (DEBUG_BLACK_HOLE_VIEW && !renderer.xr.isPresenting) {
+    camera.up.set(0, 1, 0);
+    camera.position.copy(BLACK_HOLE_POSITION).add(new THREE.Vector3(0, 1.6, 11));
+    camera.lookAt(BLACK_HOLE_POSITION);
+    return;
+  }
   if (!DEBUG_TOP_VIEW || renderer.xr.isPresenting) return;
   camera.up.set(0, 0, -1);
   const distance = Number.isFinite(DEBUG_TOP_VIEW_DISTANCE) ? DEBUG_TOP_VIEW_DISTANCE : 18;
@@ -127,6 +136,8 @@ const tmpDir = new THREE.Vector3();
 const tmpVec = new THREE.Vector3();
 const tmpRight = new THREE.Vector3();
 const worldUp = new THREE.Vector3(0, 1, 0);
+const viewerWorld = new THREE.Vector3();
+const viewerForward = new THREE.Vector3();
 
 // ---------------------------------------------------------------------------
 // Deep-space backdrop: distant stars plus a soft galaxy band. It is kept as
@@ -3491,6 +3502,19 @@ function resetToHome() {
   if (xrBaseRefSpace) renderer.xr.setReferenceSpace(xrBaseRefSpace);
 }
 
+function applyXrLocomotionOffset() {
+  if (!xrBaseRefSpace) return;
+  const offset = new XRRigidTransform({ x: -locomotion.x, y: -locomotion.y, z: -locomotion.z });
+  renderer.xr.setReferenceSpace(xrBaseRefSpace.getOffsetReferenceSpace(offset));
+}
+
+function getViewerPose(out) {
+  const cam = renderer.xr.isPresenting ? renderer.xr.getCamera(camera) : camera;
+  cam.getWorldPosition(out);
+  cam.getWorldDirection(viewerForward);
+  return cam;
+}
+
 function updateLocomotion(dt) {
   const session = renderer.xr.getSession();
   if (!session || !xrBaseRefSpace) return;
@@ -3525,8 +3549,7 @@ function updateLocomotion(dt) {
   locomotion.addScaledVector(tmpRight, mx * LOCO_SPEED * dt);
   locomotion.y += my * LOCO_SPEED * dt;
 
-  const offset = new XRRigidTransform({ x: -locomotion.x, y: -locomotion.y, z: -locomotion.z });
-  renderer.xr.setReferenceSpace(xrBaseRefSpace.getOffsetReferenceSpace(offset));
+  applyXrLocomotionOffset();
 }
 
 // ---------------------------------------------------------------------------
@@ -4573,6 +4596,303 @@ addPlanetMoonSystem(
 );
 
 // ---------------------------------------------------------------------------
+// Interstellar-inspired black hole: a distant but reachable feature with a
+// dark event horizon, bright accretion disk, view-dependent lensing arcs, and
+// a short safe fall-through experience when the viewer crosses the horizon.
+// ---------------------------------------------------------------------------
+const BLACK_HOLE_HORIZON_R = EARTH_RADIUS * 3.15;
+const BLACK_HOLE_DISK_INNER = BLACK_HOLE_HORIZON_R * 1.36;
+const BLACK_HOLE_DISK_OUTER = BLACK_HOLE_HORIZON_R * 6.0;
+const BLACK_HOLE_PULL_R = BLACK_HOLE_DISK_OUTER * 1.38;
+const BLACK_HOLE_TRIGGER_R = BLACK_HOLE_HORIZON_R * 1.08;
+const BLACK_HOLE_RETURN_COOLDOWN = 5.0;
+const blackHoleGroup = new THREE.Group();
+blackHoleGroup.position.copy(BLACK_HOLE_POSITION);
+scene.add(blackHoleGroup);
+
+const BLACK_HOLE_DISK_VERT = `
+varying vec3 vLocalPos;
+varying vec2 vUv;
+void main(){
+  vLocalPos=position;
+  vUv=uv;
+  gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0);
+}`;
+
+const BLACK_HOLE_DISK_FRAG = `
+uniform float uTime;
+uniform float uInner;
+uniform float uOuter;
+varying vec3 vLocalPos;
+float hash(vec2 p){
+  p=fract(p*vec2(123.34,456.21));
+  p+=dot(p,p+45.32);
+  return fract(p.x*p.y);
+}
+float noise(vec2 p){
+  vec2 i=floor(p);
+  vec2 f=fract(p);
+  f=f*f*(3.0-2.0*f);
+  float a=hash(i);
+  float b=hash(i+vec2(1.0,0.0));
+  float c=hash(i+vec2(0.0,1.0));
+  float d=hash(i+vec2(1.0,1.0));
+  return mix(mix(a,b,f.x),mix(c,d,f.x),f.y);
+}
+float fbm(vec2 p){
+  float v=0.0;
+  float amp=0.55;
+  for(int i=0;i<4;i++){
+    v+=noise(p)*amp;
+    p*=2.03;
+    amp*=0.5;
+  }
+  return v;
+}
+void main(){
+  float r=length(vLocalPos.xy);
+  float t=clamp((r-uInner)/(uOuter-uInner),0.0,1.0);
+  float a=atan(vLocalPos.y,vLocalPos.x);
+  float edge=smoothstep(0.0,0.08,t)*(1.0-smoothstep(0.88,1.0,t));
+  float inner=1.0-smoothstep(0.02,0.42,t);
+  float bands=0.55+0.45*sin(t*74.0+a*5.0-uTime*1.4);
+  bands*=0.72+0.28*sin(t*151.0-a*2.3+uTime*0.8);
+  float dust=fbm(vec2(a*5.8+uTime*0.035,t*32.0-uTime*0.12));
+  float lane=fbm(vec2(a*2.4-uTime*0.02,t*11.0+3.7));
+  bands*=0.72+0.34*dust;
+  float doppler=0.72+0.28*smoothstep(-0.35,0.88,sin(a-0.42));
+  float alpha=edge*(0.16+0.54*bands+0.18*dust)*(0.58+inner*1.45)*doppler*(0.76+0.28*lane);
+  vec3 hot=vec3(1.0,0.92,0.76);
+  vec3 amber=vec3(1.0,0.46,0.12);
+  vec3 ember=vec3(0.65,0.12,0.035);
+  vec3 col=mix(amber,hot,inner*0.9+smoothstep(0.62,1.0,bands)*0.35);
+  col=mix(col,ember,smoothstep(0.52,1.0,t)*0.55);
+  col*=0.8+inner*1.75+dust*0.24;
+  gl_FragColor=vec4(col,alpha);
+}`;
+
+const BLACK_HOLE_LENS_FRAG = `
+uniform float uTime;
+varying vec2 vUv;
+float ring(float r,float target,float width){
+  return exp(-pow((r-target)/width,2.0));
+}
+void main(){
+  vec2 p=(vUv-0.5)*2.0;
+  float r=length(p);
+  float angle=atan(p.y,p.x);
+  float horizon=smoothstep(0.34,0.28,r);
+  float photon=ring(r,0.37,0.026)*(0.82+0.18*sin(angle*9.0+uTime*0.45));
+  float upper=ring(length(vec2(p.x*0.78,(p.y-0.23)*1.85)),0.55,0.055)*smoothstep(-0.06,0.36,p.y);
+  float lower=ring(length(vec2(p.x*0.82,(p.y+0.23)*1.75)),0.55,0.07)*(1.0-smoothstep(-0.42,0.1,p.y));
+  float lens=photon+upper*0.72+lower*0.45;
+  vec3 white=vec3(1.0,0.94,0.82);
+  vec3 orange=vec3(1.0,0.46,0.12);
+  vec3 col=mix(orange,white,photon*0.78+upper*0.36);
+  float alpha=clamp(lens,0.0,1.0)*(1.0-horizon)*0.88;
+  gl_FragColor=vec4(col,alpha);
+}`;
+
+const blackHoleDiskMaterial = new THREE.ShaderMaterial({
+  uniforms: {
+    uTime: { value: 0 },
+    uInner: { value: BLACK_HOLE_DISK_INNER },
+    uOuter: { value: BLACK_HOLE_DISK_OUTER },
+  },
+  vertexShader: BLACK_HOLE_DISK_VERT,
+  fragmentShader: BLACK_HOLE_DISK_FRAG,
+  transparent: true,
+  depthWrite: false,
+  side: THREE.DoubleSide,
+  blending: THREE.AdditiveBlending,
+  toneMapped: false,
+});
+
+const blackHoleDisk = new THREE.Mesh(
+  new THREE.RingGeometry(BLACK_HOLE_DISK_INNER, BLACK_HOLE_DISK_OUTER, 256, 18),
+  blackHoleDiskMaterial
+);
+blackHoleDisk.rotation.set(THREE.MathUtils.degToRad(66), THREE.MathUtils.degToRad(-14), THREE.MathUtils.degToRad(8));
+blackHoleDisk.renderOrder = 5;
+blackHoleGroup.add(blackHoleDisk);
+
+const blackHoleLensMaterial = new THREE.ShaderMaterial({
+  uniforms: { uTime: { value: 0 } },
+  vertexShader: `
+varying vec2 vUv;
+void main(){
+  vUv=uv;
+  gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0);
+}`,
+  fragmentShader: BLACK_HOLE_LENS_FRAG,
+  transparent: true,
+  depthWrite: false,
+  side: THREE.DoubleSide,
+  blending: THREE.AdditiveBlending,
+  toneMapped: false,
+});
+const blackHoleLens = new THREE.Mesh(
+  new THREE.PlaneGeometry(BLACK_HOLE_DISK_OUTER * 1.35, BLACK_HOLE_DISK_OUTER * 1.0),
+  blackHoleLensMaterial
+);
+blackHoleLens.renderOrder = 7;
+blackHoleGroup.add(blackHoleLens);
+
+const blackHoleShadow = new THREE.Mesh(
+  new THREE.CircleGeometry(BLACK_HOLE_HORIZON_R * 1.05, 96),
+  new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 1.0, depthWrite: true, side: THREE.DoubleSide, toneMapped: false })
+);
+blackHoleShadow.renderOrder = 9;
+blackHoleGroup.add(blackHoleShadow);
+
+const blackHoleCore = new THREE.Mesh(
+  new THREE.SphereGeometry(BLACK_HOLE_HORIZON_R * 0.98, 64, 32),
+  new THREE.MeshBasicMaterial({ color: 0x000000, toneMapped: false })
+);
+blackHoleCore.renderOrder = 8;
+blackHoleGroup.add(blackHoleCore);
+
+const blackHoleParticlePositions = [];
+const blackHoleParticleColors = [];
+const blackHoleParticleRand = seededRandom(992313);
+for (let i = 0; i < 420; i += 1) {
+  const r = BLACK_HOLE_DISK_INNER * 1.04 + Math.pow(blackHoleParticleRand(), 1.6) * (BLACK_HOLE_DISK_OUTER * 0.82 - BLACK_HOLE_DISK_INNER);
+  const a = blackHoleParticleRand() * Math.PI * 2;
+  const y = (blackHoleParticleRand() - 0.5) * BLACK_HOLE_HORIZON_R * 0.1;
+  blackHoleParticlePositions.push(Math.cos(a) * r, Math.sin(a) * r, y);
+  const warm = 0.65 + blackHoleParticleRand() * 0.35;
+  blackHoleParticleColors.push(1.0, warm * 0.74, warm * 0.34);
+}
+const blackHoleParticleGeo = new THREE.BufferGeometry();
+blackHoleParticleGeo.setAttribute("position", new THREE.Float32BufferAttribute(blackHoleParticlePositions, 3));
+blackHoleParticleGeo.setAttribute("color", new THREE.Float32BufferAttribute(blackHoleParticleColors, 3));
+const blackHoleParticles = new THREE.Points(
+  blackHoleParticleGeo,
+  new THREE.PointsMaterial({
+    size: 2.2,
+    sizeAttenuation: false,
+    transparent: true,
+    opacity: 0.72,
+    depthWrite: false,
+    vertexColors: true,
+    blending: THREE.AdditiveBlending,
+    toneMapped: false,
+  })
+);
+blackHoleParticles.rotation.copy(blackHoleDisk.rotation);
+blackHoleGroup.add(blackHoleParticles);
+
+const blackHoleTunnel = new THREE.Group();
+blackHoleTunnel.visible = false;
+scene.add(blackHoleTunnel);
+const tunnelPositions = [];
+const tunnelRand = seededRandom(146081);
+for (let i = 0; i < 120; i += 1) {
+  const a = tunnelRand() * Math.PI * 2;
+  const r = 0.18 + Math.pow(tunnelRand(), 0.6) * 1.45;
+  const x = Math.cos(a) * r;
+  const y = Math.sin(a) * r;
+  const depth = 1.0 + tunnelRand() * 2.4;
+  tunnelPositions.push(x, y, -0.18, x * 0.18, y * 0.18, -depth);
+}
+const blackHoleTunnelLines = new THREE.LineSegments(
+  new THREE.BufferGeometry().setAttribute("position", new THREE.Float32BufferAttribute(tunnelPositions, 3)),
+  new THREE.LineBasicMaterial({
+    color: 0xffd6a6,
+    transparent: true,
+    opacity: 0,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+    toneMapped: false,
+  })
+);
+blackHoleTunnel.add(blackHoleTunnelLines);
+const blackHoleVeil = new THREE.Mesh(
+  new THREE.CircleGeometry(1.9, 80),
+  new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0, depthWrite: false, toneMapped: false })
+);
+blackHoleVeil.position.z = -1.4;
+blackHoleTunnel.add(blackHoleVeil);
+
+const blackHoleTmp = new THREE.Vector3();
+let blackHoleFallActive = false;
+let blackHoleFallT = 0;
+let blackHoleCooldown = 0;
+let blackHoleStatusArmed = true;
+
+function startBlackHoleFall() {
+  if (blackHoleFallActive || blackHoleCooldown > 0) return;
+  blackHoleFallActive = true;
+  blackHoleFallT = 0;
+  blackHoleTunnel.visible = true;
+  blackHoleStatusArmed = true;
+  statusEl.textContent = "ブラックホールの事象の地平面に入りました。安全復帰シーケンスを開始します。";
+}
+
+function finishBlackHoleFall() {
+  blackHoleFallActive = false;
+  blackHoleCooldown = BLACK_HOLE_RETURN_COOLDOWN;
+  blackHoleTunnel.visible = false;
+  blackHoleTunnelLines.material.opacity = 0;
+  blackHoleVeil.material.opacity = 0;
+  if (renderer.xr.isPresenting) resetToHome();
+  statusEl.textContent = "ブラックホールから安全な観測位置へ復帰しました。";
+}
+
+function updateBlackHole(dt, timeSeconds) {
+  blackHoleDiskMaterial.uniforms.uTime.value = timeSeconds;
+  blackHoleLensMaterial.uniforms.uTime.value = timeSeconds;
+  blackHoleParticles.rotation.z += dt * 0.16;
+
+  getViewerPose(viewerWorld);
+  blackHoleTmp.copy(viewerWorld).sub(BLACK_HOLE_POSITION);
+  const distance = blackHoleTmp.length();
+  blackHoleLens.lookAt(viewerWorld);
+  blackHoleShadow.lookAt(viewerWorld);
+
+  if (blackHoleCooldown > 0) blackHoleCooldown = Math.max(0, blackHoleCooldown - dt);
+
+  if (!blackHoleFallActive && blackHoleCooldown <= 0 && (renderer.xr.isPresenting || DEBUG_BLACK_HOLE_FALL)) {
+    if (distance < BLACK_HOLE_TRIGGER_R || (DEBUG_BLACK_HOLE_FALL && timeSeconds > 2.0)) {
+      startBlackHoleFall();
+    } else if (renderer.xr.isPresenting && distance < BLACK_HOLE_PULL_R && blackHoleStatusArmed) {
+      blackHoleStatusArmed = false;
+      statusEl.textContent = "ブラックホール接近中。中心へ入りすぎると落下演出に入ります。";
+    } else if (distance > BLACK_HOLE_PULL_R * 1.18) {
+      blackHoleStatusArmed = true;
+    }
+  }
+
+  if (!blackHoleFallActive) {
+    blackHoleTunnel.visible = false;
+    return;
+  }
+
+  blackHoleFallT += dt;
+  const p = THREE.MathUtils.clamp(blackHoleFallT / 3.8, 0, 1);
+  const cam = getViewerPose(viewerWorld);
+  blackHoleTunnel.visible = true;
+  blackHoleTunnel.position.copy(viewerWorld).addScaledVector(viewerForward, 1.2);
+  blackHoleTunnel.quaternion.copy(cam.quaternion);
+  blackHoleTunnel.rotation.z += timeSeconds * (1.8 + p * 5.6);
+  blackHoleTunnel.scale.setScalar(0.88 + p * 0.7);
+  blackHoleTunnelLines.material.opacity = THREE.MathUtils.lerp(0.18, 0.9, smoothFade01(Math.min(1, p * 1.4)));
+  blackHoleVeil.material.opacity = smoothFade01((p - 0.62) / 0.32) * 0.96;
+
+  if (renderer.xr.isPresenting && xrBaseRefSpace) {
+    blackHoleTmp.copy(BLACK_HOLE_POSITION).sub(viewerWorld);
+    const pullDistance = blackHoleTmp.length();
+    if (pullDistance > 0.02) {
+      blackHoleTmp.normalize();
+      locomotion.addScaledVector(blackHoleTmp, dt * THREE.MathUtils.lerp(1.1, 5.0, p));
+      applyXrLocomotionOffset();
+    }
+  }
+
+  if (p >= 1) finishBlackHoleFall();
+}
+
+// ---------------------------------------------------------------------------
 // Ship flight safety: Enterprise and Klingon passes are cinematic, but they
 // should still respect obvious physical obstacles. At spawn time, build the
 // current obstacle list in world space and bend a route only when its straight
@@ -4606,6 +4926,7 @@ function collectFlightObstacles(shipClearance) {
   addFlightObstacle("Moon", moon, MOON_RADIUS, shipClearance, EARTH_RADIUS * 0.9);
   addFlightObstacle("Sun", sunMesh, SUN_RADIUS, shipClearance, SUN_RADIUS * 0.04);
   addFlightObstacle("Saturn", saturnBall, SATURN_R * 2.35, shipClearance, EARTH_RADIUS * 0.8);
+  addFlightObstacle("Black hole", blackHoleGroup, BLACK_HOLE_PULL_R, shipClearance, EARTH_RADIUS * 1.0);
   for (const planet of planets) {
     addFlightObstacle("Planet", planet.mesh, planet.radius, shipClearance, EARTH_RADIUS * 0.35);
   }
@@ -5211,6 +5532,7 @@ renderer.setAnimationLoop((timestamp) => {
   for (const p of planets) p.mesh.rotation.y += dt * p.spin;
   updatePlanetMoonSystems(dt);
   updatePlanetLighting();
+  updateBlackHole(dt, elapsed);
 
   // Refresh world matrices so the Apollo mission can read the live Moon
   // position (the Moon both orbits the Earth and the Earth roams the room).
