@@ -3504,164 +3504,98 @@ function resetBall() {
 // In-XR Exit button: a panel you point at with a controller (trigger) to leave
 // the session. Shown only while in VR/AR.
 // ---------------------------------------------------------------------------
-function makeButtonTexture(label, bg) {
+function makeButtonTexture(label, accent = "rgba(84,210,255,0.9)") {
   const c = document.createElement("canvas");
-  c.width = 320;
-  c.height = 140;
+  c.width = 704;
+  c.height = 160;
   const ctx = c.getContext("2d");
-  ctx.fillStyle = bg || "rgba(190,30,42,0.95)";
+
+  const panelGradient = ctx.createLinearGradient(0, 0, 0, c.height);
+  panelGradient.addColorStop(0, "rgba(23,34,46,0.97)");
+  panelGradient.addColorStop(0.45, "rgba(8,14,22,0.98)");
+  panelGradient.addColorStop(1, "rgba(5,9,14,0.98)");
+  ctx.fillStyle = panelGradient;
   ctx.beginPath();
-  ctx.roundRect(4, 4, 312, 132, 24);
+  ctx.roundRect(8, 8, c.width - 16, c.height - 16, 18);
   ctx.fill();
-  ctx.lineWidth = 4;
-  ctx.strokeStyle = "rgba(255,255,255,0.85)";
+
+  const sheen = ctx.createLinearGradient(0, 10, 0, 78);
+  sheen.addColorStop(0, "rgba(255,255,255,0.18)");
+  sheen.addColorStop(1, "rgba(255,255,255,0)");
+  ctx.fillStyle = sheen;
+  ctx.beginPath();
+  ctx.roundRect(18, 16, c.width - 36, 54, 14);
+  ctx.fill();
+
+  ctx.lineWidth = 3;
+  ctx.strokeStyle = "rgba(255,255,255,0.26)";
+  ctx.beginPath();
+  ctx.roundRect(9.5, 9.5, c.width - 19, c.height - 19, 18);
   ctx.stroke();
+
+  ctx.lineWidth = 5;
+  ctx.strokeStyle = accent;
+  ctx.beginPath();
+  ctx.moveTo(34, c.height - 25);
+  ctx.lineTo(c.width - 34, c.height - 25);
+  ctx.stroke();
+
+  ctx.fillStyle = accent;
+  ctx.globalAlpha = 0.9;
+  ctx.beginPath();
+  ctx.roundRect(30, 36, 7, 88, 4);
+  ctx.fill();
+  ctx.globalAlpha = 1;
+
   ctx.fillStyle = "#fff";
-  const maxTextWidth = 270;
-  let fontSize = 46;
+  const maxTextWidth = 560;
+  let fontSize = 48;
   do {
-    ctx.font = `bold ${fontSize}px sans-serif`;
+    ctx.font = `700 ${fontSize}px Arial, Helvetica, sans-serif`;
     fontSize -= 2;
-  } while (fontSize > 28 && ctx.measureText(label).width > maxTextWidth);
+  } while (fontSize > 30 && ctx.measureText(label).width > maxTextWidth);
+  ctx.shadowColor = "rgba(0,0,0,0.66)";
+  ctx.shadowBlur = 8;
+  ctx.shadowOffsetY = 3;
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
-  ctx.fillText(label, 160, 70);
+  ctx.fillText(label, c.width / 2, 76);
+  ctx.shadowBlur = 0;
+
   const tex = new THREE.CanvasTexture(c);
   tex.colorSpace = THREE.SRGBColorSpace;
   tex.anisotropy = maxAnisotropy;
   return tex;
 }
 
-function makeXrIconTexture(kind) {
-  const c = document.createElement("canvas");
-  c.width = 256;
-  c.height = 256;
-  const ctx = c.getContext("2d");
-  ctx.clearRect(0, 0, c.width, c.height);
+const APPROVED_XR_ICON_URLS = {
+  enterprise: "./assets/icon-enterprise-c.png",
+  klingon: "./assets/icon-klingon-c.png",
+  blackHole: "./assets/icon-blackhole-c.png",
+};
 
-  ctx.save();
-  ctx.beginPath();
-  ctx.arc(128, 128, 112, 0, Math.PI * 2);
-  ctx.clip();
-  ctx.fillStyle = "rgba(6,10,15,0.96)";
-  ctx.fillRect(0, 0, c.width, c.height);
-  const glow = ctx.createRadialGradient(128, 128, 6, 128, 128, 118);
-  glow.addColorStop(0, "rgba(255,255,255,0.34)");
-  glow.addColorStop(0.45, "rgba(255,178,82,0.18)");
-  glow.addColorStop(1, "rgba(255,178,82,0)");
-  ctx.fillStyle = glow;
-  ctx.fillRect(0, 0, c.width, c.height);
-  ctx.restore();
-
-  if (kind === "blackHole") {
-    ctx.save();
-    ctx.beginPath();
-    ctx.arc(128, 128, 112, 0, Math.PI * 2);
-    ctx.clip();
-    ctx.translate(128, 128);
-    ctx.rotate(-0.18);
-    for (let i = 0; i < 5; i += 1) {
-      ctx.strokeStyle = `rgba(255, ${190 - i * 18}, ${94 - i * 8}, ${0.9 - i * 0.12})`;
-      ctx.lineWidth = 8 - i;
-      ctx.beginPath();
-      ctx.ellipse(0, 0, 82 - i * 9, 28 - i * 2, 0, 0, Math.PI * 2);
-      ctx.stroke();
-    }
-    ctx.fillStyle = "#000";
-    ctx.beginPath();
-    ctx.arc(0, 0, 34, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.strokeStyle = "rgba(255,235,178,0.96)";
-    ctx.lineWidth = 5;
-    ctx.beginPath();
-    ctx.ellipse(0, 0, 56, 52, 0.15, 0, Math.PI * 2);
-    ctx.stroke();
-    ctx.restore();
-  } else if (kind === "enterprise") {
-    ctx.save();
-    ctx.beginPath();
-    ctx.arc(128, 128, 112, 0, Math.PI * 2);
-    ctx.clip();
-    ctx.translate(128, 132);
-    ctx.rotate(-0.18);
-    ctx.fillStyle = "rgba(230,238,246,0.96)";
-    ctx.strokeStyle = "rgba(120,190,255,0.92)";
-    ctx.lineWidth = 4;
-    ctx.beginPath();
-    ctx.ellipse(-34, -8, 46, 22, 0, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.stroke();
-    ctx.fillRect(4, -13, 62, 12);
-    ctx.fillRect(4, 5, 62, 12);
-    ctx.fillStyle = "rgba(185,205,220,0.96)";
-    ctx.beginPath();
-    ctx.roundRect(-2, -7, 54, 14, 7);
-    ctx.fill();
-    ctx.fillStyle = "rgba(240,248,255,0.96)";
-    ctx.beginPath();
-    ctx.moveTo(40, -17);
-    ctx.lineTo(102, -9);
-    ctx.lineTo(106, 4);
-    ctx.lineTo(40, 15);
-    ctx.closePath();
-    ctx.fill();
-    ctx.stroke();
-    ctx.restore();
-  } else {
-    ctx.save();
-    ctx.beginPath();
-    ctx.arc(128, 128, 112, 0, Math.PI * 2);
-    ctx.clip();
-    ctx.translate(128, 132);
-    ctx.rotate(0.12);
-    ctx.fillStyle = "rgba(105,190,125,0.96)";
-    ctx.strokeStyle = "rgba(180,255,190,0.92)";
-    ctx.lineWidth = 4;
-    ctx.beginPath();
-    ctx.moveTo(-90, -18);
-    ctx.lineTo(-32, -42);
-    ctx.lineTo(22, -14);
-    ctx.lineTo(86, -28);
-    ctx.lineTo(34, 6);
-    ctx.lineTo(88, 38);
-    ctx.lineTo(16, 22);
-    ctx.lineTo(-40, 48);
-    ctx.lineTo(-14, 12);
-    ctx.closePath();
-    ctx.fill();
-    ctx.stroke();
-    ctx.fillStyle = "rgba(255,80,54,0.9)";
-    ctx.beginPath();
-    ctx.arc(4, -1, 7, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.restore();
-  }
-
-  ctx.lineWidth = 8;
-  ctx.strokeStyle = kind === "klingon" ? "rgba(145,255,178,0.92)" : kind === "enterprise" ? "rgba(155,220,255,0.92)" : "rgba(255,190,96,0.94)";
-  ctx.beginPath();
-  ctx.arc(128, 128, 108, 0, Math.PI * 2);
-  ctx.stroke();
-  ctx.lineWidth = 2;
-  ctx.strokeStyle = "rgba(255,255,255,0.74)";
-  ctx.beginPath();
-  ctx.arc(128, 128, 94, 0, Math.PI * 2);
-  ctx.stroke();
-
-  const tex = new THREE.CanvasTexture(c);
+function loadApprovedXrIconTexture(kind) {
+  const tex = texLoader.load(APPROVED_XR_ICON_URLS[kind]);
   tex.colorSpace = THREE.SRGBColorSpace;
   tex.anisotropy = maxAnisotropy;
   return tex;
 }
 
 const XR_ICON_SPIN = 1.35;
+const XR_BUTTON_Z = -0.5;
+const XR_BUTTON_X = -0.04;
+const XR_BUTTON_W = 0.62;
+const XR_BUTTON_H = 0.135;
+const XR_ICON_X = 0.42;
+const XR_ICON_SIZE = 0.19;
+const XR_ICON_ASPECT_H = 100 / 170;
 const xrButtonIcons = [];
 
 function makeXrIcon(kind, x, y, size = 0.17) {
   const icon = new THREE.Mesh(
-    new THREE.CircleGeometry(size * 0.5, 64),
+    new THREE.PlaneGeometry(size, size * XR_ICON_ASPECT_H),
     new THREE.MeshBasicMaterial({
-      map: makeXrIconTexture(kind),
+      map: loadApprovedXrIconTexture(kind),
       transparent: true,
       depthTest: false,
       depthWrite: false,
@@ -3880,19 +3814,29 @@ function makeControllerHelpTexture() {
   return tex;
 }
 
+function loadControllerHelpDTexture() {
+  const tex = texLoader.load("./assets/controller-help-d.png");
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.anisotropy = maxAnisotropy;
+  return tex;
+}
+
 let poseDebugPanelTexture = makePoseDebugPanelTexture();
 const CONTROLLER_HELP_AUTO_HIDE = 24;
+const CONTROLLER_HELP_D_ASPECT = 861 / 504;
+const controllerHelpPanelHeight = roomHalf.y * 1.72;
+const controllerHelpPanelWidth = Math.min(roomHalf.z * 1.86, controllerHelpPanelHeight * CONTROLLER_HELP_D_ASPECT);
 let controllerHelpActive = false;
 let controllerHelpHideAt = 0;
 
 const controllerHelpPanel = new THREE.Mesh(
-  new THREE.PlaneGeometry(roomHalf.z * 1.86, roomHalf.y * 1.72),
+  new THREE.PlaneGeometry(controllerHelpPanelWidth, controllerHelpPanelHeight),
   new THREE.MeshBasicMaterial({
-    map: makeControllerHelpTexture(),
-    transparent: true,
-    opacity: 0.94,
+    map: loadControllerHelpDTexture(),
+    transparent: false,
     depthWrite: false,
     side: THREE.DoubleSide,
+    toneMapped: false,
   })
 );
 controllerHelpPanel.position.set(roomCenter.x + roomHalf.x - 0.025, roomCenter.y + 0.02, roomCenter.z);
@@ -3921,88 +3865,88 @@ function updateControllerHelp() {
 }
 
 const exitButton = new THREE.Mesh(
-  new THREE.PlaneGeometry(0.34, 0.15),
+  new THREE.PlaneGeometry(XR_BUTTON_W, XR_BUTTON_H),
   new THREE.MeshBasicMaterial({
-    map: makeButtonTexture("終了 / Exit"),
+    map: makeButtonTexture("終了 / Exit", "rgba(255,92,110,0.92)"),
     transparent: true,
     depthTest: false,
     side: THREE.DoubleSide,
   })
 );
-exitButton.position.set(0, 1.4, -0.5); // in front of the user, a bit low
+exitButton.position.set(XR_BUTTON_X, 1.4, XR_BUTTON_Z); // in front of the user, a bit low
 exitButton.renderOrder = 999;
 exitButton.visible = false;
 scene.add(exitButton);
 
 const resetButton = new THREE.Mesh(
-  new THREE.PlaneGeometry(0.34, 0.15),
+  new THREE.PlaneGeometry(XR_BUTTON_W, XR_BUTTON_H),
   new THREE.MeshBasicMaterial({
-    map: makeButtonTexture("リセット / Reset", "rgba(30,110,190,0.95)"),
+    map: makeButtonTexture("リセット / Reset", "rgba(85,185,255,0.95)"),
     transparent: true,
     depthTest: false,
     side: THREE.DoubleSide,
   })
 );
-resetButton.position.set(0, 1.6, -0.5); // just above the Exit button
+resetButton.position.set(XR_BUTTON_X, 1.6, XR_BUTTON_Z); // just above the Exit button
 resetButton.renderOrder = 999;
 resetButton.visible = false;
 scene.add(resetButton);
 
 const enterpriseOrbitXrButton = new THREE.Mesh(
-  new THREE.PlaneGeometry(0.42, 0.15),
+  new THREE.PlaneGeometry(XR_BUTTON_W, XR_BUTTON_H),
   new THREE.MeshBasicMaterial({
-    map: makeButtonTexture("Enterprise 周回", "rgba(20,85,135,0.95)"),
+    map: makeButtonTexture("Enterprise 周回", "rgba(120,214,255,0.95)"),
     transparent: true,
     depthTest: false,
     side: THREE.DoubleSide,
   })
 );
-enterpriseOrbitXrButton.position.set(0, 1.8, -0.5);
+enterpriseOrbitXrButton.position.set(XR_BUTTON_X, 1.8, XR_BUTTON_Z);
 enterpriseOrbitXrButton.renderOrder = 999;
 enterpriseOrbitXrButton.visible = false;
 scene.add(enterpriseOrbitXrButton);
-const enterpriseOrbitXrIcon = makeXrIcon("enterprise", 0.33, 1.8, 0.14);
+const enterpriseOrbitXrIcon = makeXrIcon("enterprise", XR_ICON_X, 1.8, XR_ICON_SIZE);
 
 const klingonXrButton = new THREE.Mesh(
-  new THREE.PlaneGeometry(0.42, 0.15),
+  new THREE.PlaneGeometry(XR_BUTTON_W, XR_BUTTON_H),
   new THREE.MeshBasicMaterial({
-    map: makeButtonTexture("クリンゴン登場", "rgba(22,105,62,0.95)"),
+    map: makeButtonTexture("クリンゴン登場", "rgba(117,255,168,0.92)"),
     transparent: true,
     depthTest: false,
     side: THREE.DoubleSide,
   })
 );
-klingonXrButton.position.set(0, 2.0, -0.5);
+klingonXrButton.position.set(XR_BUTTON_X, 2.0, XR_BUTTON_Z);
 klingonXrButton.renderOrder = 999;
 klingonXrButton.visible = false;
 scene.add(klingonXrButton);
-const klingonXrIcon = makeXrIcon("klingon", 0.33, 2.0, 0.14);
+const klingonXrIcon = makeXrIcon("klingon", XR_ICON_X, 2.0, XR_ICON_SIZE);
 
 const blackHoleTourXrButton = new THREE.Mesh(
-  new THREE.PlaneGeometry(0.56, 0.15),
+  new THREE.PlaneGeometry(XR_BUTTON_W, XR_BUTTON_H),
   new THREE.MeshBasicMaterial({
-    map: makeButtonTexture("ブラックホール探訪", "rgba(130,72,18,0.95)"),
+    map: makeButtonTexture("ブラックホール探訪", "rgba(255,188,105,0.96)"),
     transparent: true,
     depthTest: false,
     side: THREE.DoubleSide,
   })
 );
-blackHoleTourXrButton.position.set(0, 2.2, -0.5);
+blackHoleTourXrButton.position.set(XR_BUTTON_X, 2.2, XR_BUTTON_Z);
 blackHoleTourXrButton.renderOrder = 999;
 blackHoleTourXrButton.visible = false;
 scene.add(blackHoleTourXrButton);
-const blackHoleTourXrIcon = makeXrIcon("blackHole", 0.42, 2.2, 0.14);
+const blackHoleTourXrIcon = makeXrIcon("blackHole", XR_ICON_X, 2.2, XR_ICON_SIZE);
 
 const controllerHelpXrButton = new THREE.Mesh(
-  new THREE.PlaneGeometry(0.34, 0.12),
+  new THREE.PlaneGeometry(XR_BUTTON_W, XR_BUTTON_H),
   new THREE.MeshBasicMaterial({
-    map: makeButtonTexture("操作HELP", "rgba(120,104,22,0.95)"),
+    map: makeButtonTexture("操作HELP", "rgba(122,255,167,0.95)"),
     transparent: true,
     depthTest: false,
     side: THREE.DoubleSide,
   })
 );
-controllerHelpXrButton.position.set(0, 2.4, -0.5);
+controllerHelpXrButton.position.set(XR_BUTTON_X, 2.4, XR_BUTTON_Z);
 controllerHelpXrButton.renderOrder = 999;
 controllerHelpXrButton.visible = false;
 scene.add(controllerHelpXrButton);
@@ -4175,7 +4119,7 @@ function updateXrButtonIcons(dt) {
   for (let i = 0; i < xrButtonIcons.length; i += 1) {
     const icon = xrButtonIcons[i];
     if (!icon.visible) continue;
-    icon.rotation.z += dt * XR_ICON_SPIN * (i % 2 === 0 ? 1 : -1);
+    icon.rotation.y += dt * XR_ICON_SPIN * (i % 2 === 0 ? 1 : -1);
   }
 }
 
