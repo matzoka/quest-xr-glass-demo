@@ -3731,6 +3731,11 @@ const saturnBall = new THREE.Mesh(
   saturnLighting.material
 );
 saturnGroup.add(saturnBall);
+const saturnRingLightingUniforms = {
+  uSunDirWorld: { value: new THREE.Vector3(1, 0, 0) },
+  uSaturnCenterWorld: { value: new THREE.Vector3() },
+  uSaturnRadius: { value: SATURN_R },
+};
 
 function saturnRingDensity(t) {
   const innerFade = THREE.MathUtils.smoothstep(t, 0.02, 0.1);
@@ -3747,8 +3752,8 @@ function saturnRingDensity(t) {
 function makeSaturnRingBandTexture() {
   const rand = seededRandom(91027);
   const canvas = document.createElement("canvas");
-  canvas.width = 2048;
-  canvas.height = 96;
+  canvas.width = 4096;
+  canvas.height = 160;
   const ctx = canvas.getContext("2d");
   const img = ctx.createImageData(canvas.width, canvas.height);
   for (let x = 0; x < canvas.width; x += 1) {
@@ -3758,9 +3763,9 @@ function makeSaturnRingBandTexture() {
     for (let y = 0; y < canvas.height; y += 1) {
       const edge = Math.abs((y + 0.5) / canvas.height - 0.5);
       const verticalFade = 1 - THREE.MathUtils.smoothstep(edge, 0.36, 0.5);
-      const grain = 0.68 + rand() * 0.56;
-      const sparkle = rand() > 0.983 ? 0.34 + rand() * 0.42 : 0;
-      const alpha = THREE.MathUtils.clamp((density * verticalFade * grain + sparkle * density) * 210, 0, 230);
+      const grain = 0.58 + rand() * 0.78;
+      const microGap = rand() > 0.985 ? 0.34 + rand() * 0.34 : 1;
+      const alpha = THREE.MathUtils.clamp(density * verticalFade * grain * microGap * 178, 0, 210);
       const i = (y * canvas.width + x) * 4;
       img.data[i + 0] = Math.round(178 + 42 * warm + rand() * 14);
       img.data[i + 1] = Math.round(160 + 38 * warm + rand() * 12);
@@ -3772,25 +3777,109 @@ function makeSaturnRingBandTexture() {
   const tex = new THREE.CanvasTexture(canvas);
   tex.colorSpace = THREE.SRGBColorSpace;
   tex.anisotropy = maxAnisotropy;
+  tex.generateMipmaps = false;
+  tex.minFilter = THREE.NearestFilter;
+  tex.magFilter = THREE.NearestFilter;
   tex.wrapS = THREE.ClampToEdgeWrapping;
   tex.wrapT = THREE.ClampToEdgeWrapping;
   return tex;
 }
 
-function makeSaturnRingParticleTexture() {
-  const canvas = document.createElement("canvas");
-  canvas.width = 32;
-  canvas.height = 32;
-  const ctx = canvas.getContext("2d");
-  const g = ctx.createRadialGradient(16, 16, 0, 16, 16, 16);
-  g.addColorStop(0, "rgba(255,246,224,1)");
-  g.addColorStop(0.42, "rgba(238,216,176,0.78)");
-  g.addColorStop(1, "rgba(190,160,110,0)");
-  ctx.fillStyle = g;
-  ctx.fillRect(0, 0, 32, 32);
-  const tex = new THREE.CanvasTexture(canvas);
-  tex.colorSpace = THREE.SRGBColorSpace;
-  return tex;
+const SATURN_RING_SHADE_GLSL = `
+float ringLight(vec3 worldPos){
+  vec3 rel=worldPos-uSaturnCenterWorld;
+  vec3 radial=normalize(rel);
+  float day=smoothstep(-0.32,0.68,dot(radial,normalize(uSunDirWorld)));
+  return mix(0.28,1.0,day);
+}
+float saturnBodyShadow(vec3 worldPos){
+  vec3 rel=worldPos-uSaturnCenterWorld;
+  float along=dot(rel,normalize(uSunDirWorld));
+  float behind=smoothstep(0.10*uSaturnRadius,-0.08*uSaturnRadius,along);
+  vec3 axis=normalize(uSunDirWorld)*along;
+  float dist=length(rel-axis);
+  float blocked=1.0-smoothstep(uSaturnRadius*0.88,uSaturnRadius*1.08,dist);
+  return behind*blocked;
+}`;
+
+function makeSaturnRingBandMaterial(texture) {
+  return new THREE.ShaderMaterial({
+    uniforms: {
+      uTex: { value: texture },
+      ...saturnRingLightingUniforms,
+    },
+    vertexShader: `
+varying vec2 vUv;
+varying vec3 vWorldPos;
+void main(){
+  vUv=uv;
+  vec4 worldPos=modelMatrix*vec4(position,1.0);
+  vWorldPos=worldPos.xyz;
+  gl_Position=projectionMatrix*viewMatrix*worldPos;
+}`,
+    fragmentShader: `
+precision mediump float;
+uniform sampler2D uTex;
+uniform vec3 uSunDirWorld;
+uniform vec3 uSaturnCenterWorld;
+uniform float uSaturnRadius;
+varying vec2 vUv;
+varying vec3 vWorldPos;
+${SATURN_RING_SHADE_GLSL}
+void main(){
+  vec4 tex=texture2D(uTex,vUv);
+  if(tex.a<0.012) discard;
+  float light=ringLight(vWorldPos);
+  float shadow=saturnBodyShadow(vWorldPos);
+  vec3 color=tex.rgb*light*mix(1.0,0.16,shadow);
+  float alpha=tex.a*(0.50+0.18*light)*mix(1.0,0.42,shadow);
+  gl_FragColor=vec4(color,alpha);
+}`,
+    transparent: true,
+    side: THREE.DoubleSide,
+    depthWrite: false,
+  });
+}
+
+function makeSaturnRingParticleMaterial() {
+  return new THREE.ShaderMaterial({
+    uniforms: {
+      uPointSizePx: { value: 3.0 },
+      ...saturnRingLightingUniforms,
+    },
+    vertexShader: `
+attribute vec3 color;
+uniform float uPointSizePx;
+varying vec3 vColor;
+varying vec3 vWorldPos;
+void main(){
+  vColor=color;
+  vec4 worldPos=modelMatrix*vec4(position,1.0);
+  vWorldPos=worldPos.xyz;
+  gl_Position=projectionMatrix*viewMatrix*worldPos;
+  gl_PointSize=uPointSizePx;
+}`,
+    fragmentShader: `
+precision mediump float;
+uniform vec3 uSunDirWorld;
+uniform vec3 uSaturnCenterWorld;
+uniform float uSaturnRadius;
+varying vec3 vColor;
+varying vec3 vWorldPos;
+${SATURN_RING_SHADE_GLSL}
+void main(){
+  vec2 p=gl_PointCoord-vec2(0.5);
+  if(dot(p,p)>0.24) discard;
+  float light=ringLight(vWorldPos);
+  float shadow=saturnBodyShadow(vWorldPos);
+  vec3 color=vColor*(0.86+0.42*light)*mix(1.0,0.14,shadow);
+  float alpha=(0.92+0.08*light)*mix(1.0,0.34,shadow);
+  gl_FragColor=vec4(color,alpha);
+}`,
+    transparent: true,
+    depthWrite: false,
+    vertexColors: true,
+  });
 }
 
 function makeSaturnRingParticles(innerRadius, outerRadius, count) {
@@ -3805,27 +3894,18 @@ function makeSaturnRingParticles(innerRadius, outerRadius, count) {
     }
     const radius = innerRadius + span * t + (rand() - 0.5) * span * 0.006;
     const angle = rand() * Math.PI * 2;
-    const vertical = (rand() - 0.5) * SATURN_R * 0.018;
+    const vertical = (rand() - 0.5) * SATURN_R * 0.008;
     positions.push(Math.cos(angle) * radius, vertical, Math.sin(angle) * radius);
     const density = saturnRingDensity(t);
-    const brightness = (0.46 + density * 0.46) * (0.7 + rand() * 0.45);
-    colors.push(1.0 * brightness, 0.88 * brightness, 0.62 * brightness);
+    const brightness = (0.5 + density * 0.34) * (0.74 + rand() * 0.28);
+    colors.push(0.9 * brightness, 0.78 * brightness, 0.58 * brightness);
   }
   const geo = new THREE.BufferGeometry();
   geo.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
   geo.setAttribute("color", new THREE.Float32BufferAttribute(colors, 3));
   return new THREE.Points(
     geo,
-    new THREE.PointsMaterial({
-      map: makeSaturnRingParticleTexture(),
-      size: SATURN_R * 0.035,
-      sizeAttenuation: true,
-      transparent: true,
-      opacity: 0.72,
-      vertexColors: true,
-      depthWrite: false,
-      blending: THREE.AdditiveBlending,
-    })
+    makeSaturnRingParticleMaterial()
   );
 }
 
@@ -3843,17 +3923,13 @@ for (let i = 0; i < rpos.count; i += 1) {
 }
 const saturnRing = new THREE.Mesh(
   ringGeo,
-  new THREE.MeshBasicMaterial({
-    map: makeSaturnRingBandTexture(),
-    transparent: true,
-    opacity: 0.9,
-    side: THREE.DoubleSide,
-    depthWrite: false,
-  })
+  makeSaturnRingBandMaterial(makeSaturnRingBandTexture())
 );
 saturnRing.rotation.x = -Math.PI / 2; // lay flat in the equatorial plane
+saturnRing.renderOrder = 2;
 saturnGroup.add(saturnRing);
-const saturnRingParticles = makeSaturnRingParticles(saturnRingInner, saturnRingOuter, 9000);
+const saturnRingParticles = makeSaturnRingParticles(saturnRingInner, saturnRingOuter, 120000);
+saturnRingParticles.renderOrder = 3;
 saturnGroup.add(saturnRingParticles);
 
 // ---------------------------------------------------------------------------
@@ -4013,6 +4089,11 @@ addPlanetMoonSystem(
 function updatePlanetLighting() {
   sunMesh.getWorldPosition(planetSunWorld);
   saturnBall.updateWorldMatrix(true, false);
+  saturnBall.getWorldPosition(saturnRingLightingUniforms.uSaturnCenterWorld.value);
+  saturnRingLightingUniforms.uSunDirWorld.value
+    .copy(planetSunWorld)
+    .sub(saturnRingLightingUniforms.uSaturnCenterWorld.value)
+    .normalize();
   planetSunLocal.copy(planetSunWorld);
   saturnBall.worldToLocal(planetSunLocal);
   planetSunLocal.normalize();

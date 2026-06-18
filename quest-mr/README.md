@@ -9,7 +9,7 @@
 1024pxテクスチャとして貼り、太陽方向に合わせた昼夜の陰影も出しています。太陽ではフレア、
 プロミネンス、黒点が一定期間だけ発生します。
 土星リングは、単純な板ではなく、Canvasで生成した濃淡の帯・隙間・微細な粒子ノイズと、
-Three.jsのPoints粒子を重ねて表示します。
+非発光のThree.js Points粒子を重ねて表示します。リングと粒子には太陽方向の明暗と土星本体の影も入ります。
 
 USS Enterprise風の宇宙船は地球の部屋枠を通過した後、何もない宇宙空間へ向けてワープし、
 ワープ音の終わりに船体・航跡・前方スパークが同時に消えます。低確率では地球近くを周回する
@@ -77,7 +77,7 @@ Quest の AR / VR セッションは **HTTPS（セキュアコンテキスト）
 - `assets/moon_1024.jpg` … 月テクスチャ（同上）
 - `assets/2k_sun.jpg` … 太陽テクスチャ
 - `assets/2k_mars.jpg` / `assets/2k_venus_atmosphere.jpg` / `assets/2k_jupiter.jpg` … 火星・金星・木星テクスチャ
-- `assets/2k_saturn.jpg` … 土星本体テクスチャ。リングの濃淡と粒子感は `app.js` 内でCanvasTextureとPointsとして生成します。
+- `assets/2k_saturn.jpg` … 土星本体テクスチャ。リングの濃淡、微細粒子、太陽方向の陰影は `app.js` 内でCanvasTexture、Points、ShaderMaterialとして生成します。
 - `assets/moon_io_1024.jpg` / `assets/moon_europa_1024.jpg` / `assets/moon_ganymede_1024.jpg` / `assets/moon_callisto_1024.jpg` … 木星のガリレオ衛星用テクスチャ
 - `assets/moon_titan_1024.jpg` / `assets/moon_rhea_1024.jpg` / `assets/moon_dione_1024.jpg` / `assets/moon_enceladus_1024.jpg` … 土星の小衛星用テクスチャ
 - `assets/NCC-1701/` … Enterprise風宇宙船のOBJ / MTLモデルとテクスチャ一式
