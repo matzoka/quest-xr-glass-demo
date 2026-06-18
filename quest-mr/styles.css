@@ -110,6 +110,11 @@ p {
   background: #10291f;
 }
 
+.actionButton.demo.blackHole {
+  border-color: rgba(255, 188, 105, 0.44);
+  background: #2a1a0d;
+}
+
 .actionButton:disabled {
   cursor: default;
   opacity: 0.72;

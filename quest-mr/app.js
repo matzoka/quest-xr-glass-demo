@@ -8,6 +8,7 @@ const vrButton = document.querySelector("#vrButton");
 const arButton = document.querySelector("#arButton");
 const enterpriseOrbitButton = document.querySelector("#enterpriseOrbitButton");
 const klingonButton = document.querySelector("#klingonButton");
+const blackHoleTourButton = document.querySelector("#blackHoleTourButton");
 const poseDebugOutputEl = document.querySelector("#poseDebugOutput");
 const DEBUG_TOP_VIEW = new URLSearchParams(window.location.search).has("topDebug");
 const DEBUG_TOP_VIEW_DISTANCE = Number(new URLSearchParams(window.location.search).get("topDebugDist"));
@@ -2824,6 +2825,7 @@ async function enterXr(mode) {
       resetButton.visible = false;
       enterpriseOrbitXrButton.visible = false;
       klingonXrButton.visible = false;
+      blackHoleTourXrButton.visible = false;
       poseDebugXrButton.visible = false;
       poseDebugXrHitArea.visible = false;
       poseDebugXrPanel.visible = false;
@@ -2853,6 +2855,7 @@ async function enterXr(mode) {
     resetButton.visible = true; // show the in-XR Exit / Reset buttons
     enterpriseOrbitXrButton.visible = true;
     klingonXrButton.visible = true;
+    blackHoleTourXrButton.visible = true;
     poseDebugXrButton.visible = DEBUG_POSE_CAPTURE;
     poseDebugXrHitArea.visible = DEBUG_POSE_CAPTURE;
     poseDebugXrPanel.visible = DEBUG_POSE_CAPTURE;
@@ -2885,6 +2888,7 @@ arButton?.addEventListener("click", () => {
 
 enterpriseOrbitButton?.addEventListener("click", requestEnterpriseRareOrbit);
 klingonButton?.addEventListener("click", requestKlingonPass);
+blackHoleTourButton?.addEventListener("click", teleportToBlackHoleTour);
 
 updateXrAvailability();
 
@@ -3633,6 +3637,20 @@ klingonXrButton.renderOrder = 999;
 klingonXrButton.visible = false;
 scene.add(klingonXrButton);
 
+const blackHoleTourXrButton = new THREE.Mesh(
+  new THREE.PlaneGeometry(0.56, 0.15),
+  new THREE.MeshBasicMaterial({
+    map: makeButtonTexture("ブラックホール探訪", "rgba(130,72,18,0.95)"),
+    transparent: true,
+    depthTest: false,
+    side: THREE.DoubleSide,
+  })
+);
+blackHoleTourXrButton.position.set(0, 2.2, -0.5);
+blackHoleTourXrButton.renderOrder = 999;
+blackHoleTourXrButton.visible = false;
+scene.add(blackHoleTourXrButton);
+
 const poseDebugXrButton = new THREE.Mesh(
   new THREE.PlaneGeometry(0.56, 0.2),
   new THREE.MeshBasicMaterial({
@@ -3642,7 +3660,7 @@ const poseDebugXrButton = new THREE.Mesh(
     side: THREE.DoubleSide,
   })
 );
-poseDebugXrButton.position.set(0, 2.2, -0.5);
+poseDebugXrButton.position.set(0, 2.4, -0.5);
 poseDebugXrButton.renderOrder = 999;
 poseDebugXrButton.visible = false;
 scene.add(poseDebugXrButton);
@@ -3657,7 +3675,7 @@ const poseDebugXrHitArea = new THREE.Mesh(
     side: THREE.DoubleSide,
   })
 );
-poseDebugXrHitArea.position.set(0, 2.2, -0.5);
+poseDebugXrHitArea.position.set(0, 2.4, -0.5);
 poseDebugXrHitArea.renderOrder = 1000;
 poseDebugXrHitArea.visible = false;
 scene.add(poseDebugXrHitArea);
@@ -3714,7 +3732,7 @@ for (let index = 0; index < 2; index += 1) {
       tempMatrix.identity().extractRotation(controller.matrixWorld);
       raycaster.ray.origin.setFromMatrixPosition(controller.matrixWorld);
       raycaster.ray.direction.set(0, 0, -1).applyMatrix4(tempMatrix);
-      const uiTargets = [exitButton, resetButton, enterpriseOrbitXrButton, klingonXrButton];
+      const uiTargets = [exitButton, resetButton, enterpriseOrbitXrButton, klingonXrButton, blackHoleTourXrButton];
       if (poseDebugXrButton.visible) uiTargets.push(poseDebugXrHitArea, poseDebugXrButton);
       const uiHit = raycaster.intersectObjects(uiTargets)[0];
       if (uiHit) {
@@ -3722,6 +3740,7 @@ for (let index = 0; index < 2; index += 1) {
         else if (uiHit.object === resetButton) resetBall();
         else if (uiHit.object === enterpriseOrbitXrButton) requestEnterpriseRareOrbit();
         else if (uiHit.object === klingonXrButton) requestKlingonPass();
+        else if (uiHit.object === blackHoleTourXrButton) teleportToBlackHoleTour();
         else if (uiHit.object === poseDebugXrButton || uiHit.object === poseDebugXrHitArea) capturePoseDebugUrl();
         return;
       }
@@ -5049,6 +5068,7 @@ const BLACK_HOLE_DISK_SPIN = 1.65;
 const BLACK_HOLE_PARTICLE_SPIN = 3.35;
 const BLACK_HOLE_TUNNEL_SPIN = 3.1;
 const BLACK_HOLE_LENS_PLANE_SCALE = 4.0;
+const BLACK_HOLE_TOUR_START_EDGE = 1.015;
 const blackHoleGroup = new THREE.Group();
 blackHoleGroup.position.copy(BLACK_HOLE_POSITION);
 scene.add(blackHoleGroup);
@@ -5267,6 +5287,8 @@ blackHoleTunnel.add(blackHoleVeil);
 
 const blackHoleTmp = new THREE.Vector3();
 const blackHoleLookDir = new THREE.Vector3();
+const blackHoleTourTarget = new THREE.Vector3();
+const blackHoleTourDelta = new THREE.Vector3();
 let blackHoleFallActive = false;
 let blackHoleFallT = 0;
 let blackHoleCooldown = 0;
@@ -5289,6 +5311,40 @@ function finishBlackHoleFall() {
   blackHoleVeil.material.opacity = 0;
   if (renderer.xr.isPresenting) resetToHome();
   statusEl.textContent = "ブラックホールから安全な観測位置へ復帰しました。";
+}
+
+function getBlackHoleTourTarget(out) {
+  blackHoleTmp.copy(BLACK_HOLE_POSITION).sub(roomCenter);
+  if (blackHoleTmp.lengthSq() < 1e-6) blackHoleTmp.set(0, 0, -1);
+  blackHoleTmp.normalize();
+  return out.copy(BLACK_HOLE_POSITION).addScaledVector(blackHoleTmp, -BLACK_HOLE_SOUND_START_R * BLACK_HOLE_TOUR_START_EDGE);
+}
+
+function teleportToBlackHoleTour() {
+  initAudio();
+  if (audioContext?.state === "suspended") audioContext.resume();
+  if (!blackHoleBuffer && !blackHoleBufferPromise && !blackHoleBufferTried) loadBlackHoleBuffer();
+
+  blackHoleFallActive = false;
+  blackHoleFallT = 0;
+  blackHoleCooldown = 0;
+  blackHoleTunnel.visible = false;
+  blackHoleTunnelLines.material.opacity = 0;
+  blackHoleVeil.material.opacity = 0;
+
+  getBlackHoleTourTarget(blackHoleTourTarget);
+  if (renderer.xr.isPresenting && xrBaseRefSpace) {
+    getViewerPose(viewerWorld);
+    blackHoleTourDelta.copy(blackHoleTourTarget).sub(viewerWorld);
+    locomotion.add(blackHoleTourDelta);
+    applyXrLocomotionOffset();
+  } else {
+    camera.up.set(0, 1, 0);
+    camera.position.copy(blackHoleTourTarget);
+    camera.lookAt(BLACK_HOLE_POSITION);
+  }
+
+  statusEl.textContent = "ブラックホール探訪地点へ移動しました。少し中心へ進むと低音が立ち上がります。";
 }
 
 function updateBlackHole(dt, timeSeconds) {
