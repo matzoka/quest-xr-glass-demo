@@ -55,7 +55,7 @@ scene.environment = pmrem.fromScene(new RoomEnvironment(renderer), 0.04).texture
 // ---------------------------------------------------------------------------
 const roomCenter = new THREE.Vector3(0, 2.2, -2.2); // world position of the box center
 const roomHalf = new THREE.Vector3(4.5, 2.2, 4.5); // half extents (box is 9 x 4.4 x 9 m)
-const BLACK_HOLE_POSITION = new THREE.Vector3(24, 11, -48);
+const BLACK_HOLE_POSITION = new THREE.Vector3(144, 55, -277);
 let ballRadius = 0.36; // set from the Earth radius below
 const collisionHalf = new THREE.Vector3(); // roomHalf - ballRadius, per axis
 
@@ -5043,7 +5043,12 @@ const BLACK_HOLE_TRIGGER_R = BLACK_HOLE_HORIZON_R * 1.08;
 const BLACK_HOLE_RETURN_COOLDOWN = 5.0;
 const BLACK_HOLE_SOUND_START_R = BLACK_HOLE_PULL_R * 3.3;
 const BLACK_HOLE_SOUND_FULL_R = BLACK_HOLE_PULL_R * 0.9;
-const BLACK_HOLE_SOUND_MAX_GAIN = 0.18;
+const BLACK_HOLE_SOUND_MAX_GAIN = 1.0;
+const BLACK_HOLE_SHADER_TIME_SCALE = 2.85;
+const BLACK_HOLE_DISK_SPIN = 1.65;
+const BLACK_HOLE_PARTICLE_SPIN = 3.35;
+const BLACK_HOLE_TUNNEL_SPIN = 3.1;
+const BLACK_HOLE_LENS_PLANE_SCALE = 4.0;
 const blackHoleGroup = new THREE.Group();
 blackHoleGroup.position.copy(BLACK_HOLE_POSITION);
 scene.add(blackHoleGroup);
@@ -5093,44 +5098,49 @@ void main(){
   float a=atan(vLocalPos.y,vLocalPos.x);
   float edge=smoothstep(0.0,0.08,t)*(1.0-smoothstep(0.88,1.0,t));
   float inner=1.0-smoothstep(0.02,0.42,t);
-  float bands=0.55+0.45*sin(t*74.0+a*5.0-uTime*1.4);
-  bands*=0.72+0.28*sin(t*151.0-a*2.3+uTime*0.8);
-  float dust=fbm(vec2(a*5.8+uTime*0.035,t*32.0-uTime*0.12));
-  float lane=fbm(vec2(a*2.4-uTime*0.02,t*11.0+3.7));
-  bands*=0.72+0.34*dust;
-  float doppler=0.72+0.28*smoothstep(-0.35,0.88,sin(a-0.42));
+  float shear=a-uTime*(2.2-1.35*t);
+  float bands=0.48+0.52*sin(t*86.0+shear*7.2);
+  bands*=0.62+0.38*sin(t*178.0-shear*3.1+uTime*1.45);
+  float dust=fbm(vec2(shear*7.4+uTime*0.08,t*38.0-uTime*0.34));
+  float lane=fbm(vec2(shear*3.1-uTime*0.16,t*14.0+3.7));
+  bands*=0.64+0.48*dust;
+  float doppler=0.58+0.58*smoothstep(-0.42,0.92,sin(a-0.42));
   float hotLane=exp(-pow((t-0.105)/0.065,2.0));
-  float alpha=edge*(0.18+0.58*bands+0.2*dust)*(0.58+inner*1.65+hotLane*1.35)*doppler*(0.76+0.28*lane);
+  float pulse=0.92+0.18*sin(uTime*3.4+a*4.0);
+  float alpha=edge*(0.2+0.68*bands+0.25*dust)*(0.66+inner*2.0+hotLane*1.75)*doppler*(0.72+0.38*lane)*pulse;
   vec3 hot=vec3(1.0,0.92,0.76);
   vec3 amber=vec3(1.0,0.46,0.12);
   vec3 ember=vec3(0.65,0.12,0.035);
   vec3 col=mix(amber,hot,inner*0.98+hotLane*0.82+smoothstep(0.62,1.0,bands)*0.35);
   col=mix(col,ember,smoothstep(0.52,1.0,t)*0.55);
-  col*=0.95+inner*2.15+hotLane*2.7+dust*0.24;
+  col*=1.08+inner*2.85+hotLane*3.4+dust*0.32;
   if(alpha<0.004) discard;
   gl_FragColor=vec4(col,alpha);
 }`;
 
 const BLACK_HOLE_LENS_FRAG = `
 uniform float uTime;
+uniform float uPlaneScale;
 varying vec2 vUv;
 float ring(float r,float target,float width){
   return exp(-pow((r-target)/width,2.0));
 }
 void main(){
-  vec2 p=(vUv-0.5)*2.0;
+  vec2 p=(vUv-0.5)*2.0*uPlaneScale;
   float r=length(p);
   float angle=atan(p.y,p.x);
   float horizon=1.0-smoothstep(0.28,0.34,r);
-  float photon=ring(r,0.42,0.022)*(0.88+0.12*sin(angle*9.0+uTime*0.45));
-  float outer=ring(r,0.66,0.018)*(0.58+0.42*smoothstep(-0.25,0.85,p.x));
-  float upper=ring(length(vec2((p.x+0.12)*0.72,(p.y-0.3)*1.7)),0.62,0.054)*smoothstep(-0.04,0.44,p.y);
-  float lower=ring(length(vec2((p.x-0.05)*0.78,(p.y+0.32)*1.58)),0.62,0.07)*(1.0-smoothstep(-0.5,0.12,p.y));
-  float lens=photon*1.45+outer*1.1+upper*1.02+lower*0.72;
+  float spin=angle-uTime*1.15;
+  float photon=ring(r,0.42,0.019)*(0.76+0.24*sin(spin*13.0));
+  float outer=ring(r,0.66,0.015)*(0.48+0.62*smoothstep(-0.32,0.88,p.x));
+  float upper=ring(length(vec2((p.x+0.12)*0.72,(p.y-0.3)*1.7)),0.62,0.052)*smoothstep(-0.04,0.44,p.y);
+  float lower=ring(length(vec2((p.x-0.05)*0.78,(p.y+0.32)*1.58)),0.62,0.068)*(1.0-smoothstep(-0.5,0.12,p.y));
+  float flare=ring(r,0.50,0.038)*smoothstep(0.1,0.95,sin(spin*5.0+uTime*0.7))*0.28;
+  float lens=photon*1.8+outer*1.38+upper*1.18+lower*0.8+flare;
   vec3 white=vec3(1.0,0.94,0.82);
   vec3 orange=vec3(1.0,0.46,0.12);
   vec3 col=mix(orange,white,photon*0.96+outer*0.82+upper*0.45);
-  float alpha=clamp(lens,0.0,1.0)*(1.0-horizon)*0.96;
+  float alpha=clamp(lens,0.0,1.0)*(1.0-horizon)*1.0;
   if(alpha<0.004) discard;
   gl_FragColor=vec4(col,alpha);
 }`;
@@ -5159,7 +5169,10 @@ blackHoleDisk.renderOrder = 5;
 blackHoleGroup.add(blackHoleDisk);
 
 const blackHoleLensMaterial = new THREE.ShaderMaterial({
-  uniforms: { uTime: { value: 0 } },
+  uniforms: {
+    uTime: { value: 0 },
+    uPlaneScale: { value: BLACK_HOLE_LENS_PLANE_SCALE },
+  },
   vertexShader: `
 varying vec2 vUv;
 void main(){
@@ -5174,7 +5187,10 @@ void main(){
   toneMapped: false,
 });
 const blackHoleLens = new THREE.Mesh(
-  new THREE.PlaneGeometry(BLACK_HOLE_DISK_OUTER * 1.35, BLACK_HOLE_DISK_OUTER * 1.0),
+  new THREE.PlaneGeometry(
+    BLACK_HOLE_DISK_OUTER * 1.35 * BLACK_HOLE_LENS_PLANE_SCALE,
+    BLACK_HOLE_DISK_OUTER * 1.0 * BLACK_HOLE_LENS_PLANE_SCALE
+  ),
   blackHoleLensMaterial
 );
 blackHoleLens.renderOrder = 7;
@@ -5190,7 +5206,7 @@ blackHoleGroup.add(blackHoleCore);
 const blackHoleParticlePositions = [];
 const blackHoleParticleColors = [];
 const blackHoleParticleRand = seededRandom(992313);
-for (let i = 0; i < 420; i += 1) {
+for (let i = 0; i < 920; i += 1) {
   const r = BLACK_HOLE_DISK_INNER * 1.04 + Math.pow(blackHoleParticleRand(), 1.6) * (BLACK_HOLE_DISK_OUTER * 0.82 - BLACK_HOLE_DISK_INNER);
   const a = blackHoleParticleRand() * Math.PI * 2;
   const y = (blackHoleParticleRand() - 0.5) * BLACK_HOLE_HORIZON_R * 0.1;
@@ -5204,10 +5220,10 @@ blackHoleParticleGeo.setAttribute("color", new THREE.Float32BufferAttribute(blac
 const blackHoleParticles = new THREE.Points(
   blackHoleParticleGeo,
   new THREE.PointsMaterial({
-    size: 2.2,
+    size: 2.6,
     sizeAttenuation: false,
     transparent: true,
-    opacity: 0.72,
+    opacity: 0.9,
     depthWrite: false,
     vertexColors: true,
     blending: THREE.AdditiveBlending,
@@ -5276,9 +5292,11 @@ function finishBlackHoleFall() {
 }
 
 function updateBlackHole(dt, timeSeconds) {
-  blackHoleDiskMaterial.uniforms.uTime.value = timeSeconds;
-  blackHoleLensMaterial.uniforms.uTime.value = timeSeconds;
-  blackHoleParticles.rotation.z += dt * 0.16;
+  const blackHoleTime = timeSeconds * BLACK_HOLE_SHADER_TIME_SCALE;
+  blackHoleDiskMaterial.uniforms.uTime.value = blackHoleTime;
+  blackHoleLensMaterial.uniforms.uTime.value = blackHoleTime;
+  blackHoleDisk.rotation.z += dt * BLACK_HOLE_DISK_SPIN;
+  blackHoleParticles.rotation.z += dt * BLACK_HOLE_PARTICLE_SPIN;
 
   getViewerPose(viewerWorld);
   blackHoleTmp.copy(viewerWorld).sub(BLACK_HOLE_POSITION);
@@ -5310,12 +5328,12 @@ function updateBlackHole(dt, timeSeconds) {
   blackHoleTunnel.visible = true;
   blackHoleTunnel.position.copy(viewerWorld).addScaledVector(viewerForward, 1.2);
   blackHoleTunnel.quaternion.copy(cam.quaternion);
-  blackHoleTunnel.rotation.z += timeSeconds * (1.8 + p * 5.6);
-  blackHoleTunnel.scale.setScalar(0.88 + p * 0.7);
+  blackHoleTunnel.rotation.z += timeSeconds * (BLACK_HOLE_TUNNEL_SPIN + p * 8.8);
+  blackHoleTunnel.scale.setScalar(0.94 + p * 0.96);
   blackHoleLookDir.copy(BLACK_HOLE_POSITION).sub(viewerWorld);
   const facingBlackHole = blackHoleLookDir.lengthSq() > 1e-6 ? viewerForward.dot(blackHoleLookDir.normalize()) : 1;
   const forwardFade = smoothFade01((facingBlackHole + 0.08) / 0.48);
-  blackHoleTunnelLines.material.opacity = THREE.MathUtils.lerp(0.18, 0.9, smoothFade01(Math.min(1, p * 1.4))) * forwardFade;
+  blackHoleTunnelLines.material.opacity = THREE.MathUtils.lerp(0.22, 1.0, smoothFade01(Math.min(1, p * 1.55))) * forwardFade;
   blackHoleVeil.material.opacity = smoothFade01((p - 0.62) / 0.32) * 0.96 * forwardFade;
 
   if (renderer.xr.isPresenting && xrBaseRefSpace) {
@@ -5323,7 +5341,7 @@ function updateBlackHole(dt, timeSeconds) {
     const pullDistance = blackHoleTmp.length();
     if (pullDistance > 0.02) {
       blackHoleTmp.normalize();
-      locomotion.addScaledVector(blackHoleTmp, dt * THREE.MathUtils.lerp(1.1, 5.0, p));
+      locomotion.addScaledVector(blackHoleTmp, dt * THREE.MathUtils.lerp(1.45, 6.8, p));
       applyXrLocomotionOffset();
     }
   }
