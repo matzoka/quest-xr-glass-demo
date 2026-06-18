@@ -3937,7 +3937,7 @@ function updatePoseDebugButton() {
     .copy(viewerWorld)
     .addScaledVector(poseDebugButtonForward, 0.62)
     .addScaledVector(poseDebugButtonRight, -0.28)
-    .addScaledVector(poseDebugButtonUp, -0.3);
+    .addScaledVector(poseDebugButtonUp, -0.62);
   poseDebugXrHitArea.position.copy(poseDebugXrButton.position);
   poseDebugXrPanel.position
     .copy(viewerWorld)
