@@ -11,6 +11,12 @@ https://matzoka.github.io/quest-xr-glass-demo/
 
 https://matzoka.github.io/quest-xr-glass-demo/quest-mr/
 
+## Reference Video
+
+Meta Quest 3 の VR で動かしたときの参考動画です。宇宙空間、操作パネル、ブラックホール探訪、惑星・宇宙船演出の雰囲気を確認できます。
+
+[MyEarth.mp4](https://github.com/matzoka/quest-xr-glass-demo/releases/download/my-earth-vr-reference-2026-06-19/MyEarth.mp4)
+
 ## Screenshots
 
 以下は現在のアプリから撮影した実際のスクリーンショットです。PCプレビューで撮影しているため、デスクトップブラウザではWebXRボタンが `unavailable` と表示されますが、Quest BrowserでHTTPS URLを開くとVR / ARセッションを開始できます。
