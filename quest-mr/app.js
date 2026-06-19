@@ -13,7 +13,7 @@ const klingonButton = document.querySelector("#klingonButton");
 const blackHoleTourButton = document.querySelector("#blackHoleTourButton");
 const controllerHelpButton = document.querySelector("#controllerHelpButton");
 const poseDebugOutputEl = document.querySelector("#poseDebugOutput");
-const APP_VERSION = "v2026.06.19.28";
+const APP_VERSION = "v2026.06.19.29";
 const DEBUG_TOP_VIEW = new URLSearchParams(window.location.search).has("topDebug");
 const DEBUG_TOP_VIEW_DISTANCE = Number(new URLSearchParams(window.location.search).get("topDebugDist"));
 const DEBUG_BLACK_HOLE_VIEW = new URLSearchParams(window.location.search).has("blackHoleDebug");
@@ -3603,6 +3603,7 @@ const APPROVED_XR_ICON_URLS = {
   help: "./assets/icon-help-b.png",
 };
 const WELCOME_HOST_ICON_URL = "./assets/welcome-host-matzoka.png";
+const X_PROFILE_SNAPSHOT_URL = "./assets/x-matzoka-profile-shot.png";
 const RAW_APPROVED_ASSET_BASE = "https://raw.githubusercontent.com/matzoka/quest-xr-glass-demo/master/quest-mr/assets/";
 
 function loadApprovedAssetTexture(localUrl, fileName) {
@@ -3620,6 +3621,15 @@ function loadApprovedAssetTexture(localUrl, fileName) {
 function loadApprovedXrIconTexture(kind) {
   const localUrl = APPROVED_XR_ICON_URLS[kind];
   return loadApprovedAssetTexture(localUrl, localUrl.split("/").pop());
+}
+
+function loadXProfileSnapshotTexture() {
+  const tex = loadApprovedAssetTexture(X_PROFILE_SNAPSHOT_URL, "x-matzoka-profile-shot.png");
+  tex.wrapS = THREE.ClampToEdgeWrapping;
+  tex.wrapT = THREE.ClampToEdgeWrapping;
+  tex.offset.set(163 / 1200, 0);
+  tex.repeat.set(599 / 1200, 1);
+  return tex;
 }
 
 const XR_ICON_SPIN = 1.35;
@@ -4066,6 +4076,81 @@ function loadControllerHelpDTexture() {
   return loadApprovedAssetTexture("./assets/controller-help-panel-d.png", "controller-help-panel-d.png");
 }
 
+function makeXBrowserFrameTexture() {
+  const c = document.createElement("canvas");
+  c.width = 1152;
+  c.height = 1560;
+  const ctx = c.getContext("2d");
+
+  ctx.clearRect(0, 0, c.width, c.height);
+  const bg = ctx.createLinearGradient(0, 0, c.width, c.height);
+  bg.addColorStop(0, "rgba(6,15,22,0.95)");
+  bg.addColorStop(0.58, "rgba(3,8,14,0.94)");
+  bg.addColorStop(1, "rgba(7,20,23,0.96)");
+  ctx.fillStyle = bg;
+  ctx.beginPath();
+  ctx.roundRect(20, 20, c.width - 40, c.height - 40, 34);
+  ctx.fill();
+
+  ctx.strokeStyle = "rgba(125,239,255,0.58)";
+  ctx.lineWidth = 7;
+  ctx.beginPath();
+  ctx.roundRect(22, 22, c.width - 44, c.height - 44, 34);
+  ctx.stroke();
+  ctx.strokeStyle = "rgba(122,255,167,0.34)";
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  ctx.roundRect(48, 48, c.width - 96, c.height - 96, 22);
+  ctx.stroke();
+
+  ctx.fillStyle = "rgba(255,255,255,0.08)";
+  ctx.beginPath();
+  ctx.roundRect(76, 82, c.width - 152, 104, 18);
+  ctx.fill();
+
+  ctx.fillStyle = "#f6fbff";
+  ctx.font = "800 54px Arial, Helvetica, sans-serif";
+  ctx.textAlign = "left";
+  ctx.textBaseline = "middle";
+  ctx.fillText("X / @matzoka", 138, 134);
+
+  ctx.fillStyle = "rgba(125,239,255,0.9)";
+  ctx.beginPath();
+  ctx.arc(100, 134, 16, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = "rgba(122,255,167,0.92)";
+  ctx.font = "700 25px Arial, Helvetica, sans-serif";
+  ctx.textAlign = "right";
+  ctx.fillText("FRONT WALL BROWSER SNAPSHOT", c.width - 92, 135);
+
+  ctx.save();
+  ctx.globalCompositeOperation = "destination-out";
+  ctx.fillStyle = "rgba(0,0,0,1)";
+  ctx.beginPath();
+  ctx.roundRect(126, 236, 900, 1120, 18);
+  ctx.fill();
+  ctx.restore();
+
+  ctx.strokeStyle = "rgba(255,255,255,0.18)";
+  ctx.lineWidth = 4;
+  ctx.beginPath();
+  ctx.roundRect(126, 236, 900, 1120, 18);
+  ctx.stroke();
+
+  ctx.fillStyle = "rgba(225,244,255,0.7)";
+  ctx.font = "600 24px Arial, Helvetica, sans-serif";
+  ctx.textAlign = "left";
+  ctx.fillText("Xの公開プロフィールを、Quest内で読める壁面パネルとして表示しています。", 96, 1430);
+  ctx.fillStyle = "rgba(255,255,255,0.42)";
+  ctx.font = "600 20px Arial, Helvetica, sans-serif";
+  ctx.fillText("Snapshot: x.com/matzoka", 96, 1470);
+
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.anisotropy = maxAnisotropy;
+  return tex;
+}
+
 let poseDebugPanelTexture = makePoseDebugPanelTexture();
 const CONTROLLER_HELP_AUTO_HIDE = 24;
 const CONTROLLER_HELP_D_ASPECT = 1552 / 1013;
@@ -4090,12 +4175,52 @@ controllerHelpPanel.renderOrder = 72;
 controllerHelpPanel.visible = false;
 scene.add(controllerHelpPanel);
 
+const xBrowserPanel = new THREE.Group();
+xBrowserPanel.visible = false;
+
+const xBrowserPanelBack = new THREE.Mesh(
+  new THREE.PlaneGeometry(2.52, 3.42),
+  new THREE.MeshBasicMaterial({
+    map: makeXBrowserFrameTexture(),
+    transparent: true,
+    depthTest: false,
+    depthWrite: false,
+    side: THREE.DoubleSide,
+    toneMapped: false,
+  })
+);
+xBrowserPanelBack.renderOrder = 74;
+xBrowserPanel.add(xBrowserPanelBack);
+
+const xBrowserSnapshot = new THREE.Mesh(
+  new THREE.PlaneGeometry(1.82, 2.72),
+  new THREE.MeshBasicMaterial({
+    map: loadXProfileSnapshotTexture(),
+    transparent: true,
+    depthTest: false,
+    depthWrite: false,
+    side: THREE.DoubleSide,
+    toneMapped: false,
+  })
+);
+xBrowserSnapshot.position.set(0, -0.08, -0.014);
+xBrowserSnapshot.renderOrder = 76;
+xBrowserPanel.add(xBrowserSnapshot);
+
+xBrowserPanel.position.set(roomCenter.x + 1.15, roomCenter.y + 0.05, roomCenter.z + roomHalf.z - 0.035);
+xBrowserPanel.rotation.y = 0;
+scene.add(xBrowserPanel);
+
 function setControllerHelpVisible(visible) {
   controllerHelpActive = visible;
   controllerHelpPanel.visible = visible;
+  xBrowserPanel.visible = visible;
+  if (renderer.xr.isPresenting && exitButton.visible) {
+    welcomePanel.visible = !visible;
+  }
   controllerHelpHideAt = visible ? elapsed + CONTROLLER_HELP_AUTO_HIDE : 0;
   statusEl.textContent = visible
-    ? "左側に操作HELPパネルを表示しました。もう一度HELPを押すと閉じます。"
+    ? "左側に操作HELP、正面にXプロフィールパネルを表示しました。もう一度HELPを押すと閉じます。"
     : "操作HELPを閉じました。";
 }
 
