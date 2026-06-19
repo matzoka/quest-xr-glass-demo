@@ -13,7 +13,7 @@ const klingonButton = document.querySelector("#klingonButton");
 const blackHoleTourButton = document.querySelector("#blackHoleTourButton");
 const controllerHelpButton = document.querySelector("#controllerHelpButton");
 const poseDebugOutputEl = document.querySelector("#poseDebugOutput");
-const APP_VERSION = "v2026.06.20.04";
+const APP_VERSION = "v2026.06.20.05";
 const DEBUG_TOP_VIEW = new URLSearchParams(window.location.search).has("topDebug");
 const DEBUG_TOP_VIEW_DISTANCE = Number(new URLSearchParams(window.location.search).get("topDebugDist"));
 const DEBUG_BLACK_HOLE_VIEW = new URLSearchParams(window.location.search).has("blackHoleDebug");
@@ -1570,7 +1570,7 @@ const satOrbit = new THREE.Group();
 satOrbit.rotation.x = THREE.MathUtils.degToRad(35); // inclined orbit
 satOrbit.add(satellite);
 ballGroup.add(satOrbit);
-const SAT_ORBIT_SPEED = 0.8; // rad/s — a clearly visible orbit, even while the Earth moves
+const SAT_ORBIT_SPEED = 0.16; // rad/s — slower orbit so the satellite no longer rushes around Earth
 const satelliteWorld = new THREE.Vector3();
 const satelliteLocal = new THREE.Vector3();
 const satelliteSunLocal = new THREE.Vector3();
