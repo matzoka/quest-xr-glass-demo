@@ -13,7 +13,7 @@ const klingonButton = document.querySelector("#klingonButton");
 const blackHoleTourButton = document.querySelector("#blackHoleTourButton");
 const controllerHelpButton = document.querySelector("#controllerHelpButton");
 const poseDebugOutputEl = document.querySelector("#poseDebugOutput");
-const APP_VERSION = "v2026.06.19.45";
+const APP_VERSION = "v2026.06.19.47";
 const DEBUG_TOP_VIEW = new URLSearchParams(window.location.search).has("topDebug");
 const DEBUG_TOP_VIEW_DISTANCE = Number(new URLSearchParams(window.location.search).get("topDebugDist"));
 const DEBUG_BLACK_HOLE_VIEW = new URLSearchParams(window.location.search).has("blackHoleDebug");
@@ -5602,6 +5602,8 @@ function makeSolarProminenceSlot() {
     footScale: new THREE.Vector3(),
     apexGlowBaseScale: SUN_RADIUS * 0.31,
     points: [],
+    localSurfaceDir: new THREE.Vector3(),
+    localImpactDir: new THREE.Vector3(),
     earthFacingFactor: 0,
   };
 }
@@ -5819,6 +5821,8 @@ function spawnSolarProminence() {
   solarLimbAxisB.crossVectors(solarViewDir, solarLimbAxisA).normalize();
   setRandomVisibleSolarLimbDir();
   solarDir.copy(solarLimbDir).addScaledVector(solarViewDir, 0.04).normalize();
+  slot.localSurfaceDir.copy(solarLimbDir);
+  slot.localImpactDir.copy(solarDir);
   slot.earthFacingFactor = getSolarProminenceEarthFacingFactor(solarLimbDir);
 
   solarTangent.crossVectors(solarViewDir, solarDir);
@@ -5866,6 +5870,7 @@ function spawnSolarProminence() {
         .addScaledVector(solarViewDir, SUN_RADIUS * 0.018 * (0.25 + rise))
     );
   }
+  slot.localImpactDir.copy(slot.points[Math.floor(slot.points.length / 2)]).normalize();
 
   const strandPointsA = slot.points.map((point, index) => {
     const p = index / (slot.points.length - 1);
@@ -5966,6 +5971,10 @@ function updateSolarProminence(dt) {
     if (!slot.active) continue;
 
     slot.t += dt;
+    slot.earthFacingFactor = Math.max(
+      getSolarProminenceEarthFacingFactor(slot.localSurfaceDir),
+      getSolarProminenceEarthFacingFactor(slot.localImpactDir)
+    );
     const fadeIn = THREE.MathUtils.smoothstep(slot.t, 0, 9);
     const fadeOut = 1 - THREE.MathUtils.smoothstep(slot.t, Math.max(12, slot.duration - 18), slot.duration);
     const fade = fadeIn * fadeOut;
