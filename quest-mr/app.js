@@ -13,7 +13,7 @@ const klingonButton = document.querySelector("#klingonButton");
 const blackHoleTourButton = document.querySelector("#blackHoleTourButton");
 const controllerHelpButton = document.querySelector("#controllerHelpButton");
 const poseDebugOutputEl = document.querySelector("#poseDebugOutput");
-const APP_VERSION = "v2026.06.19.32";
+const APP_VERSION = "v2026.06.19.33";
 const DEBUG_TOP_VIEW = new URLSearchParams(window.location.search).has("topDebug");
 const DEBUG_TOP_VIEW_DISTANCE = Number(new URLSearchParams(window.location.search).get("topDebugDist"));
 const DEBUG_BLACK_HOLE_VIEW = new URLSearchParams(window.location.search).has("blackHoleDebug");
@@ -5338,23 +5338,15 @@ function makeSolarProminenceMaterial(opacityScale, hotColor, coolColor) {
   });
 }
 
-const solarProminenceGroup = new THREE.Group();
-solarProminenceGroup.visible = false;
-sunMesh.add(solarProminenceGroup);
-
-const solarPromCoreMat = makeSolarProminenceMaterial(1.35, 0xfff8c8, 0xff5a0c);
-const solarPromGlowMat = makeSolarProminenceMaterial(0.45, 0xffd36a, 0xff2500);
-const solarPromStrandMat = makeSolarProminenceMaterial(0.7, 0xffc86e, 0xd91b00);
-const solarPromCore = new THREE.Mesh(new THREE.BufferGeometry(), solarPromCoreMat);
-const solarPromGlow = new THREE.Mesh(new THREE.BufferGeometry(), solarPromGlowMat);
-const solarPromStrandA = new THREE.Mesh(new THREE.BufferGeometry(), solarPromStrandMat);
-const solarPromStrandB = new THREE.Mesh(new THREE.BufferGeometry(), solarPromStrandMat.clone());
-solarPromStrandB.material.userData.opacityScale = 0.58;
-solarProminenceGroup.add(solarPromGlow, solarPromStrandA, solarPromStrandB, solarPromCore);
-
 const solarFootTex = makeSolarFootTexture();
-const solarFootA = new THREE.Sprite(
-  new THREE.SpriteMaterial({
+const SOLAR_PROM_MAX_ACTIVE = 3;
+const SOLAR_PROM_MIN_DURATION = 60;
+const SOLAR_PROM_MAX_DURATION = 180;
+const SOLAR_PROM_MAX_START_GAP = 30 * 60;
+const SOLAR_PROM_FIRST_AT = 6;
+
+function makeSolarFootMaterial() {
+  return new THREE.SpriteMaterial({
     map: solarFootTex,
     color: 0xffb15a,
     transparent: true,
@@ -5362,17 +5354,50 @@ const solarFootA = new THREE.Sprite(
     blending: THREE.AdditiveBlending,
     depthWrite: false,
     toneMapped: false,
-  })
-);
-const solarFootB = new THREE.Sprite(solarFootA.material.clone());
-const solarApexGlow = new THREE.Sprite(solarFootA.material.clone());
-solarProminenceGroup.add(solarFootA, solarFootB, solarApexGlow);
+  });
+}
 
-let solarProminenceActive = false;
-let solarProminenceT = 0;
-let solarProminenceDuration = 6;
-let nextSolarProminenceAt = 6;
-const solarPromPoints = [];
+function makeSolarProminenceSlot() {
+  const group = new THREE.Group();
+  group.visible = false;
+  sunMesh.add(group);
+
+  const coreMat = makeSolarProminenceMaterial(1.35, 0xfff8c8, 0xff5a0c);
+  const glowMat = makeSolarProminenceMaterial(0.45, 0xffd36a, 0xff2500);
+  const strandMat = makeSolarProminenceMaterial(0.7, 0xffc86e, 0xd91b00);
+  const strandBMat = makeSolarProminenceMaterial(0.58, 0xffc86e, 0xd91b00);
+  const core = new THREE.Mesh(new THREE.BufferGeometry(), coreMat);
+  const glow = new THREE.Mesh(new THREE.BufferGeometry(), glowMat);
+  const strandA = new THREE.Mesh(new THREE.BufferGeometry(), strandMat);
+  const strandB = new THREE.Mesh(new THREE.BufferGeometry(), strandBMat);
+  group.add(glow, strandA, strandB, core);
+
+  const footA = new THREE.Sprite(makeSolarFootMaterial());
+  const footB = new THREE.Sprite(makeSolarFootMaterial());
+  const apexGlow = new THREE.Sprite(makeSolarFootMaterial());
+  group.add(footA, footB, apexGlow);
+
+  return {
+    active: false,
+    t: 0,
+    duration: SOLAR_PROM_MIN_DURATION,
+    group,
+    core,
+    glow,
+    strandA,
+    strandB,
+    materials: [coreMat, glowMat, strandMat, strandBMat],
+    footA,
+    footB,
+    apexGlow,
+    footScale: new THREE.Vector3(),
+    apexGlowBaseScale: SUN_RADIUS * 0.31,
+    points: [],
+  };
+}
+
+const solarProminenceSlots = Array.from({ length: SOLAR_PROM_MAX_ACTIVE }, makeSolarProminenceSlot);
+let nextSolarProminenceAt = SOLAR_PROM_FIRST_AT;
 const solarCameraLocal = new THREE.Vector3();
 const solarViewDir = new THREE.Vector3();
 const solarLimbDir = new THREE.Vector3();
@@ -5383,11 +5408,23 @@ const solarLimbAxisA = new THREE.Vector3();
 const solarLimbAxisB = new THREE.Vector3();
 const solarPromCandidateWorld = new THREE.Vector3();
 const solarPromCandidateNdc = new THREE.Vector3();
-const solarFootScale = new THREE.Vector3();
-let solarApexGlowBaseScale = SUN_RADIUS * 0.31;
 
-function scheduleNextSolarProminence() {
-  nextSolarProminenceAt = elapsed + 18 + Math.random() * 22;
+function getActiveSolarProminenceCount() {
+  let count = 0;
+  for (const slot of solarProminenceSlots) {
+    if (slot.active) count += 1;
+  }
+  return count;
+}
+
+function scheduleNextSolarProminence(activeCount = getActiveSolarProminenceCount()) {
+  let delay;
+  if (activeCount > 0 && activeCount < SOLAR_PROM_MAX_ACTIVE && Math.random() < 0.58) {
+    delay = 24 + Math.random() * 108;
+  } else {
+    delay = 180 + Math.random() * (SOLAR_PROM_MAX_START_GAP - 180);
+  }
+  nextSolarProminenceAt = elapsed + Math.min(delay, SOLAR_PROM_MAX_START_GAP);
 }
 
 function rotateAroundAxis(vec, axis, angle) {
@@ -5440,6 +5477,9 @@ function setRandomVisibleSolarLimbDir() {
 }
 
 function spawnSolarProminence() {
+  const slot = solarProminenceSlots.find((item) => !item.active);
+  if (!slot) return false;
+
   sunMesh.updateWorldMatrix(true, false);
   camera.getWorldPosition(solarCameraLocal);
   sunMesh.worldToLocal(solarCameraLocal);
@@ -5465,7 +5505,7 @@ function spawnSolarProminence() {
   const lift = THREE.MathUtils.lerp(0.09, 0.46, sizeT) + Math.random() * THREE.MathUtils.lerp(0.03, 0.08, sizeT);
   const twist = (Math.random() - 0.5) * SUN_RADIUS * THREE.MathUtils.lerp(0.045, 0.14, sizeT);
   const filamentScale = THREE.MathUtils.lerp(0.58, 1.48, sizeT) * THREE.MathUtils.lerp(0.9, 1.08, thicknessT);
-  solarPromPoints.length = 0;
+  slot.points.length = 0;
   for (let i = 0; i <= 24; i += 1) {
     const p = i / 24;
     const a = THREE.MathUtils.lerp(-halfAngle, halfAngle, p);
@@ -5477,7 +5517,7 @@ function spawnSolarProminence() {
       .addScaledVector(solarViewDir, 0.04)
       .normalize();
     const wave = Math.sin(p * Math.PI * 2.0) * twist * rise;
-    solarPromPoints.push(
+    slot.points.push(
       solarDir
         .clone()
         .multiplyScalar(SUN_RADIUS * (1.01 + lift * rise))
@@ -5485,16 +5525,16 @@ function spawnSolarProminence() {
     );
   }
 
-  const strandPointsA = solarPromPoints.map((point, index) => {
-    const p = index / (solarPromPoints.length - 1);
+  const strandPointsA = slot.points.map((point, index) => {
+    const p = index / (slot.points.length - 1);
     const rise = Math.sin(p * Math.PI);
     return point
       .clone()
       .addScaledVector(solarSide, SUN_RADIUS * (0.02 + rise * 0.05) * filamentScale)
       .addScaledVector(solarTangent, SUN_RADIUS * Math.sin(p * Math.PI * 2.0) * 0.015 * filamentScale);
   });
-  const strandPointsB = solarPromPoints.map((point, index) => {
-    const p = index / (solarPromPoints.length - 1);
+  const strandPointsB = slot.points.map((point, index) => {
+    const p = index / (slot.points.length - 1);
     const rise = Math.sin(p * Math.PI);
     return point
       .clone()
@@ -5502,7 +5542,7 @@ function spawnSolarProminence() {
       .addScaledVector(solarTangent, SUN_RADIUS * Math.sin(p * Math.PI * 1.5 + 0.7) * 0.012 * filamentScale);
   });
 
-  const curve = new THREE.CatmullRomCurve3(solarPromPoints);
+  const curve = new THREE.CatmullRomCurve3(slot.points);
   const strandCurveA = new THREE.CatmullRomCurve3(strandPointsA);
   const strandCurveB = new THREE.CatmullRomCurve3(strandPointsB);
   const tubeScale = THREE.MathUtils.lerp(0.58, 1.52, sizeT) * thicknessScale;
@@ -5510,71 +5550,104 @@ function spawnSolarProminence() {
   const glowGeo = new THREE.TubeGeometry(curve, 96, SUN_RADIUS * 0.015 * tubeScale, 12, false);
   const strandGeoA = new THREE.TubeGeometry(strandCurveA, 80, SUN_RADIUS * 0.0036 * tubeScale, 8, false);
   const strandGeoB = new THREE.TubeGeometry(strandCurveB, 80, SUN_RADIUS * 0.0029 * tubeScale, 8, false);
-  solarPromCore.geometry.dispose();
-  solarPromGlow.geometry.dispose();
-  solarPromStrandA.geometry.dispose();
-  solarPromStrandB.geometry.dispose();
-  solarPromCore.geometry = coreGeo;
-  solarPromGlow.geometry = glowGeo;
-  solarPromStrandA.geometry = strandGeoA;
-  solarPromStrandB.geometry = strandGeoB;
+  slot.core.geometry.dispose();
+  slot.glow.geometry.dispose();
+  slot.strandA.geometry.dispose();
+  slot.strandB.geometry.dispose();
+  slot.core.geometry = coreGeo;
+  slot.glow.geometry = glowGeo;
+  slot.strandA.geometry = strandGeoA;
+  slot.strandB.geometry = strandGeoB;
 
-  solarFootScale.setScalar(SUN_RADIUS * THREE.MathUtils.lerp(0.13, 0.27, sizeT));
-  solarApexGlowBaseScale = SUN_RADIUS * THREE.MathUtils.lerp(0.18, 0.42, sizeT);
-  solarFootA.position.copy(solarPromPoints[0]).normalize().multiplyScalar(SUN_RADIUS * 1.014);
-  solarFootB.position.copy(solarPromPoints[solarPromPoints.length - 1]).normalize().multiplyScalar(SUN_RADIUS * 1.014);
-  solarApexGlow.position.copy(solarPromPoints[Math.floor(solarPromPoints.length / 2)]);
-  solarFootA.scale.copy(solarFootScale);
-  solarFootB.scale.copy(solarFootScale);
-  solarApexGlow.scale.setScalar(solarApexGlowBaseScale);
+  slot.footScale.setScalar(SUN_RADIUS * THREE.MathUtils.lerp(0.13, 0.27, sizeT));
+  slot.apexGlowBaseScale = SUN_RADIUS * THREE.MathUtils.lerp(0.18, 0.42, sizeT);
+  slot.footA.position.copy(slot.points[0]).normalize().multiplyScalar(SUN_RADIUS * 1.014);
+  slot.footB.position.copy(slot.points[slot.points.length - 1]).normalize().multiplyScalar(SUN_RADIUS * 1.014);
+  slot.apexGlow.position.copy(slot.points[Math.floor(slot.points.length / 2)]);
+  slot.footA.scale.copy(slot.footScale);
+  slot.footB.scale.copy(slot.footScale);
+  slot.apexGlow.scale.setScalar(slot.apexGlowBaseScale);
 
-  solarProminenceDuration = 6.4 + Math.random() * 2.4;
-  solarProminenceT = 0;
-  solarProminenceGroup.visible = true;
-  solarProminenceActive = true;
-  auroraFlareTarget = 0.18;
+  slot.duration = SOLAR_PROM_MIN_DURATION + Math.random() * (SOLAR_PROM_MAX_DURATION - SOLAR_PROM_MIN_DURATION);
+  slot.t = 0;
+  slot.group.visible = true;
+  slot.active = true;
+  return true;
 }
 
 function updateSolarProminence(dt) {
-  if (!solarProminenceActive) {
-    auroraFlareTarget = 0;
-    if (elapsed >= nextSolarProminenceAt) spawnSolarProminence();
-    return;
+  const activeBeforeSpawn = getActiveSolarProminenceCount();
+  if (elapsed >= nextSolarProminenceAt) {
+    if (activeBeforeSpawn < SOLAR_PROM_MAX_ACTIVE) {
+      spawnSolarProminence();
+    }
+    scheduleNextSolarProminence(getActiveSolarProminenceCount());
   }
 
-  solarProminenceT += dt;
-  const p = Math.min(1, solarProminenceT / solarProminenceDuration);
-  const fade = THREE.MathUtils.smoothstep(p, 0, 0.18) * (1 - THREE.MathUtils.smoothstep(p, 0.72, 1.0));
-  const pulse = 0.82 + Math.sin(elapsed * 5.1) * 0.08 + Math.sin(elapsed * 9.3) * 0.04;
-  const opacity = Math.max(0, fade * pulse);
-  auroraFlareTarget = THREE.MathUtils.clamp(opacity * 1.18, 0, 1);
+  let strongestOpacity = 0;
+  for (const slot of solarProminenceSlots) {
+    if (!slot.active) continue;
 
-  for (const mat of [solarPromCoreMat, solarPromGlowMat, solarPromStrandMat, solarPromStrandB.material]) {
-    mat.uniforms.uTime.value = elapsed;
-    mat.uniforms.uOpacity.value = opacity * mat.userData.opacityScale;
-  }
-  solarFootA.material.opacity = opacity * 0.62;
-  solarFootB.material.opacity = opacity * 0.48;
-  solarApexGlow.material.opacity = opacity * 0.22;
-  const breathing = 1 + Math.sin(elapsed * 3.6) * 0.05;
-  solarFootA.scale.copy(solarFootScale).multiplyScalar(breathing);
-  solarFootB.scale.copy(solarFootScale).multiplyScalar(0.92 + (breathing - 1) * 0.8);
-  solarApexGlow.scale.setScalar(solarApexGlowBaseScale * (0.96 + breathing * 0.04));
+    slot.t += dt;
+    const fadeIn = THREE.MathUtils.smoothstep(slot.t, 0, 9);
+    const fadeOut = 1 - THREE.MathUtils.smoothstep(slot.t, Math.max(12, slot.duration - 18), slot.duration);
+    const fade = fadeIn * fadeOut;
+    const pulse = 0.86 + Math.sin(elapsed * 1.1 + slot.duration * 0.13) * 0.06 + Math.sin(elapsed * 2.3) * 0.035;
+    const opacity = Math.max(0, fade * pulse);
+    strongestOpacity = Math.max(strongestOpacity, opacity);
 
-  if (p >= 1) {
-    solarProminenceActive = false;
-    solarProminenceGroup.visible = false;
-    auroraFlareTarget = 0;
-    solarPromCoreMat.uniforms.uOpacity.value = 0;
-    solarPromGlowMat.uniforms.uOpacity.value = 0;
-    solarPromStrandMat.uniforms.uOpacity.value = 0;
-    solarPromStrandB.material.uniforms.uOpacity.value = 0;
-    solarFootA.material.opacity = 0;
-    solarFootB.material.opacity = 0;
-    solarApexGlow.material.opacity = 0;
-    scheduleNextSolarProminence();
+    for (const mat of slot.materials) {
+      mat.uniforms.uTime.value = elapsed;
+      mat.uniforms.uOpacity.value = opacity * mat.userData.opacityScale;
+    }
+    slot.footA.material.opacity = opacity * 0.62;
+    slot.footB.material.opacity = opacity * 0.48;
+    slot.apexGlow.material.opacity = opacity * 0.22;
+    const breathing = 1 + Math.sin(elapsed * 1.35 + slot.duration * 0.07) * 0.035;
+    slot.footA.scale.copy(slot.footScale).multiplyScalar(breathing);
+    slot.footB.scale.copy(slot.footScale).multiplyScalar(0.92 + (breathing - 1) * 0.8);
+    slot.apexGlow.scale.setScalar(slot.apexGlowBaseScale * (0.96 + breathing * 0.04));
+
+    if (slot.t >= slot.duration) {
+      slot.active = false;
+      slot.group.visible = false;
+      for (const mat of slot.materials) {
+        mat.uniforms.uOpacity.value = 0;
+      }
+      slot.footA.material.opacity = 0;
+      slot.footB.material.opacity = 0;
+      slot.apexGlow.material.opacity = 0;
+    }
   }
+
+  auroraFlareTarget = THREE.MathUtils.clamp(strongestOpacity * 1.18, 0, 1);
 }
+
+function getSolarProminenceDebugState() {
+  return {
+    activeCount: getActiveSolarProminenceCount(),
+    nextIn: Math.max(0, nextSolarProminenceAt - elapsed),
+    maxActive: SOLAR_PROM_MAX_ACTIVE,
+    minDuration: SOLAR_PROM_MIN_DURATION,
+    maxDuration: SOLAR_PROM_MAX_DURATION,
+    maxStartGap: SOLAR_PROM_MAX_START_GAP,
+    slots: solarProminenceSlots.map((slot) => ({
+      active: slot.active,
+      t: slot.t,
+      duration: slot.duration,
+      remaining: Math.max(0, slot.duration - slot.t),
+    })),
+  };
+}
+
+window.__questXrDebug = Object.assign(window.__questXrDebug || {}, {
+  getSolarProminenceState: getSolarProminenceDebugState,
+  forceSolarProminence: () => {
+    const spawned = spawnSolarProminence();
+    if (spawned) scheduleNextSolarProminence(getActiveSolarProminenceCount());
+    return { spawned, ...getSolarProminenceDebugState() };
+  },
+});
 
 const planetSunWorld = new THREE.Vector3();
 const planetSunLocal = new THREE.Vector3();
