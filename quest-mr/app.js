@@ -13,7 +13,7 @@ const klingonButton = document.querySelector("#klingonButton");
 const blackHoleTourButton = document.querySelector("#blackHoleTourButton");
 const controllerHelpButton = document.querySelector("#controllerHelpButton");
 const poseDebugOutputEl = document.querySelector("#poseDebugOutput");
-const APP_VERSION = "v2026.06.19.50";
+const APP_VERSION = "v2026.06.20.01";
 const DEBUG_TOP_VIEW = new URLSearchParams(window.location.search).has("topDebug");
 const DEBUG_TOP_VIEW_DISTANCE = Number(new URLSearchParams(window.location.search).get("topDebugDist"));
 const DEBUG_BLACK_HOLE_VIEW = new URLSearchParams(window.location.search).has("blackHoleDebug");
@@ -189,6 +189,9 @@ const tmpRight = new THREE.Vector3();
 const worldUp = new THREE.Vector3(0, 1, 0);
 const viewerWorld = new THREE.Vector3();
 const viewerForward = new THREE.Vector3();
+const shipAudioViewerWorld = new THREE.Vector3();
+const shipAudioListenerForward = new THREE.Vector3();
+const shipAudioListenerUp = new THREE.Vector3();
 
 // ---------------------------------------------------------------------------
 // Deep-space backdrop: distant stars plus a soft galaxy band. It is kept as
@@ -2481,6 +2484,7 @@ function updateEnterpriseRareOrbit(dt) {
       enterprise.position.addScaledVector(shipVel, dt);
     }
     orientEnterpriseAlongVelocity();
+    updateEnterpriseAudioDistance();
     return;
   }
 
@@ -2504,6 +2508,7 @@ function updateEnterpriseRareOrbit(dt) {
       setRareDepartCourse();
       shipVel.copy(shipRareWarpDir).multiplyScalar(ENTERPRISE_RARE_DEPART_SPEED);
       orientEnterpriseAlongVelocity();
+      updateEnterpriseAudioDistance();
       return;
     }
 
@@ -2513,12 +2518,14 @@ function updateEnterpriseRareOrbit(dt) {
     }
     shipVel.normalize().multiplyScalar(ENTERPRISE_RARE_ORBIT_RADIUS * ENTERPRISE_RARE_ORBIT_SPEED);
     orientEnterpriseAlongVelocity();
+    updateEnterpriseAudioDistance();
     return;
   }
 
   if (shipRarePhase === ENTERPRISE_RARE_DEPART) {
     enterprise.position.addScaledVector(shipVel, dt);
     orientEnterpriseAlongVelocity();
+    updateEnterpriseAudioDistance();
     if (enterpriseClearOfRoomFrame()) {
       shipVel.copy(shipRareWarpDir).multiplyScalar(ENTERPRISE_RARE_EXIT_WARP_SPEED);
       orientEnterpriseAlongVelocity();
@@ -2780,13 +2787,13 @@ function spawnKlingonPass() {
     cruiseY,
     cruiseZ
   );
-  klingonPassDuration = playKlingonTheme();
   planSafeFlightRoute(klingonStart, klingonEnd, klingonControl, {
     shipClearance: EARTH_RADIUS * 2.0,
   });
+  klingon.position.copy(klingonStart);
+  klingonPassDuration = playKlingonTheme();
   sampleFlightRouteTangent(klingonStart, klingonControl, klingonEnd, 0, klingonVel)
     .multiplyScalar(1 / klingonPassDuration);
-  klingon.position.copy(klingonStart);
   orientKlingonAlongVelocity();
   klingonT = 0;
   klingonDepartureSoundPlayed = false;
@@ -2859,6 +2866,7 @@ function updateKlingon(dt) {
       .multiplyScalar(1 / klingonPassDuration);
   }
   orientKlingonAlongVelocity();
+  updateKlingonAudioDistance();
   if (DEBUG_TOP_VIEW) {
     klingonDebugArrow.visible = true;
     klingonDebugArrow.position.copy(klingon.position);
@@ -2920,6 +2928,7 @@ function updateEnterprise(dt) {
       .copy(shipWarpStartPos)
       .addScaledVector(shipTmp, shipVel.length() * shipWarpDuration * enterpriseWarpTravelFactor(p));
     orientEnterpriseAlongVelocity();
+    updateEnterpriseAudioDistance();
     syncEnterpriseWarp(warpLength, visualP);
     syncEnterpriseSpark(p, visualP);
     enterpriseWarp.material.opacity = shipWarpAudioEnded ? 1 - visualP : Math.max(0.14, 1 - visualP);
@@ -2952,6 +2961,7 @@ function updateEnterprise(dt) {
   // Object3D.lookAt aims +Z at the target, so look "backward" to put the bow
   // (-Z, the saucer) forward and keep local +Z as the stern/trail side.
   orientEnterpriseAlongVelocity();
+  updateEnterpriseAudioDistance();
   if (!shipEnteredRoom && enterpriseInsideRoomFrame()) shipEnteredRoom = true;
   if (shipEnteredRoom && !shipExitedRoom && enterpriseClearOfRoomFrame()) {
     shipExitedRoom = true;
@@ -3222,8 +3232,8 @@ function playEnterpriseTheme() {
   const now = ctx.currentTime;
 
   const master = ctx.createGain();
-  master.gain.value = 0.22;
-  master.connect(ctx.destination);
+  master.gain.value = 1;
+  enterpriseSynthSpatial = connectDistanceGain(master, enterprise.position, ENTERPRISE_SYNTH_VOLUME);
   enterpriseVoices.push({ osc: null, gain: master });
 
   const seq = [
@@ -3271,6 +3281,8 @@ function stopEnterpriseTheme() {
     }
   }
   enterpriseVoices = [];
+  disconnectSpatialAudio(enterpriseSynthSpatial);
+  enterpriseSynthSpatial = null;
 }
 
 // Optional real audio clip: drop a licensed file at assets/enterprise_theme.mp3
@@ -3284,18 +3296,23 @@ function stopEnterpriseTheme() {
 let shipBuffer = null;
 let shipBufferTried = false;
 let shipSource = null;
+let shipSourceGain = null;
 let warpBuffer = null;
 let warpBufferTried = false;
 let warpSource = null;
+let warpSourceGain = null;
 let rareOrbitBuffer = null;
 let rareOrbitBufferTried = false;
 let rareOrbitSource = null;
+let rareOrbitGain = null;
 let rareOrbitAudioWanted = false;
 let klingonBuffer = null;
 let klingonBufferTried = false;
 let klingonBufferPromise = null;
 let klingonSource = null;
+let klingonGain = null;
 let klingonAudioWanted = false;
+let enterpriseSynthSpatial = null;
 let blackHoleBuffer = null;
 let blackHoleBufferTried = false;
 let blackHoleBufferPromise = null;
@@ -3327,6 +3344,114 @@ const klingonDepartureSound = {
   source: null,
   failed: false,
 };
+
+const SHIP_AUDIO_MIN_RATIO = 0.18;
+const SHIP_AUDIO_FULL_DISTANCE = 1.25;
+const SHIP_AUDIO_FLOOR_DISTANCE = 14.0;
+const ENTERPRISE_ENTRANCE_VOLUME = 0.62;
+const ENTERPRISE_SYNTH_VOLUME = 0.22;
+const ENTERPRISE_RARE_ORBIT_VOLUME = 0.48;
+const ENTERPRISE_WARP_VOLUME = 0.68;
+const KLINGON_THEME_VOLUME = 0.58;
+const KLINGON_ARRIVAL_VOLUME = 0.54;
+const KLINGON_DEPARTURE_VOLUME = 0.56;
+
+function getAudioCamera() {
+  return renderer.xr.isPresenting ? renderer.xr.getCamera(camera) : camera;
+}
+
+function updateAudioListenerPose() {
+  if (!audioContext) return;
+  const cam = getAudioCamera();
+  cam.getWorldPosition(shipAudioViewerWorld);
+  cam.getWorldDirection(shipAudioListenerForward);
+  shipAudioListenerUp.copy(cam.up).applyQuaternion(cam.quaternion).normalize();
+
+  const listener = audioContext.listener;
+  const now = audioContext.currentTime;
+  if (listener.positionX) {
+    listener.positionX.setTargetAtTime(shipAudioViewerWorld.x, now, 0.04);
+    listener.positionY.setTargetAtTime(shipAudioViewerWorld.y, now, 0.04);
+    listener.positionZ.setTargetAtTime(shipAudioViewerWorld.z, now, 0.04);
+    listener.forwardX.setTargetAtTime(shipAudioListenerForward.x, now, 0.04);
+    listener.forwardY.setTargetAtTime(shipAudioListenerForward.y, now, 0.04);
+    listener.forwardZ.setTargetAtTime(shipAudioListenerForward.z, now, 0.04);
+    listener.upX.setTargetAtTime(shipAudioListenerUp.x, now, 0.04);
+    listener.upY.setTargetAtTime(shipAudioListenerUp.y, now, 0.04);
+    listener.upZ.setTargetAtTime(shipAudioListenerUp.z, now, 0.04);
+  } else {
+    listener.setPosition(shipAudioViewerWorld.x, shipAudioViewerWorld.y, shipAudioViewerWorld.z);
+    listener.setOrientation(
+      shipAudioListenerForward.x,
+      shipAudioListenerForward.y,
+      shipAudioListenerForward.z,
+      shipAudioListenerUp.x,
+      shipAudioListenerUp.y,
+      shipAudioListenerUp.z
+    );
+  }
+}
+
+function setSpatialAudioPosition(spatialAudio, sourcePosition) {
+  if (!audioContext || !spatialAudio || !sourcePosition) return;
+  updateAudioListenerPose();
+  const now = audioContext.currentTime;
+  const { panner } = spatialAudio;
+  if (panner.positionX) {
+    panner.positionX.setTargetAtTime(sourcePosition.x, now, 0.04);
+    panner.positionY.setTargetAtTime(sourcePosition.y, now, 0.04);
+    panner.positionZ.setTargetAtTime(sourcePosition.z, now, 0.04);
+  } else {
+    panner.setPosition(sourcePosition.x, sourcePosition.y, sourcePosition.z);
+  }
+}
+
+function connectDistanceGain(source, sourcePosition, maxVolume) {
+  updateAudioListenerPose();
+  const panner = audioContext.createPanner();
+  panner.panningModel = "HRTF";
+  panner.distanceModel = "linear";
+  panner.refDistance = SHIP_AUDIO_FULL_DISTANCE;
+  panner.maxDistance = SHIP_AUDIO_FLOOR_DISTANCE;
+  panner.rolloffFactor = 1;
+
+  const distanceGain = audioContext.createGain();
+  const floorGain = audioContext.createGain();
+  distanceGain.gain.value = maxVolume * (1 - SHIP_AUDIO_MIN_RATIO);
+  floorGain.gain.value = maxVolume * SHIP_AUDIO_MIN_RATIO;
+
+  source.connect(panner);
+  source.connect(floorGain);
+  panner.connect(distanceGain);
+  distanceGain.connect(audioContext.destination);
+  floorGain.connect(audioContext.destination);
+
+  const spatialAudio = { panner, distanceGain, floorGain };
+  setSpatialAudioPosition(spatialAudio, sourcePosition);
+  return spatialAudio;
+}
+
+function disconnectSpatialAudio(spatialAudio) {
+  if (!spatialAudio) return;
+  try {
+    spatialAudio.panner.disconnect();
+    spatialAudio.distanceGain.disconnect();
+    spatialAudio.floorGain.disconnect();
+  } catch (e) {
+    /* already disconnected */
+  }
+}
+
+function updateEnterpriseAudioDistance() {
+  setSpatialAudioPosition(shipSourceGain, enterprise.position);
+  setSpatialAudioPosition(warpSourceGain, enterprise.position);
+  setSpatialAudioPosition(rareOrbitGain, enterprise.position);
+  setSpatialAudioPosition(enterpriseSynthSpatial, enterprise.position);
+}
+
+function updateKlingonAudioDistance() {
+  setSpatialAudioPosition(klingonGain, klingon.position);
+}
 
 async function loadShipBuffer() {
   if (shipBuffer || shipBufferTried || !audioContext) return;
@@ -3523,7 +3648,7 @@ function isOneShotAudioReady(sound) {
   return !!sound.buffer || !!sound.failed;
 }
 
-function playOneShotAudio(sound, volume = 0.72) {
+function playOneShotAudio(sound, volume = 0.72, sourcePosition = null) {
   if (audioContext) {
     if (audioContext.state === "suspended") audioContext.resume();
     if (!sound.buffer && !sound.promise) loadOneShotAudio(sound);
@@ -3537,17 +3662,25 @@ function playOneShotAudio(sound, volume = 0.72) {
         /* already stopped */
       }
     }
-    const gain = audioContext.createGain();
-    gain.gain.value = volume;
-    gain.connect(audioContext.destination);
-    sound.source = audioContext.createBufferSource();
-    sound.source.buffer = sound.buffer;
-    sound.source.connect(gain);
-    sound.source.onended = () => {
-      sound.source = null;
-      gain.disconnect();
+    const source = audioContext.createBufferSource();
+    sound.source = source;
+    source.buffer = sound.buffer;
+    let gain = null;
+    let spatialAudio = null;
+    if (sourcePosition) {
+      spatialAudio = connectDistanceGain(source, sourcePosition, volume);
+    } else {
+      gain = audioContext.createGain();
+      gain.gain.value = volume;
+      gain.connect(audioContext.destination);
+      source.connect(gain);
+    }
+    source.onended = () => {
+      if (sound.source === source) sound.source = null;
+      disconnectSpatialAudio(spatialAudio);
+      gain?.disconnect();
     };
-    sound.source.start();
+    source.start();
     return sound.buffer.duration || 0;
   } catch (e) {
     sound.source = null;
@@ -3560,11 +3693,11 @@ function playXrButtonPressSound() {
 }
 
 function playKlingonArrivalSound() {
-  return playOneShotAudio(klingonArrivalSound, 0.74);
+  return playOneShotAudio(klingonArrivalSound, KLINGON_ARRIVAL_VOLUME, klingon.position);
 }
 
 function playKlingonDepartureSound() {
-  return playOneShotAudio(klingonDepartureSound, 0.76);
+  return playOneShotAudio(klingonDepartureSound, KLINGON_DEPARTURE_VOLUME, klingon.position);
 }
 
 function getKlingonDepartureSoundLead() {
@@ -3584,11 +3717,20 @@ function playShipEntrance() {
         } catch (e) {
           /* ignore */
         }
+        disconnectSpatialAudio(shipSourceGain);
+        shipSourceGain = null;
       }
-      shipSource = audioContext.createBufferSource();
-      shipSource.buffer = shipBuffer;
-      shipSource.connect(audioContext.destination);
-      shipSource.start();
+      const source = audioContext.createBufferSource();
+      const spatialAudio = connectDistanceGain(source, enterprise.position, ENTERPRISE_ENTRANCE_VOLUME);
+      shipSource = source;
+      shipSourceGain = spatialAudio;
+      source.buffer = shipBuffer;
+      source.onended = () => {
+        if (shipSource === source) shipSource = null;
+        disconnectSpatialAudio(spatialAudio);
+        if (shipSourceGain === spatialAudio) shipSourceGain = null;
+      };
+      source.start();
       return;
     } catch (e) {
       /* fall through to the synth fanfare */
@@ -3610,16 +3752,24 @@ function playShipWarpSound() {
         } catch (e) {
           /* ignore */
         }
+        disconnectSpatialAudio(warpSourceGain);
+        warpSourceGain = null;
       }
       shipWarpAudioEnded = false;
-      warpSource = audioContext.createBufferSource();
-      warpSource.buffer = warpBuffer;
-      warpSource.connect(audioContext.destination);
-      warpSource.onended = () => {
-        shipWarpAudioEnded = true;
-        warpSource = null;
+      const source = audioContext.createBufferSource();
+      const spatialAudio = connectDistanceGain(source, enterprise.position, ENTERPRISE_WARP_VOLUME);
+      warpSource = source;
+      warpSourceGain = spatialAudio;
+      source.buffer = warpBuffer;
+      source.onended = () => {
+        if (warpSource === source) {
+          shipWarpAudioEnded = true;
+          warpSource = null;
+        }
+        disconnectSpatialAudio(spatialAudio);
+        if (warpSourceGain === spatialAudio) warpSourceGain = null;
       };
-      warpSource.start();
+      source.start();
       return Math.max(0.35, warpBuffer.duration || 0.75);
     } catch (e) {
       /* use visual fallback */
@@ -3637,16 +3787,21 @@ function playRareOrbitAudio() {
   }
   if (!audioContext || audioContext.state !== "running" || !rareOrbitBuffer || rareOrbitSource) return;
   try {
-    rareOrbitSource = audioContext.createBufferSource();
-    rareOrbitSource.buffer = rareOrbitBuffer;
-    rareOrbitSource.loop = true;
-    rareOrbitSource.connect(audioContext.destination);
-    rareOrbitSource.onended = () => {
-      rareOrbitSource = null;
+    const source = audioContext.createBufferSource();
+    const spatialAudio = connectDistanceGain(source, enterprise.position, ENTERPRISE_RARE_ORBIT_VOLUME);
+    rareOrbitSource = source;
+    rareOrbitGain = spatialAudio;
+    source.buffer = rareOrbitBuffer;
+    source.loop = true;
+    source.onended = () => {
+      if (rareOrbitSource === source) rareOrbitSource = null;
+      disconnectSpatialAudio(spatialAudio);
+      if (rareOrbitGain === spatialAudio) rareOrbitGain = null;
     };
-    rareOrbitSource.start();
+    source.start();
   } catch (e) {
     rareOrbitSource = null;
+    rareOrbitGain = null;
   }
 }
 
@@ -3659,6 +3814,8 @@ function stopRareOrbitAudio() {
     /* already stopped */
   }
   rareOrbitSource = null;
+  disconnectSpatialAudio(rareOrbitGain);
+  rareOrbitGain = null;
 }
 
 function playKlingonTheme() {
@@ -3675,16 +3832,23 @@ function playKlingonTheme() {
       } catch (e) {
         /* already stopped */
       }
+      disconnectSpatialAudio(klingonGain);
+      klingonGain = null;
     }
-    klingonSource = audioContext.createBufferSource();
-    klingonSource.buffer = klingonBuffer;
-    klingonSource.connect(audioContext.destination);
-    klingonSource.onended = () => {
-      klingonSource = null;
+    const source = audioContext.createBufferSource();
+    const spatialAudio = connectDistanceGain(source, klingon.position, KLINGON_THEME_VOLUME);
+    klingonSource = source;
+    klingonGain = spatialAudio;
+    source.buffer = klingonBuffer;
+    source.onended = () => {
+      if (klingonSource === source) klingonSource = null;
+      disconnectSpatialAudio(spatialAudio);
+      if (klingonGain === spatialAudio) klingonGain = null;
     };
-    klingonSource.start();
+    source.start();
   } catch (e) {
     klingonSource = null;
+    klingonGain = null;
   }
   return getKlingonPassDuration();
 }
@@ -3698,6 +3862,8 @@ function stopKlingonTheme() {
     /* already stopped */
   }
   klingonSource = null;
+  disconnectSpatialAudio(klingonGain);
+  klingonGain = null;
 }
 
 function stopShipAudio() {
@@ -3710,6 +3876,8 @@ function stopShipAudio() {
       /* already stopped */
     }
     shipSource = null;
+    disconnectSpatialAudio(shipSourceGain);
+    shipSourceGain = null;
   }
 }
 
@@ -7903,6 +8071,12 @@ renderer.setAnimationLoop((timestamp) => {
   updateXrAimRays();
   updateHandTouch(dt);
   updateLocomotion(dt);
+  if (
+    audioContext?.state === "running" &&
+    (shipSourceGain || warpSourceGain || rareOrbitGain || klingonGain || enterpriseSynthSpatial)
+  ) {
+    updateAudioListenerPose();
+  }
 
   if (ballActive) {
     if (stepBall(dt)) {
