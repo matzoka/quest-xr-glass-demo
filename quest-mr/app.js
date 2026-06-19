@@ -13,12 +13,13 @@ const klingonButton = document.querySelector("#klingonButton");
 const blackHoleTourButton = document.querySelector("#blackHoleTourButton");
 const controllerHelpButton = document.querySelector("#controllerHelpButton");
 const poseDebugOutputEl = document.querySelector("#poseDebugOutput");
-const APP_VERSION = "v2026.06.19.33";
+const APP_VERSION = "v2026.06.19.35";
 const DEBUG_TOP_VIEW = new URLSearchParams(window.location.search).has("topDebug");
 const DEBUG_TOP_VIEW_DISTANCE = Number(new URLSearchParams(window.location.search).get("topDebugDist"));
 const DEBUG_BLACK_HOLE_VIEW = new URLSearchParams(window.location.search).has("blackHoleDebug");
 const DEBUG_BLACK_HOLE_FALL = new URLSearchParams(window.location.search).has("blackHoleFallDebug");
 const DEBUG_BLACK_HOLE_BACK_VIEW = new URLSearchParams(window.location.search).has("blackHoleBackDebug");
+const BLACK_HOLE_VISUAL_VARIANT = new URLSearchParams(window.location.search).get("blackHoleVisual") || "current";
 const DEBUG_SOLAR_SPOT_VIEW = new URLSearchParams(window.location.search).has("solarSpotDebug");
 const DEBUG_COMET_VIEW = new URLSearchParams(window.location.search).has("cometDebug");
 const DEBUG_CAMERA_VIEW = new URLSearchParams(window.location.search).has("cameraDebug");
@@ -6122,7 +6123,7 @@ void main(){
   gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0);
 }`;
 
-const BLACK_HOLE_DISK_FRAG = `
+const BLACK_HOLE_DISK_FRAG_CURRENT = `
 uniform float uTime;
 uniform float uInner;
 uniform float uOuter;
@@ -6155,18 +6156,18 @@ float fbm(vec2 p){
 void main(){
   float r=length(vLocalPos.xy);
   float t=clamp((r-uInner)/(uOuter-uInner),0.0,1.0);
-  float a=atan(vLocalPos.y,vLocalPos.x);
+  vec2 dir=normalize(vLocalPos.xy+vec2(0.00001,0.0));
   float edge=smoothstep(0.0,0.08,t)*(1.0-smoothstep(0.88,1.0,t));
   float inner=1.0-smoothstep(0.02,0.42,t);
-  float shear=a-uTime*(2.2-1.35*t);
-  float bands=0.48+0.52*sin(t*86.0+shear*7.2);
-  bands*=0.62+0.38*sin(t*178.0-shear*3.1+uTime*1.45);
-  float dust=fbm(vec2(shear*7.4+uTime*0.08,t*38.0-uTime*0.34));
-  float lane=fbm(vec2(shear*3.1-uTime*0.16,t*14.0+3.7));
+  float swirl=uTime*(2.2-1.35*t);
+  float bands=0.48+0.52*sin(t*86.0+dir.x*18.0+dir.y*11.0-swirl*7.2);
+  bands*=0.62+0.38*sin(t*178.0-dir.x*8.5+dir.y*13.0+uTime*1.45);
+  float dust=fbm(vec2(dir.x*5.5+dir.y*3.2+uTime*0.08,t*38.0-uTime*0.34));
+  float lane=fbm(vec2(dir.x*2.8-dir.y*4.1-uTime*0.16,t*14.0+3.7));
   bands*=0.64+0.48*dust;
-  float doppler=0.58+0.58*smoothstep(-0.42,0.92,sin(a-0.42));
+  float doppler=0.58+0.58*smoothstep(-0.42,0.92,dir.x*0.91-dir.y*0.41);
   float hotLane=exp(-pow((t-0.105)/0.065,2.0));
-  float pulse=0.92+0.18*sin(uTime*3.4+a*4.0);
+  float pulse=0.92+0.18*sin(uTime*3.4+dir.x*4.7+dir.y*3.8);
   float alpha=edge*(0.2+0.68*bands+0.25*dust)*(0.66+inner*2.0+hotLane*1.75)*doppler*(0.72+0.38*lane)*pulse;
   vec3 hot=vec3(1.0,0.92,0.76);
   vec3 amber=vec3(1.0,0.46,0.12);
@@ -6178,7 +6179,65 @@ void main(){
   gl_FragColor=vec4(col,alpha);
 }`;
 
-const BLACK_HOLE_LENS_FRAG = `
+const BLACK_HOLE_DISK_FRAG_GARGANTUA_A = `
+uniform float uTime;
+uniform float uInner;
+uniform float uOuter;
+varying vec3 vLocalPos;
+float hash(vec2 p){
+  p=fract(p*vec2(123.34,456.21));
+  p+=dot(p,p+45.32);
+  return fract(p.x*p.y);
+}
+float noise(vec2 p){
+  vec2 i=floor(p);
+  vec2 f=fract(p);
+  f=f*f*(3.0-2.0*f);
+  float a=hash(i);
+  float b=hash(i+vec2(1.0,0.0));
+  float c=hash(i+vec2(0.0,1.0));
+  float d=hash(i+vec2(1.0,1.0));
+  return mix(mix(a,b,f.x),mix(c,d,f.x),f.y);
+}
+float fbm(vec2 p){
+  float v=0.0;
+  float amp=0.55;
+  for(int i=0;i<4;i++){
+    v+=noise(p)*amp;
+    p*=2.03;
+    amp*=0.5;
+  }
+  return v;
+}
+void main(){
+  float r=length(vLocalPos.xy);
+  float t=clamp((r-uInner)/(uOuter-uInner),0.0,1.0);
+  vec2 dir=normalize(vLocalPos.xy+vec2(0.00001,0.0));
+  float edge=smoothstep(0.0,0.08,t)*(1.0-smoothstep(0.88,1.0,t));
+  float inner=1.0-smoothstep(0.02,0.42,t);
+  float swirl=uTime*(2.2-1.35*t);
+  float bands=0.48+0.52*sin(t*86.0+dir.x*18.0+dir.y*11.0-swirl*7.2);
+  bands*=0.62+0.38*sin(t*178.0-dir.x*8.5+dir.y*13.0+uTime*1.45);
+  float dust=fbm(vec2(dir.x*5.5+dir.y*3.2+uTime*0.08,t*38.0-uTime*0.34));
+  float lane=fbm(vec2(dir.x*2.8-dir.y*4.1-uTime*0.16,t*14.0+3.7));
+  bands*=0.64+0.48*dust;
+  float doppler=0.58+0.58*smoothstep(-0.42,0.92,dir.x*0.91-dir.y*0.41);
+  float hotLane=exp(-pow((t-0.105)/0.065,2.0));
+  float pulse=0.92+0.18*sin(uTime*3.4+dir.x*4.7+dir.y*3.8);
+  float midplane=exp(-pow((vLocalPos.y/r)/0.105,2.0));
+  float alpha=edge*(0.14+0.58*bands+0.22*dust)*(0.56+inner*1.8+hotLane*1.45)*doppler*(0.68+0.34*lane)*pulse;
+  alpha*=0.82+midplane*0.38;
+  vec3 hot=vec3(1.0,0.92,0.76);
+  vec3 amber=vec3(1.0,0.46,0.12);
+  vec3 ember=vec3(0.65,0.12,0.035);
+  vec3 col=mix(amber,hot,inner*0.98+hotLane*0.82+smoothstep(0.62,1.0,bands)*0.35);
+  col=mix(col,ember,smoothstep(0.52,1.0,t)*0.55);
+  col*=0.94+inner*2.55+hotLane*3.1+dust*0.28+midplane*0.46;
+  if(alpha<0.004) discard;
+  gl_FragColor=vec4(col,alpha);
+}`;
+
+const BLACK_HOLE_LENS_FRAG_CURRENT = `
 uniform float uTime;
 uniform float uPlaneScale;
 varying vec2 vUv;
@@ -6205,6 +6264,79 @@ void main(){
   gl_FragColor=vec4(col,alpha);
 }`;
 
+const BLACK_HOLE_LENS_FRAG_GARGANTUA_A = `
+uniform float uTime;
+uniform float uPlaneScale;
+varying vec2 vUv;
+float ring(float r,float target,float width){
+  return exp(-pow((r-target)/width,2.0));
+}
+float fbmLike(vec2 p){
+  float v=0.0;
+  v+=sin(p.x*37.0+p.y*11.0+uTime*0.7)*0.5+0.5;
+  v+=sin(p.x*83.0-p.y*19.0-uTime*1.1)*0.25+0.25;
+  return clamp(v*0.62,0.0,1.0);
+}
+void main(){
+  vec2 p=(vUv-0.5)*2.0*uPlaneScale;
+  float r=length(p);
+  float angle=atan(p.y,p.x);
+  float horizon=1.0-smoothstep(0.27,0.34,r);
+  float spin=angle-uTime*0.82;
+  float grain=0.55+0.45*fbmLike(vec2(angle*2.0,r*4.0));
+
+  float photon=ring(r,0.39,0.011)*(0.78+0.22*sin(spin*18.0));
+  float innerHalo=ring(r,0.47,0.024)*(0.42+0.42*smoothstep(-0.2,0.95,p.x));
+  float rightCrescent=ring(length(vec2((p.x-0.34)*0.62,(p.y+0.01)*1.05)),0.76,0.026)
+    *smoothstep(-0.42,0.86,p.x);
+  float upperFall=ring(length(vec2((p.x+0.18)*0.58,(p.y-0.86)*0.42)),0.82,0.075)
+    *smoothstep(0.04,0.72,p.y);
+  float upperNeedle=ring(length(vec2((p.x+0.06)*0.40,(p.y-1.05)*0.36)),0.88,0.030)
+    *smoothstep(0.28,1.05,p.y);
+  float lowerReturn=ring(length(vec2((p.x-0.16)*0.72,(p.y+0.58)*1.35)),0.72,0.055)
+    *(1.0-smoothstep(-0.55,0.08,p.y));
+  float diskBeam=exp(-pow((p.y-p.x*0.13)/0.055,2.0))*smoothstep(-1.45,0.1,p.x)*(1.0-smoothstep(1.72,2.85,p.x));
+  float farDust=exp(-pow((p.y-p.x*0.12+0.16)/0.16,2.0))*smoothstep(-2.2,-0.36,p.x)*0.52;
+
+  float lens=photon*2.2+innerHalo*0.9+rightCrescent*1.5+upperFall*1.55+upperNeedle*0.82+lowerReturn*0.72+diskBeam*1.15+farDust;
+  lens*=grain;
+  vec3 white=vec3(1.0,0.96,0.82);
+  vec3 cream=vec3(1.0,0.78,0.48);
+  vec3 orange=vec3(1.0,0.42,0.13);
+  vec3 col=mix(orange,cream,clamp(diskBeam+upperFall*0.65+rightCrescent*0.55,0.0,1.0));
+  col=mix(col,white,clamp(photon*1.2+upperNeedle*0.8+diskBeam*0.58,0.0,1.0));
+  float alpha=clamp(lens,0.0,1.0)*(1.0-horizon);
+  if(alpha<0.004) discard;
+  gl_FragColor=vec4(col*(1.0+photon*0.8+diskBeam*0.35),alpha);
+}`;
+
+const BLACK_HOLE_VISUAL_PROFILES = {
+  current: {
+    diskFragmentShader: BLACK_HOLE_DISK_FRAG_CURRENT,
+    lensFragmentShader: BLACK_HOLE_LENS_FRAG_CURRENT,
+    shaderTimeScale: BLACK_HOLE_SHADER_TIME_SCALE,
+    diskSpin: BLACK_HOLE_DISK_SPIN,
+    particleSpin: BLACK_HOLE_PARTICLE_SPIN,
+    diskRotationZDeg: -10,
+    particleSize: 2.6,
+    particleOpacity: 0.9,
+  },
+  gargantuaA: {
+    diskFragmentShader: BLACK_HOLE_DISK_FRAG_GARGANTUA_A,
+    lensFragmentShader: BLACK_HOLE_LENS_FRAG_GARGANTUA_A,
+    shaderTimeScale: 2.25,
+    diskSpin: 1.25,
+    particleSpin: 2.45,
+    diskRotationZDeg: 12,
+    particleSize: 1.65,
+    particleOpacity: 0.56,
+  },
+};
+const blackHoleVisualProfile = BLACK_HOLE_VISUAL_PROFILES[BLACK_HOLE_VISUAL_VARIANT] || BLACK_HOLE_VISUAL_PROFILES.current;
+if (!BLACK_HOLE_VISUAL_PROFILES[BLACK_HOLE_VISUAL_VARIANT]) {
+  console.warn(`Unknown blackHoleVisual="${BLACK_HOLE_VISUAL_VARIANT}". Falling back to current.`);
+}
+
 const blackHoleDiskMaterial = new THREE.ShaderMaterial({
   uniforms: {
     uTime: { value: 0 },
@@ -6212,7 +6344,7 @@ const blackHoleDiskMaterial = new THREE.ShaderMaterial({
     uOuter: { value: BLACK_HOLE_DISK_OUTER },
   },
   vertexShader: BLACK_HOLE_DISK_VERT,
-  fragmentShader: BLACK_HOLE_DISK_FRAG,
+  fragmentShader: blackHoleVisualProfile.diskFragmentShader,
   transparent: true,
   depthWrite: false,
   side: THREE.DoubleSide,
@@ -6224,7 +6356,11 @@ const blackHoleDisk = new THREE.Mesh(
   new THREE.RingGeometry(BLACK_HOLE_DISK_INNER, BLACK_HOLE_DISK_OUTER, 256, 18),
   blackHoleDiskMaterial
 );
-blackHoleDisk.rotation.set(THREE.MathUtils.degToRad(72), THREE.MathUtils.degToRad(-24), THREE.MathUtils.degToRad(-10));
+blackHoleDisk.rotation.set(
+  THREE.MathUtils.degToRad(72),
+  THREE.MathUtils.degToRad(-24),
+  THREE.MathUtils.degToRad(blackHoleVisualProfile.diskRotationZDeg)
+);
 blackHoleDisk.renderOrder = 5;
 blackHoleGroup.add(blackHoleDisk);
 
@@ -6239,7 +6375,7 @@ void main(){
   vUv=uv;
   gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0);
 }`,
-  fragmentShader: BLACK_HOLE_LENS_FRAG,
+  fragmentShader: blackHoleVisualProfile.lensFragmentShader,
   transparent: true,
   depthWrite: false,
   side: THREE.DoubleSide,
@@ -6280,10 +6416,10 @@ blackHoleParticleGeo.setAttribute("color", new THREE.Float32BufferAttribute(blac
 const blackHoleParticles = new THREE.Points(
   blackHoleParticleGeo,
   new THREE.PointsMaterial({
-    size: 2.6,
+    size: blackHoleVisualProfile.particleSize,
     sizeAttenuation: false,
     transparent: true,
-    opacity: 0.9,
+    opacity: blackHoleVisualProfile.particleOpacity,
     depthWrite: false,
     vertexColors: true,
     blending: THREE.AdditiveBlending,
@@ -6588,11 +6724,11 @@ function teleportToBlackHoleTour() {
 }
 
 function updateBlackHole(dt, timeSeconds) {
-  const blackHoleTime = timeSeconds * BLACK_HOLE_SHADER_TIME_SCALE;
+  const blackHoleTime = timeSeconds * blackHoleVisualProfile.shaderTimeScale;
   blackHoleDiskMaterial.uniforms.uTime.value = blackHoleTime;
   blackHoleLensMaterial.uniforms.uTime.value = blackHoleTime;
-  blackHoleDisk.rotation.z += dt * BLACK_HOLE_DISK_SPIN;
-  blackHoleParticles.rotation.z += dt * BLACK_HOLE_PARTICLE_SPIN;
+  blackHoleDisk.rotation.z += dt * blackHoleVisualProfile.diskSpin;
+  blackHoleParticles.rotation.z += dt * blackHoleVisualProfile.particleSpin;
 
   getViewerPose(viewerWorld);
   blackHoleTmp.copy(viewerWorld).sub(BLACK_HOLE_POSITION);
