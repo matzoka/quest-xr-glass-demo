@@ -13,7 +13,7 @@ const klingonButton = document.querySelector("#klingonButton");
 const blackHoleTourButton = document.querySelector("#blackHoleTourButton");
 const controllerHelpButton = document.querySelector("#controllerHelpButton");
 const poseDebugOutputEl = document.querySelector("#poseDebugOutput");
-const APP_VERSION = "v2026.06.19.40";
+const APP_VERSION = "v2026.06.19.41";
 const DEBUG_TOP_VIEW = new URLSearchParams(window.location.search).has("topDebug");
 const DEBUG_TOP_VIEW_DISTANCE = Number(new URLSearchParams(window.location.search).get("topDebugDist"));
 const DEBUG_BLACK_HOLE_VIEW = new URLSearchParams(window.location.search).has("blackHoleDebug");
@@ -22,6 +22,7 @@ const DEBUG_BLACK_HOLE_BACK_VIEW = new URLSearchParams(window.location.search).h
 const BLACK_HOLE_VISUAL_VARIANT = new URLSearchParams(window.location.search).get("blackHoleVisual") || "gargantuaA";
 const DEBUG_SOLAR_SPOT_VIEW = new URLSearchParams(window.location.search).has("solarSpotDebug");
 const DEBUG_SOLAR_PROM_VIEW = new URLSearchParams(window.location.search).has("solarPromDebug");
+const DEBUG_AURORA_VIEW = new URLSearchParams(window.location.search).has("auroraDebug");
 const DEBUG_COMET_VIEW = new URLSearchParams(window.location.search).has("cometDebug");
 const DEBUG_CAMERA_VIEW = new URLSearchParams(window.location.search).has("cameraDebug");
 const DEBUG_POSE_CAPTURE = new URLSearchParams(window.location.search).has("poseDebug");
@@ -1148,14 +1149,14 @@ void main(){
   float night=1.0-smoothstep(-0.18,0.10,lit);
   float lat=abs(n.y);
   float polarBand=smoothstep(0.66,0.78,lat)*(1.0-smoothstep(0.94,1.0,lat));
-  float wave=0.5+0.5*sin(vUv.x*72.0+uTime*1.65+sin(vUv.y*38.0)*2.6);
-  float ribbon=smoothstep(0.42,0.98,wave);
-  float shimmer=0.68+0.32*sin(uTime*3.4+vUv.x*19.0+vUv.y*7.0);
+  float wave=0.5+0.5*sin(vUv.x*58.0+uTime*1.25+sin(vUv.y*31.0)*2.1);
+  float ribbon=smoothstep(0.56,0.99,wave);
+  float shimmer=0.58+0.42*sin(uTime*2.7+vUv.x*17.0+vUv.y*7.0);
   float disturbance=0.28+0.72*uIntensity;
-  float alpha=polarBand*night*(0.16+0.56*ribbon)*shimmer*uIntensity;
+  float alpha=polarBand*night*(0.055+0.24*ribbon)*shimmer*uIntensity;
   if(alpha<0.01) discard;
   vec3 color=mix(vec3(0.25,1.0,0.48),vec3(0.35,0.86,1.0),ribbon);
-  gl_FragColor=vec4(color*alpha*(1.45+disturbance),alpha);
+  gl_FragColor=vec4(color*alpha*(1.12+disturbance),alpha*0.72);
 }`,
   transparent: true,
   blending: THREE.AdditiveBlending,
@@ -1170,15 +1171,136 @@ auroraMesh.renderOrder = 6;
 auroraMesh.visible = false;
 earthMesh.add(auroraMesh);
 
+function makeAuroraCurtainGeometry(hemisphere = 1, phase = 0) {
+  const thetaSegments = 256;
+  const heightSegments = 24;
+  const positions = [];
+  const normals = [];
+  const uvs = [];
+  const indices = [];
+
+  for (let i = 0; i <= thetaSegments; i++) {
+    const u = i / thetaSegments;
+    const theta = u * Math.PI * 2;
+    const lat = THREE.MathUtils.degToRad(
+      65.5 +
+        Math.sin(theta * 2.0 + phase) * 2.7 +
+        Math.sin(theta * 5.0 + phase * 0.7) * 1.35
+    );
+    const polarRadius = Math.cos(lat);
+    const polarY = hemisphere * Math.sin(lat);
+
+    for (let j = 0; j <= heightSegments; j++) {
+      const v = j / heightSegments;
+      const heightWave = Math.sin(theta * 3.0 + phase + v * 1.9) * 0.012;
+      const radius = EARTH_RADIUS * (1.068 + v * 0.34 + heightWave);
+      const x = Math.cos(theta) * polarRadius * radius;
+      const y = polarY * radius + hemisphere * EARTH_RADIUS * v * 0.045;
+      const z = Math.sin(theta) * polarRadius * radius;
+      const normal = new THREE.Vector3(x, y, z).normalize();
+
+      positions.push(x, y, z);
+      normals.push(normal.x, normal.y, normal.z);
+      uvs.push(u, v);
+    }
+  }
+
+  const row = heightSegments + 1;
+  for (let i = 0; i < thetaSegments; i++) {
+    for (let j = 0; j < heightSegments; j++) {
+      const a = i * row + j;
+      const b = (i + 1) * row + j;
+      const c = (i + 1) * row + j + 1;
+      const d = i * row + j + 1;
+      indices.push(a, b, d, b, c, d);
+    }
+  }
+
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+  geometry.setAttribute("normal", new THREE.Float32BufferAttribute(normals, 3));
+  geometry.setAttribute("uv", new THREE.Float32BufferAttribute(uvs, 2));
+  geometry.setIndex(indices);
+  geometry.computeBoundingSphere();
+  return geometry;
+}
+
+const auroraCurtainMaterial = new THREE.ShaderMaterial({
+  uniforms: {
+    ...earthNightUniforms,
+    uTime: { value: 0.0 },
+    uIntensity: { value: 0.0 },
+  },
+  vertexShader: `
+precision mediump float;
+varying vec2 vUv;
+varying vec3 vNormal;
+void main(){
+  vUv=uv;
+  vNormal=normalize(normalMatrix*normal);
+  gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0);
+}`,
+  fragmentShader: `
+precision mediump float;
+uniform vec3 uSunDir;
+uniform float uTime;
+uniform float uIntensity;
+varying vec2 vUv;
+varying vec3 vNormal;
+float hash(float n){return fract(sin(n)*43758.5453123);}
+float valueNoise(float x){
+  float i=floor(x);
+  float f=fract(x);
+  f=f*f*(3.0-2.0*f);
+  return mix(hash(i),hash(i+1.0),f);
+}
+void main(){
+  vec3 n=normalize(vNormal);
+  float lit=dot(n,normalize(uSunDir));
+  float night=1.0-smoothstep(-0.16,0.20,lit);
+  float height=vUv.y;
+  float verticalFade=smoothstep(0.02,0.16,height)*(1.0-smoothstep(0.88,1.0,height));
+  float arcNoise=valueNoise(vUv.x*26.0+sin(uTime*0.045)*2.0);
+  float arcMask=smoothstep(0.28,0.74,arcNoise+0.18*sin(vUv.x*18.0+uTime*0.16));
+  float strand=pow(0.5+0.5*sin(vUv.x*300.0+height*5.0+uTime*2.0),5.0);
+  float softSheet=0.48+0.52*pow(0.5+0.5*sin(vUv.x*58.0-height*5.0+uTime*0.55),2.0);
+  float pulse=0.74+0.26*sin(uTime*1.15+vUv.x*9.0);
+  float alpha=night*uIntensity*verticalFade*arcMask*pulse*(0.78*softSheet+0.28*strand);
+  if(alpha<0.004) discard;
+  vec3 low=vec3(0.22,1.0,0.42);
+  vec3 high=vec3(0.28,0.78,1.0);
+  vec3 violet=vec3(0.58,0.38,1.0);
+  vec3 color=mix(low,high,smoothstep(0.24,0.78,height));
+  color=mix(color,violet,smoothstep(0.72,0.96,height)*0.22);
+  gl_FragColor=vec4(color*alpha*(3.0+uIntensity*2.4),alpha*0.82);
+}`,
+  transparent: true,
+  blending: THREE.AdditiveBlending,
+  side: THREE.DoubleSide,
+  depthWrite: false,
+});
+
+const auroraCurtainGroup = new THREE.Group();
+const auroraNorthCurtain = new THREE.Mesh(makeAuroraCurtainGeometry(1, 0.0), auroraCurtainMaterial);
+const auroraSouthCurtain = new THREE.Mesh(makeAuroraCurtainGeometry(-1, 2.7), auroraCurtainMaterial);
+auroraNorthCurtain.renderOrder = 7;
+auroraSouthCurtain.renderOrder = 7;
+auroraCurtainGroup.visible = false;
+auroraCurtainGroup.add(auroraNorthCurtain, auroraSouthCurtain);
+earthMesh.add(auroraCurtainGroup);
+
 let auroraFlareIntensity = 0;
 let auroraFlareTarget = 0;
 
 function updateAuroraFlare(dt) {
-  const response = auroraFlareTarget > auroraFlareIntensity ? 1 - Math.exp(-dt * 1.9) : 1 - Math.exp(-dt * 0.58);
-  auroraFlareIntensity = THREE.MathUtils.lerp(auroraFlareIntensity, auroraFlareTarget, response);
-  if (auroraFlareIntensity < 0.002 && auroraFlareTarget <= 0.001) auroraFlareIntensity = 0;
+  const target = DEBUG_AURORA_VIEW ? 0.92 : auroraFlareTarget;
+  const response = target > auroraFlareIntensity ? 1 - Math.exp(-dt * 1.9) : 1 - Math.exp(-dt * 0.58);
+  auroraFlareIntensity = THREE.MathUtils.lerp(auroraFlareIntensity, target, response);
+  if (auroraFlareIntensity < 0.002 && target <= 0.001) auroraFlareIntensity = 0;
   auroraMaterial.uniforms.uIntensity.value = auroraFlareIntensity;
+  auroraCurtainMaterial.uniforms.uIntensity.value = auroraFlareIntensity;
   auroraMesh.visible = auroraFlareIntensity > 0.006;
+  auroraCurtainGroup.visible = auroraFlareIntensity > 0.012;
 }
 
 const nightSunWorld = new THREE.Vector3();
@@ -1191,6 +1313,7 @@ function updateEarthNightSide(timeSeconds) {
   nightSunLocal.normalize();
   earthNightSunDir.copy(nightSunLocal);
   auroraMaterial.uniforms.uTime.value = timeSeconds;
+  auroraCurtainMaterial.uniforms.uTime.value = timeSeconds;
 }
 
 // Tilt the spin axis ~23.4 degrees like the real Earth.
