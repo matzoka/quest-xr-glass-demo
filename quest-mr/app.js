@@ -13,7 +13,7 @@ const klingonButton = document.querySelector("#klingonButton");
 const blackHoleTourButton = document.querySelector("#blackHoleTourButton");
 const controllerHelpButton = document.querySelector("#controllerHelpButton");
 const poseDebugOutputEl = document.querySelector("#poseDebugOutput");
-const APP_VERSION = "v2026.06.19.39";
+const APP_VERSION = "v2026.06.19.40";
 const DEBUG_TOP_VIEW = new URLSearchParams(window.location.search).has("topDebug");
 const DEBUG_TOP_VIEW_DISTANCE = Number(new URLSearchParams(window.location.search).get("topDebugDist"));
 const DEBUG_BLACK_HOLE_VIEW = new URLSearchParams(window.location.search).has("blackHoleDebug");
@@ -5477,6 +5477,7 @@ function makeSolarProminenceSlot() {
     footScale: new THREE.Vector3(),
     apexGlowBaseScale: SUN_RADIUS * 0.31,
     points: [],
+    earthFacingFactor: 0,
   };
 }
 
@@ -5492,6 +5493,7 @@ const solarLimbAxisA = new THREE.Vector3();
 const solarLimbAxisB = new THREE.Vector3();
 const solarPromCandidateWorld = new THREE.Vector3();
 const solarPromCandidateNdc = new THREE.Vector3();
+const solarEarthLocal = new THREE.Vector3();
 
 function getActiveSolarProminenceCount() {
   let count = 0;
@@ -5529,6 +5531,18 @@ function randomSolarProminenceThickness() {
   if (r < 0.18) return 0.76 + Math.random() * 0.16;
   if (r > 0.78) return 1.24 + Math.random() * 0.24;
   return 0.94 + Math.random() * 0.28;
+}
+
+function getSolarProminenceEarthFacingFactor(localSurfaceDir) {
+  sunMesh.updateWorldMatrix(true, false);
+  solarEarthLocal.copy(ballGroup.position);
+  sunMesh.worldToLocal(solarEarthLocal);
+  solarEarthLocal.normalize();
+
+  // Aurora is driven by solar-wind/CME impact on Earth. Far-side events should
+  // not energize Earth's aurora in this compressed visual model.
+  const earthward = localSurfaceDir.dot(solarEarthLocal);
+  return THREE.MathUtils.smoothstep(earthward, -0.12, 0.68);
 }
 
 function makeSolarFlameRibbonGeometry(points, side, tangent, widthBase, seed, widthMul = 1, tangentMul = 1) {
@@ -5680,6 +5694,7 @@ function spawnSolarProminence() {
   solarLimbAxisB.crossVectors(solarViewDir, solarLimbAxisA).normalize();
   setRandomVisibleSolarLimbDir();
   solarDir.copy(solarLimbDir).addScaledVector(solarViewDir, 0.04).normalize();
+  slot.earthFacingFactor = getSolarProminenceEarthFacingFactor(solarLimbDir);
 
   solarTangent.crossVectors(solarViewDir, solarDir);
   if (solarTangent.lengthSq() < 1e-5) solarTangent.crossVectors(_yUp, solarDir);
@@ -5821,7 +5836,7 @@ function updateSolarProminence(dt) {
     scheduleNextSolarProminence(getActiveSolarProminenceCount());
   }
 
-  let strongestOpacity = 0;
+  let strongestGeoEffectiveOpacity = 0;
   for (const slot of solarProminenceSlots) {
     if (!slot.active) continue;
 
@@ -5831,7 +5846,7 @@ function updateSolarProminence(dt) {
     const fade = fadeIn * fadeOut;
     const pulse = 0.86 + Math.sin(elapsed * 1.1 + slot.duration * 0.13) * 0.06 + Math.sin(elapsed * 2.3) * 0.035;
     const opacity = Math.max(0, fade * pulse);
-    strongestOpacity = Math.max(strongestOpacity, opacity);
+    strongestGeoEffectiveOpacity = Math.max(strongestGeoEffectiveOpacity, opacity * slot.earthFacingFactor);
 
     for (const mat of slot.materials) {
       mat.uniforms.uTime.value = elapsed;
@@ -5848,6 +5863,7 @@ function updateSolarProminence(dt) {
     if (slot.t >= slot.duration) {
       slot.active = false;
       slot.group.visible = false;
+      slot.earthFacingFactor = 0;
       for (const mat of slot.materials) {
         mat.uniforms.uOpacity.value = 0;
       }
@@ -5857,7 +5873,7 @@ function updateSolarProminence(dt) {
     }
   }
 
-  auroraFlareTarget = THREE.MathUtils.clamp(strongestOpacity * 1.18, 0, 1);
+  auroraFlareTarget = THREE.MathUtils.clamp(strongestGeoEffectiveOpacity * 1.18, 0, 1);
 }
 
 function getSolarProminenceDebugState() {
@@ -5873,6 +5889,7 @@ function getSolarProminenceDebugState() {
       t: slot.t,
       duration: slot.duration,
       remaining: Math.max(0, slot.duration - slot.t),
+      earthFacingFactor: slot.earthFacingFactor,
     })),
   };
 }
