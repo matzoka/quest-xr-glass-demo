@@ -13,7 +13,7 @@ const klingonButton = document.querySelector("#klingonButton");
 const blackHoleTourButton = document.querySelector("#blackHoleTourButton");
 const controllerHelpButton = document.querySelector("#controllerHelpButton");
 const poseDebugOutputEl = document.querySelector("#poseDebugOutput");
-const APP_VERSION = "v2026.06.19.31";
+const APP_VERSION = "v2026.06.19.32";
 const DEBUG_TOP_VIEW = new URLSearchParams(window.location.search).has("topDebug");
 const DEBUG_TOP_VIEW_DISTANCE = Number(new URLSearchParams(window.location.search).get("topDebugDist"));
 const DEBUG_BLACK_HOLE_VIEW = new URLSearchParams(window.location.search).has("blackHoleDebug");
@@ -1130,12 +1130,14 @@ const auroraMaterial = new THREE.ShaderMaterial({
   uniforms: {
     ...earthNightUniforms,
     uTime: { value: 0.0 },
+    uIntensity: { value: 0.0 },
   },
   vertexShader: earthNightVert,
   fragmentShader: `
 precision mediump float;
 uniform vec3 uSunDir;
 uniform float uTime;
+uniform float uIntensity;
 varying vec2 vUv;
 varying vec3 vNormal;
 void main(){
@@ -1147,10 +1149,11 @@ void main(){
   float wave=0.5+0.5*sin(vUv.x*72.0+uTime*1.65+sin(vUv.y*38.0)*2.6);
   float ribbon=smoothstep(0.42,0.98,wave);
   float shimmer=0.68+0.32*sin(uTime*3.4+vUv.x*19.0+vUv.y*7.0);
-  float alpha=polarBand*night*(0.16+0.56*ribbon)*shimmer;
+  float disturbance=0.28+0.72*uIntensity;
+  float alpha=polarBand*night*(0.16+0.56*ribbon)*shimmer*uIntensity;
   if(alpha<0.01) discard;
   vec3 color=mix(vec3(0.25,1.0,0.48),vec3(0.35,0.86,1.0),ribbon);
-  gl_FragColor=vec4(color*alpha*1.75,alpha);
+  gl_FragColor=vec4(color*alpha*(1.45+disturbance),alpha);
 }`,
   transparent: true,
   blending: THREE.AdditiveBlending,
@@ -1162,7 +1165,19 @@ const auroraMesh = new THREE.Mesh(
   auroraMaterial
 );
 auroraMesh.renderOrder = 6;
+auroraMesh.visible = false;
 earthMesh.add(auroraMesh);
+
+let auroraFlareIntensity = 0;
+let auroraFlareTarget = 0;
+
+function updateAuroraFlare(dt) {
+  const response = auroraFlareTarget > auroraFlareIntensity ? 1 - Math.exp(-dt * 1.9) : 1 - Math.exp(-dt * 0.58);
+  auroraFlareIntensity = THREE.MathUtils.lerp(auroraFlareIntensity, auroraFlareTarget, response);
+  if (auroraFlareIntensity < 0.002 && auroraFlareTarget <= 0.001) auroraFlareIntensity = 0;
+  auroraMaterial.uniforms.uIntensity.value = auroraFlareIntensity;
+  auroraMesh.visible = auroraFlareIntensity > 0.006;
+}
 
 const nightSunWorld = new THREE.Vector3();
 const nightSunLocal = new THREE.Vector3();
@@ -5517,10 +5532,12 @@ function spawnSolarProminence() {
   solarProminenceT = 0;
   solarProminenceGroup.visible = true;
   solarProminenceActive = true;
+  auroraFlareTarget = 0.18;
 }
 
 function updateSolarProminence(dt) {
   if (!solarProminenceActive) {
+    auroraFlareTarget = 0;
     if (elapsed >= nextSolarProminenceAt) spawnSolarProminence();
     return;
   }
@@ -5530,6 +5547,7 @@ function updateSolarProminence(dt) {
   const fade = THREE.MathUtils.smoothstep(p, 0, 0.18) * (1 - THREE.MathUtils.smoothstep(p, 0.72, 1.0));
   const pulse = 0.82 + Math.sin(elapsed * 5.1) * 0.08 + Math.sin(elapsed * 9.3) * 0.04;
   const opacity = Math.max(0, fade * pulse);
+  auroraFlareTarget = THREE.MathUtils.clamp(opacity * 1.18, 0, 1);
 
   for (const mat of [solarPromCoreMat, solarPromGlowMat, solarPromStrandMat, solarPromStrandB.material]) {
     mat.uniforms.uTime.value = elapsed;
@@ -5546,6 +5564,7 @@ function updateSolarProminence(dt) {
   if (p >= 1) {
     solarProminenceActive = false;
     solarProminenceGroup.visible = false;
+    auroraFlareTarget = 0;
     solarPromCoreMat.uniforms.uOpacity.value = 0;
     solarPromGlowMat.uniforms.uOpacity.value = 0;
     solarPromStrandMat.uniforms.uOpacity.value = 0;
@@ -7214,6 +7233,7 @@ renderer.setAnimationLoop((timestamp) => {
   updateMeteor(dt);
   updateComet(dt);
   updateSolarProminence(dt);
+  updateAuroraFlare(dt);
   updateSolarSpots(dt);
   updateKlingon(dt);
   updateEnterprise(dt);
