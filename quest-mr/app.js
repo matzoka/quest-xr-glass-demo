@@ -13,7 +13,7 @@ const klingonButton = document.querySelector("#klingonButton");
 const blackHoleTourButton = document.querySelector("#blackHoleTourButton");
 const controllerHelpButton = document.querySelector("#controllerHelpButton");
 const poseDebugOutputEl = document.querySelector("#poseDebugOutput");
-const APP_VERSION = "v2026.06.19.29";
+const APP_VERSION = "v2026.06.19.30";
 const DEBUG_TOP_VIEW = new URLSearchParams(window.location.search).has("topDebug");
 const DEBUG_TOP_VIEW_DISTANCE = Number(new URLSearchParams(window.location.search).get("topDebugDist"));
 const DEBUG_BLACK_HOLE_VIEW = new URLSearchParams(window.location.search).has("blackHoleDebug");
@@ -4179,7 +4179,7 @@ const xBrowserPanel = new THREE.Group();
 xBrowserPanel.visible = false;
 
 const xBrowserPanelBack = new THREE.Mesh(
-  new THREE.PlaneGeometry(2.52, 3.42),
+  new THREE.PlaneGeometry(3.04, 4.12),
   new THREE.MeshBasicMaterial({
     map: makeXBrowserFrameTexture(),
     transparent: true,
@@ -4193,7 +4193,7 @@ xBrowserPanelBack.renderOrder = 74;
 xBrowserPanel.add(xBrowserPanelBack);
 
 const xBrowserSnapshot = new THREE.Mesh(
-  new THREE.PlaneGeometry(1.82, 2.72),
+  new THREE.PlaneGeometry(2.2, 3.28),
   new THREE.MeshBasicMaterial({
     map: loadXProfileSnapshotTexture(),
     transparent: true,
@@ -4207,7 +4207,7 @@ xBrowserSnapshot.position.set(0, -0.08, -0.014);
 xBrowserSnapshot.renderOrder = 76;
 xBrowserPanel.add(xBrowserSnapshot);
 
-xBrowserPanel.position.set(roomCenter.x + 1.15, roomCenter.y + 0.05, roomCenter.z + roomHalf.z - 0.035);
+xBrowserPanel.position.set(roomCenter.x + 1.15, roomCenter.y + 0.05, roomCenter.z - roomHalf.z + 0.035);
 xBrowserPanel.rotation.y = 0;
 scene.add(xBrowserPanel);
 
