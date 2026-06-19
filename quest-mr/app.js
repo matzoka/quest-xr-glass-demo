@@ -13,7 +13,7 @@ const klingonButton = document.querySelector("#klingonButton");
 const blackHoleTourButton = document.querySelector("#blackHoleTourButton");
 const controllerHelpButton = document.querySelector("#controllerHelpButton");
 const poseDebugOutputEl = document.querySelector("#poseDebugOutput");
-const APP_VERSION = "v2026.06.20.03";
+const APP_VERSION = "v2026.06.20.04";
 const DEBUG_TOP_VIEW = new URLSearchParams(window.location.search).has("topDebug");
 const DEBUG_TOP_VIEW_DISTANCE = Number(new URLSearchParams(window.location.search).get("topDebugDist"));
 const DEBUG_BLACK_HOLE_VIEW = new URLSearchParams(window.location.search).has("blackHoleDebug");
@@ -1645,7 +1645,7 @@ const meteor = new THREE.Mesh(
   })
 );
 const meteorTrail = new THREE.Mesh(
-  new THREE.ConeGeometry(0.0045, 0.13, 12, 1, true),
+  new THREE.ConeGeometry(0.001125, 0.13, 12, 1, true),
   new THREE.MeshBasicMaterial({
     color: 0xffb060,
     transparent: true,
