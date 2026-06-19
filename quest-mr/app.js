@@ -13,7 +13,7 @@ const klingonButton = document.querySelector("#klingonButton");
 const blackHoleTourButton = document.querySelector("#blackHoleTourButton");
 const controllerHelpButton = document.querySelector("#controllerHelpButton");
 const poseDebugOutputEl = document.querySelector("#poseDebugOutput");
-const APP_VERSION = "v2026.06.19.48";
+const APP_VERSION = "v2026.06.19.49";
 const DEBUG_TOP_VIEW = new URLSearchParams(window.location.search).has("topDebug");
 const DEBUG_TOP_VIEW_DISTANCE = Number(new URLSearchParams(window.location.search).get("topDebugDist"));
 const DEBUG_BLACK_HOLE_VIEW = new URLSearchParams(window.location.search).has("blackHoleDebug");
@@ -1129,10 +1129,13 @@ const cityLightsMesh = new THREE.Mesh(
 cityLightsMesh.renderOrder = 5;
 earthMesh.add(cityLightsMesh);
 
-const AURORA_SURFACE_RADIUS_SCALE = 1.085;
-const AURORA_CURTAIN_BASE_RADIUS_SCALE = 1.115;
-const AURORA_CURTAIN_HEIGHT_SCALE = 0.30;
-const AURORA_CURTAIN_POLAR_LIFT_SCALE = 0.052;
+const AURORA_SURFACE_RADIUS_SCALE = 1.058;
+const AURORA_CURTAIN_MIN_BASE_RADIUS_SCALE = 1.045;
+const AURORA_CURTAIN_MAX_BASE_RADIUS_SCALE = 1.125;
+const AURORA_CURTAIN_MIN_HEIGHT_SCALE = 0.12;
+const AURORA_CURTAIN_MAX_HEIGHT_SCALE = 0.30;
+const AURORA_CURTAIN_MIN_POLAR_LIFT_SCALE = 0.022;
+const AURORA_CURTAIN_MAX_POLAR_LIFT_SCALE = 0.054;
 
 const auroraMaterial = new THREE.ShaderMaterial({
   uniforms: {
@@ -1199,13 +1202,36 @@ function makeAuroraCurtainGeometry(hemisphere = 1, phase = 0) {
     );
     const polarRadius = Math.cos(lat);
     const polarY = hemisphere * Math.sin(lat);
+    const altitudeNoise = THREE.MathUtils.clamp(
+      0.5 +
+        Math.sin(theta * 2.0 + phase * 0.9) * 0.34 +
+        Math.sin(theta * 5.0 - phase * 0.55) * 0.18,
+      0,
+      1
+    );
+    const altitudeMix = THREE.MathUtils.smoothstep(altitudeNoise, 0, 1);
+    const baseRadiusScale = THREE.MathUtils.lerp(
+      AURORA_CURTAIN_MIN_BASE_RADIUS_SCALE,
+      AURORA_CURTAIN_MAX_BASE_RADIUS_SCALE,
+      altitudeMix
+    );
+    const heightScale = THREE.MathUtils.lerp(
+      AURORA_CURTAIN_MIN_HEIGHT_SCALE,
+      AURORA_CURTAIN_MAX_HEIGHT_SCALE,
+      altitudeMix
+    );
+    const polarLiftScale = THREE.MathUtils.lerp(
+      AURORA_CURTAIN_MIN_POLAR_LIFT_SCALE,
+      AURORA_CURTAIN_MAX_POLAR_LIFT_SCALE,
+      altitudeMix
+    );
 
     for (let j = 0; j <= heightSegments; j++) {
       const v = j / heightSegments;
       const heightWave = Math.sin(theta * 3.0 + phase + v * 1.9) * 0.007;
-      const radius = EARTH_RADIUS * (AURORA_CURTAIN_BASE_RADIUS_SCALE + v * AURORA_CURTAIN_HEIGHT_SCALE + heightWave);
+      const radius = EARTH_RADIUS * (baseRadiusScale + v * heightScale + heightWave);
       const x = Math.cos(theta) * polarRadius * radius;
-      const y = polarY * radius + hemisphere * EARTH_RADIUS * v * AURORA_CURTAIN_POLAR_LIFT_SCALE;
+      const y = polarY * radius + hemisphere * EARTH_RADIUS * v * polarLiftScale;
       const z = Math.sin(theta) * polarRadius * radius;
       const normal = new THREE.Vector3(x, y, z).normalize();
 
