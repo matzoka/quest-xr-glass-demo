@@ -6302,9 +6302,10 @@ void main(){
   // extra glow piled up directly above and below the shadow (the vertical lensed arcs that close the ring)
   float vert=ring(r,0.38,0.105)*pow(abs(nrm.y),1.15)*(0.55+0.55*filament);
   // bright horizontal sweep of the disk crossing in front, fanning out to both sides
-  float band=exp(-pow((p.y+0.01-p.x*0.05)/0.07,2.0))*(0.5+0.5*fbmLike(vec2(angle*1.8-uTime*0.5,r*2.2)))*(0.55+0.55*filament);
+  // (fades out before the plane edge so the disk never ends in a hard rectangular cut)
+  float band=exp(-pow((p.y+0.01-p.x*0.05)/0.07,2.0))*exp(-pow(p.x/2.7,2.0))*(0.5+0.5*fbmLike(vec2(angle*1.8-uTime*0.5,r*2.2)))*(0.55+0.55*filament);
   // faint top-surface spread of the near disk receding into the foreground (slightly from above)
-  float sheet=exp(-pow((p.y+0.48)/0.24,2.0))*(0.4+0.6*fbmLike(vec2(angle*2.2-uTime*0.4,r*2.0)))*0.35;
+  float sheet=exp(-pow((p.y+0.48)/0.24,2.0))*exp(-pow(p.x/2.4,2.0))*(0.4+0.6*fbmLike(vec2(angle*2.2-uTime*0.4,r*2.0)))*0.35;
   // warm glare on the bright doppler side
   float glare=exp(-pow(length(vec2((p.x-0.34)*0.62,p.y*0.85))/0.19,2.0));
 
