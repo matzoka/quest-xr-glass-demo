@@ -13,7 +13,7 @@ const klingonButton = document.querySelector("#klingonButton");
 const blackHoleTourButton = document.querySelector("#blackHoleTourButton");
 const controllerHelpButton = document.querySelector("#controllerHelpButton");
 const poseDebugOutputEl = document.querySelector("#poseDebugOutput");
-const APP_VERSION = "v2026.06.19.35";
+const APP_VERSION = "v2026.06.19.36";
 const DEBUG_TOP_VIEW = new URLSearchParams(window.location.search).has("topDebug");
 const DEBUG_TOP_VIEW_DISTANCE = Number(new URLSearchParams(window.location.search).get("topDebugDist"));
 const DEBUG_BLACK_HOLE_VIEW = new URLSearchParams(window.location.search).has("blackHoleDebug");
@@ -6331,6 +6331,18 @@ const BLACK_HOLE_VISUAL_PROFILES = {
     particleSize: 1.65,
     particleOpacity: 0.56,
   },
+  referenceImageA: {
+    diskFragmentShader: BLACK_HOLE_DISK_FRAG_CURRENT,
+    lensFragmentShader: BLACK_HOLE_LENS_FRAG_CURRENT,
+    shaderTimeScale: 0.85,
+    diskSpin: 0,
+    particleSpin: 0,
+    diskRotationZDeg: -10,
+    particleSize: 0,
+    particleOpacity: 0,
+    imageTextureFile: "black-hole-reference-image-a.png",
+    imageAspect: 2048 / 870,
+  },
 };
 const blackHoleVisualProfile = BLACK_HOLE_VISUAL_PROFILES[BLACK_HOLE_VISUAL_VARIANT] || BLACK_HOLE_VISUAL_PROFILES.current;
 if (!BLACK_HOLE_VISUAL_PROFILES[BLACK_HOLE_VISUAL_VARIANT]) {
@@ -6428,6 +6440,35 @@ const blackHoleParticles = new THREE.Points(
 );
 blackHoleParticles.rotation.copy(blackHoleDisk.rotation);
 blackHoleGroup.add(blackHoleParticles);
+
+const blackHoleReferenceImageTexture = blackHoleVisualProfile.imageTextureFile
+  ? loadTex(blackHoleVisualProfile.imageTextureFile)
+  : null;
+const blackHoleReferenceImageMaterial = new THREE.MeshBasicMaterial({
+  map: blackHoleReferenceImageTexture,
+  transparent: false,
+  depthWrite: false,
+  side: THREE.DoubleSide,
+  toneMapped: false,
+});
+const blackHoleReferenceImageWidth = BLACK_HOLE_DISK_OUTER * 2.92;
+const blackHoleReferenceImagePlane = new THREE.Mesh(
+  new THREE.PlaneGeometry(
+    blackHoleReferenceImageWidth,
+    blackHoleReferenceImageWidth / (blackHoleVisualProfile.imageAspect || 2.35)
+  ),
+  blackHoleReferenceImageMaterial
+);
+blackHoleReferenceImagePlane.renderOrder = 9;
+blackHoleReferenceImagePlane.visible = Boolean(blackHoleVisualProfile.imageTextureFile);
+blackHoleGroup.add(blackHoleReferenceImagePlane);
+
+if (blackHoleVisualProfile.imageTextureFile) {
+  blackHoleDisk.visible = false;
+  blackHoleLens.visible = false;
+  blackHoleCore.visible = false;
+  blackHoleParticles.visible = false;
+}
 
 const blackHoleTunnel = new THREE.Group();
 blackHoleTunnel.visible = false;
@@ -6734,6 +6775,7 @@ function updateBlackHole(dt, timeSeconds) {
   blackHoleTmp.copy(viewerWorld).sub(BLACK_HOLE_POSITION);
   const distance = blackHoleTmp.length();
   blackHoleLens.lookAt(viewerWorld);
+  if (blackHoleReferenceImagePlane.visible) blackHoleReferenceImagePlane.lookAt(viewerWorld);
   updateBlackHoleRumble(distance, dt, timeSeconds);
 
   if (blackHoleCooldown > 0) blackHoleCooldown = Math.max(0, blackHoleCooldown - dt);
