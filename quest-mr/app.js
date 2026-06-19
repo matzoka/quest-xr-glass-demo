@@ -13,7 +13,7 @@ const klingonButton = document.querySelector("#klingonButton");
 const blackHoleTourButton = document.querySelector("#blackHoleTourButton");
 const controllerHelpButton = document.querySelector("#controllerHelpButton");
 const poseDebugOutputEl = document.querySelector("#poseDebugOutput");
-const APP_VERSION = "v2026.06.19.41";
+const APP_VERSION = "v2026.06.19.45";
 const DEBUG_TOP_VIEW = new URLSearchParams(window.location.search).has("topDebug");
 const DEBUG_TOP_VIEW_DISTANCE = Number(new URLSearchParams(window.location.search).get("topDebugDist"));
 const DEBUG_BLACK_HOLE_VIEW = new URLSearchParams(window.location.search).has("blackHoleDebug");
@@ -1146,17 +1146,18 @@ varying vec3 vNormal;
 void main(){
   vec3 n=normalize(vNormal);
   float lit=dot(n,normalize(uSunDir));
-  float night=1.0-smoothstep(-0.18,0.10,lit);
+  if(lit>-0.02) discard;
+  float night=1.0-smoothstep(-0.30,-0.04,lit);
   float lat=abs(n.y);
-  float polarBand=smoothstep(0.66,0.78,lat)*(1.0-smoothstep(0.94,1.0,lat));
-  float wave=0.5+0.5*sin(vUv.x*58.0+uTime*1.25+sin(vUv.y*31.0)*2.1);
-  float ribbon=smoothstep(0.56,0.99,wave);
-  float shimmer=0.58+0.42*sin(uTime*2.7+vUv.x*17.0+vUv.y*7.0);
-  float disturbance=0.28+0.72*uIntensity;
-  float alpha=polarBand*night*(0.055+0.24*ribbon)*shimmer*uIntensity;
+  float polarBand=smoothstep(0.67,0.77,lat)*(1.0-smoothstep(0.955,1.0,lat));
+  float wave=0.5+0.5*sin(vUv.x*64.0+uTime*0.95+sin(vUv.y*29.0)*1.7);
+  float ribbon=smoothstep(0.58,0.98,wave);
+  float shimmer=0.68+0.32*sin(uTime*2.2+vUv.x*17.0+vUv.y*7.0);
+  float disturbance=0.20+0.62*uIntensity;
+  float alpha=polarBand*night*(0.040+0.18*ribbon)*shimmer*uIntensity;
   if(alpha<0.01) discard;
-  vec3 color=mix(vec3(0.25,1.0,0.48),vec3(0.35,0.86,1.0),ribbon);
-  gl_FragColor=vec4(color*alpha*(1.12+disturbance),alpha*0.72);
+  vec3 color=mix(vec3(0.18,0.95,0.34),vec3(0.24,0.72,0.86),ribbon);
+  gl_FragColor=vec4(color*alpha*(1.10+disturbance),alpha*0.64);
 }`,
   transparent: true,
   blending: THREE.AdditiveBlending,
@@ -1183,19 +1184,19 @@ function makeAuroraCurtainGeometry(hemisphere = 1, phase = 0) {
     const u = i / thetaSegments;
     const theta = u * Math.PI * 2;
     const lat = THREE.MathUtils.degToRad(
-      65.5 +
-        Math.sin(theta * 2.0 + phase) * 2.7 +
-        Math.sin(theta * 5.0 + phase * 0.7) * 1.35
+      67.2 +
+        Math.sin(theta * 2.0 + phase) * 2.2 +
+        Math.sin(theta * 5.0 + phase * 0.7) * 1.05
     );
     const polarRadius = Math.cos(lat);
     const polarY = hemisphere * Math.sin(lat);
 
     for (let j = 0; j <= heightSegments; j++) {
       const v = j / heightSegments;
-      const heightWave = Math.sin(theta * 3.0 + phase + v * 1.9) * 0.012;
-      const radius = EARTH_RADIUS * (1.068 + v * 0.34 + heightWave);
+      const heightWave = Math.sin(theta * 3.0 + phase + v * 1.9) * 0.007;
+      const radius = EARTH_RADIUS * (1.052 + v * 0.24 + heightWave);
       const x = Math.cos(theta) * polarRadius * radius;
-      const y = polarY * radius + hemisphere * EARTH_RADIUS * v * 0.045;
+      const y = polarY * radius + hemisphere * EARTH_RADIUS * v * 0.032;
       const z = Math.sin(theta) * polarRadius * radius;
       const normal = new THREE.Vector3(x, y, z).normalize();
 
@@ -1237,7 +1238,7 @@ varying vec2 vUv;
 varying vec3 vNormal;
 void main(){
   vUv=uv;
-  vNormal=normalize(normalMatrix*normal);
+  vNormal=normalize(normal);
   gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0);
 }`,
   fragmentShader: `
@@ -1257,22 +1258,23 @@ float valueNoise(float x){
 void main(){
   vec3 n=normalize(vNormal);
   float lit=dot(n,normalize(uSunDir));
-  float night=1.0-smoothstep(-0.16,0.20,lit);
+  if(lit>-0.02) discard;
+  float night=1.0-smoothstep(-0.34,-0.05,lit);
   float height=vUv.y;
-  float verticalFade=smoothstep(0.02,0.16,height)*(1.0-smoothstep(0.88,1.0,height));
-  float arcNoise=valueNoise(vUv.x*26.0+sin(uTime*0.045)*2.0);
-  float arcMask=smoothstep(0.28,0.74,arcNoise+0.18*sin(vUv.x*18.0+uTime*0.16));
-  float strand=pow(0.5+0.5*sin(vUv.x*300.0+height*5.0+uTime*2.0),5.0);
-  float softSheet=0.48+0.52*pow(0.5+0.5*sin(vUv.x*58.0-height*5.0+uTime*0.55),2.0);
-  float pulse=0.74+0.26*sin(uTime*1.15+vUv.x*9.0);
-  float alpha=night*uIntensity*verticalFade*arcMask*pulse*(0.78*softSheet+0.28*strand);
-  if(alpha<0.004) discard;
-  vec3 low=vec3(0.22,1.0,0.42);
-  vec3 high=vec3(0.28,0.78,1.0);
-  vec3 violet=vec3(0.58,0.38,1.0);
+  float verticalFade=smoothstep(0.02,0.18,height)*(1.0-smoothstep(0.74,1.0,height));
+  float arcNoise=valueNoise(vUv.x*22.0+sin(uTime*0.036)*1.7);
+  float arcMask=smoothstep(0.24,0.76,arcNoise+0.16*sin(vUv.x*13.0+uTime*0.11));
+  float fineStrand=pow(0.5+0.5*sin(vUv.x*180.0+height*5.4+uTime*1.35),5.0);
+  float broadVeil=0.56+0.44*pow(0.5+0.5*sin(vUv.x*34.0-height*4.0+uTime*0.34),2.0);
+  float verticalPulse=0.78+0.22*sin(height*9.0+uTime*0.72+vUv.x*7.0);
+  float alpha=night*uIntensity*verticalFade*arcMask*verticalPulse*(0.48*broadVeil+0.18*fineStrand);
+  if(alpha<0.003) discard;
+  vec3 low=vec3(0.12,0.95,0.30);
+  vec3 high=vec3(0.22,0.80,0.72);
+  vec3 violet=vec3(0.40,0.28,0.82);
   vec3 color=mix(low,high,smoothstep(0.24,0.78,height));
-  color=mix(color,violet,smoothstep(0.72,0.96,height)*0.22);
-  gl_FragColor=vec4(color*alpha*(3.0+uIntensity*2.4),alpha*0.82);
+  color=mix(color,violet,smoothstep(0.70,0.96,height)*0.16);
+  gl_FragColor=vec4(color*alpha*(2.45+uIntensity*1.45),alpha*0.74);
 }`,
   transparent: true,
   blending: THREE.AdditiveBlending,
