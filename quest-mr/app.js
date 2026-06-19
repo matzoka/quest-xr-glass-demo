@@ -19,7 +19,7 @@ const DEBUG_TOP_VIEW_DISTANCE = Number(new URLSearchParams(window.location.searc
 const DEBUG_BLACK_HOLE_VIEW = new URLSearchParams(window.location.search).has("blackHoleDebug");
 const DEBUG_BLACK_HOLE_FALL = new URLSearchParams(window.location.search).has("blackHoleFallDebug");
 const DEBUG_BLACK_HOLE_BACK_VIEW = new URLSearchParams(window.location.search).has("blackHoleBackDebug");
-const BLACK_HOLE_VISUAL_VARIANT = new URLSearchParams(window.location.search).get("blackHoleVisual") || "current";
+const BLACK_HOLE_VISUAL_VARIANT = new URLSearchParams(window.location.search).get("blackHoleVisual") || "gargantuaA";
 const DEBUG_SOLAR_SPOT_VIEW = new URLSearchParams(window.location.search).has("solarSpotDebug");
 const DEBUG_COMET_VIEW = new URLSearchParams(window.location.search).has("cometDebug");
 const DEBUG_CAMERA_VIEW = new URLSearchParams(window.location.search).has("cameraDebug");
@@ -6213,26 +6213,29 @@ void main(){
   float r=length(vLocalPos.xy);
   float t=clamp((r-uInner)/(uOuter-uInner),0.0,1.0);
   vec2 dir=normalize(vLocalPos.xy+vec2(0.00001,0.0));
-  float edge=smoothstep(0.0,0.08,t)*(1.0-smoothstep(0.88,1.0,t));
-  float inner=1.0-smoothstep(0.02,0.42,t);
-  float swirl=uTime*(2.2-1.35*t);
-  float bands=0.48+0.52*sin(t*86.0+dir.x*18.0+dir.y*11.0-swirl*7.2);
-  bands*=0.62+0.38*sin(t*178.0-dir.x*8.5+dir.y*13.0+uTime*1.45);
-  float dust=fbm(vec2(dir.x*5.5+dir.y*3.2+uTime*0.08,t*38.0-uTime*0.34));
-  float lane=fbm(vec2(dir.x*2.8-dir.y*4.1-uTime*0.16,t*14.0+3.7));
-  bands*=0.64+0.48*dust;
-  float doppler=0.58+0.58*smoothstep(-0.42,0.92,dir.x*0.91-dir.y*0.41);
-  float hotLane=exp(-pow((t-0.105)/0.065,2.0));
-  float pulse=0.92+0.18*sin(uTime*3.4+dir.x*4.7+dir.y*3.8);
-  float midplane=exp(-pow((vLocalPos.y/r)/0.105,2.0));
-  float alpha=edge*(0.14+0.58*bands+0.22*dust)*(0.56+inner*1.8+hotLane*1.45)*doppler*(0.68+0.34*lane)*pulse;
-  alpha*=0.82+midplane*0.38;
-  vec3 hot=vec3(1.0,0.92,0.76);
-  vec3 amber=vec3(1.0,0.46,0.12);
-  vec3 ember=vec3(0.65,0.12,0.035);
-  vec3 col=mix(amber,hot,inner*0.98+hotLane*0.82+smoothstep(0.62,1.0,bands)*0.35);
-  col=mix(col,ember,smoothstep(0.52,1.0,t)*0.55);
-  col*=0.94+inner*2.55+hotLane*3.1+dust*0.28+midplane*0.46;
+  float ang=atan(dir.y,dir.x);
+  // smooth radial envelope — no concentric stripes
+  float edge=smoothstep(0.0,0.12,t)*(1.0-smoothstep(0.74,1.0,t));
+  float inner=1.0-smoothstep(0.0,0.52,t);
+  // turbulence that flows ALONG the orbit (angular), giving wispy gas lanes
+  float spin=uTime*(1.65-1.0*t);
+  vec2 flowUV=vec2(ang*2.3-spin,t*3.0);
+  float turb=fbm(flowUV);
+  float fine=fbm(flowUV*2.7+vec2(0.0,uTime*0.32));
+  float streak=fbm(vec2(ang*8.5-spin*1.3,t*1.7));
+  float dust=0.4+0.55*turb+0.22*fine+0.3*streak;
+  // relativistic doppler beaming — one side dramatically brighter
+  float doppler=0.30+1.00*smoothstep(-0.85,0.85,dir.x);
+  // hot inner rim hugging the photon orbit
+  float hotLane=exp(-pow((t-0.055)/0.11,2.0));
+  float alpha=edge*dust*(0.46+inner*1.7+hotLane*1.85)*doppler;
+  vec3 white=vec3(1.0,0.95,0.85);
+  vec3 amber=vec3(1.0,0.52,0.18);
+  vec3 ember=vec3(0.5,0.12,0.04);
+  vec3 col=mix(amber,white,clamp(inner*1.05+hotLane*0.9*doppler,0.0,1.0));
+  col=mix(col,ember,smoothstep(0.46,1.0,t)*0.6);
+  col*=0.7+inner*2.2+hotLane*3.4*doppler+dust*0.25;
+  col=mix(col,white,smoothstep(0.85,1.25,doppler)*0.45);
   if(alpha<0.004) discard;
   gl_FragColor=vec4(col,alpha);
 }`;
@@ -6279,35 +6282,41 @@ float fbmLike(vec2 p){
 }
 void main(){
   vec2 p=(vUv-0.5)*2.0*uPlaneScale;
+  p.x*=1.35; // compensate the plane's 1.35:1 aspect so the shadow and halo read as a true circle
   float r=length(p);
   float angle=atan(p.y,p.x);
-  float horizon=1.0-smoothstep(0.27,0.34,r);
-  float spin=angle-uTime*0.82;
-  float grain=0.55+0.45*fbmLike(vec2(angle*2.0,r*4.0));
+  // black shadow of the event horizon
+  float horizon=1.0-smoothstep(0.265,0.305,r);
+  float spin=angle-uTime*0.7;
+  float grain=0.8+0.2*fbmLike(vec2(angle*1.6,r*2.4));
+  // relativistic doppler — right side brighter, but the ring stays visible all the way around
+  float doppler=0.52+0.62*smoothstep(-0.85,0.85,p.x);
 
-  float photon=ring(r,0.39,0.011)*(0.78+0.22*sin(spin*18.0));
-  float innerHalo=ring(r,0.47,0.024)*(0.42+0.42*smoothstep(-0.2,0.95,p.x));
-  float rightCrescent=ring(length(vec2((p.x-0.34)*0.62,(p.y+0.01)*1.05)),0.76,0.026)
-    *smoothstep(-0.42,0.86,p.x);
-  float upperFall=ring(length(vec2((p.x+0.18)*0.58,(p.y-0.86)*0.42)),0.82,0.075)
-    *smoothstep(0.04,0.72,p.y);
-  float upperNeedle=ring(length(vec2((p.x+0.06)*0.40,(p.y-1.05)*0.36)),0.88,0.030)
-    *smoothstep(0.28,1.05,p.y);
-  float lowerReturn=ring(length(vec2((p.x-0.16)*0.72,(p.y+0.58)*1.35)),0.72,0.055)
-    *(1.0-smoothstep(-0.55,0.08,p.y));
-  float diskBeam=exp(-pow((p.y-p.x*0.13)/0.055,2.0))*smoothstep(-1.45,0.1,p.x)*(1.0-smoothstep(1.72,2.85,p.x));
-  float farDust=exp(-pow((p.y-p.x*0.12+0.16)/0.16,2.0))*smoothstep(-2.2,-0.36,p.x)*0.52;
+  // wispy filament streaks stretched along the orbit
+  float filament=0.55+0.55*fbmLike(vec2(angle*7.0-uTime*0.9,r*3.2));
+  // thin bright photon ring hugging the shadow
+  float photon=ring(r,0.325,0.010)*(0.86+0.14*sin(spin*6.0));
+  vec2 nrm=normalize(p+vec2(0.00001,0.0));
+  // complete lensed halo hugging the shadow — over-top and under-bottom arcs joined into one closed ring
+  float halo=ring(r,0.36,0.05)*(0.5+0.62*filament);
+  // extra glow piled up directly above and below the shadow (the vertical lensed arcs that close the ring)
+  float vert=ring(r,0.38,0.105)*pow(abs(nrm.y),1.15)*(0.55+0.55*filament);
+  // bright horizontal sweep of the disk crossing in front, fanning out to both sides
+  float band=exp(-pow((p.y+0.01-p.x*0.05)/0.07,2.0))*(0.5+0.5*fbmLike(vec2(angle*1.8-uTime*0.5,r*2.2)))*(0.55+0.55*filament);
+  // faint top-surface spread of the near disk receding into the foreground (slightly from above)
+  float sheet=exp(-pow((p.y+0.48)/0.24,2.0))*(0.4+0.6*fbmLike(vec2(angle*2.2-uTime*0.4,r*2.0)))*0.35;
+  // warm glare on the bright doppler side
+  float glare=exp(-pow(length(vec2((p.x-0.34)*0.62,p.y*0.85))/0.19,2.0));
 
-  float lens=photon*2.2+innerHalo*0.9+rightCrescent*1.5+upperFall*1.55+upperNeedle*0.82+lowerReturn*0.72+diskBeam*1.15+farDust;
-  lens*=grain;
-  vec3 white=vec3(1.0,0.96,0.82);
-  vec3 cream=vec3(1.0,0.78,0.48);
-  vec3 orange=vec3(1.0,0.42,0.13);
-  vec3 col=mix(orange,cream,clamp(diskBeam+upperFall*0.65+rightCrescent*0.55,0.0,1.0));
-  col=mix(col,white,clamp(photon*1.2+upperNeedle*0.8+diskBeam*0.58,0.0,1.0));
+  float lens=(photon*2.0+halo*2.3+vert*1.8+band*1.2+sheet*0.45+glare*0.75)*grain*doppler;
+  vec3 white=vec3(1.0,0.98,0.9);
+  vec3 cream=vec3(1.0,0.82,0.52);
+  vec3 orange=vec3(1.0,0.46,0.16);
+  vec3 col=mix(orange,cream,clamp(halo*0.5+band*0.5+vert*0.4+glare*0.5,0.0,1.0));
+  col=mix(col,white,clamp(photon*1.3+halo*0.5+band*0.35+glare*0.5,0.0,1.0));
   float alpha=clamp(lens,0.0,1.0)*(1.0-horizon);
   if(alpha<0.004) discard;
-  gl_FragColor=vec4(col*(1.0+photon*0.8+diskBeam*0.35),alpha);
+  gl_FragColor=vec4(col*(1.0+photon*0.7+glare*0.5),alpha);
 }`;
 
 const BLACK_HOLE_VISUAL_PROFILES = {
@@ -6318,6 +6327,8 @@ const BLACK_HOLE_VISUAL_PROFILES = {
     diskSpin: BLACK_HOLE_DISK_SPIN,
     particleSpin: BLACK_HOLE_PARTICLE_SPIN,
     diskRotationZDeg: -10,
+    diskTiltXDeg: 72,
+    diskTiltYDeg: -24,
     particleSize: 2.6,
     particleOpacity: 0.9,
   },
@@ -6327,9 +6338,11 @@ const BLACK_HOLE_VISUAL_PROFILES = {
     shaderTimeScale: 2.25,
     diskSpin: 1.25,
     particleSpin: 2.45,
-    diskRotationZDeg: 12,
-    particleSize: 1.65,
-    particleOpacity: 0.56,
+    diskRotationZDeg: 6,
+    diskTiltXDeg: -79,
+    diskTiltYDeg: -8,
+    particleSize: 1.2,
+    particleOpacity: 0.22,
   },
   referenceImageA: {
     diskFragmentShader: BLACK_HOLE_DISK_FRAG_CURRENT,
@@ -6338,6 +6351,8 @@ const BLACK_HOLE_VISUAL_PROFILES = {
     diskSpin: 0,
     particleSpin: 0,
     diskRotationZDeg: -10,
+    diskTiltXDeg: 72,
+    diskTiltYDeg: -24,
     particleSize: 0,
     particleOpacity: 0,
     imageTextureFile: "black-hole-reference-image-a.png",
@@ -6369,8 +6384,8 @@ const blackHoleDisk = new THREE.Mesh(
   blackHoleDiskMaterial
 );
 blackHoleDisk.rotation.set(
-  THREE.MathUtils.degToRad(72),
-  THREE.MathUtils.degToRad(-24),
+  THREE.MathUtils.degToRad(blackHoleVisualProfile.diskTiltXDeg ?? 72),
+  THREE.MathUtils.degToRad(blackHoleVisualProfile.diskTiltYDeg ?? -24),
   THREE.MathUtils.degToRad(blackHoleVisualProfile.diskRotationZDeg)
 );
 blackHoleDisk.renderOrder = 5;
@@ -6405,7 +6420,7 @@ blackHoleLens.renderOrder = 7;
 blackHoleGroup.add(blackHoleLens);
 
 const blackHoleCore = new THREE.Mesh(
-  new THREE.SphereGeometry(BLACK_HOLE_HORIZON_R * 0.98, 64, 32),
+  new THREE.SphereGeometry(BLACK_HOLE_HORIZON_R * 0.72, 64, 32),
   new THREE.MeshBasicMaterial({ color: 0x000000, toneMapped: false })
 );
 blackHoleCore.renderOrder = 8;
