@@ -13,7 +13,7 @@ const klingonButton = document.querySelector("#klingonButton");
 const blackHoleTourButton = document.querySelector("#blackHoleTourButton");
 const controllerHelpButton = document.querySelector("#controllerHelpButton");
 const poseDebugOutputEl = document.querySelector("#poseDebugOutput");
-const APP_VERSION = "v2026.06.19.36";
+const APP_VERSION = "v2026.06.19.39";
 const DEBUG_TOP_VIEW = new URLSearchParams(window.location.search).has("topDebug");
 const DEBUG_TOP_VIEW_DISTANCE = Number(new URLSearchParams(window.location.search).get("topDebugDist"));
 const DEBUG_BLACK_HOLE_VIEW = new URLSearchParams(window.location.search).has("blackHoleDebug");
@@ -21,6 +21,7 @@ const DEBUG_BLACK_HOLE_FALL = new URLSearchParams(window.location.search).has("b
 const DEBUG_BLACK_HOLE_BACK_VIEW = new URLSearchParams(window.location.search).has("blackHoleBackDebug");
 const BLACK_HOLE_VISUAL_VARIANT = new URLSearchParams(window.location.search).get("blackHoleVisual") || "gargantuaA";
 const DEBUG_SOLAR_SPOT_VIEW = new URLSearchParams(window.location.search).has("solarSpotDebug");
+const DEBUG_SOLAR_PROM_VIEW = new URLSearchParams(window.location.search).has("solarPromDebug");
 const DEBUG_COMET_VIEW = new URLSearchParams(window.location.search).has("cometDebug");
 const DEBUG_CAMERA_VIEW = new URLSearchParams(window.location.search).has("cameraDebug");
 const DEBUG_POSE_CAPTURE = new URLSearchParams(window.location.search).has("poseDebug");
@@ -112,7 +113,7 @@ function applyDebugTopCamera() {
     camera.lookAt(-50, 28, -70);
     return;
   }
-  if (DEBUG_SOLAR_SPOT_VIEW && !renderer.xr.isPresenting) {
+  if ((DEBUG_SOLAR_SPOT_VIEW || DEBUG_SOLAR_PROM_VIEW) && !renderer.xr.isPresenting) {
     camera.up.set(0, 1, 0);
     camera.position.set(-48, 30, -35);
     camera.lookAt(-48, 30, -62);
@@ -5318,6 +5319,51 @@ void main(){
   vec3 col=mix(uCool,uHot,smoothstep(0.18,0.9,strand));
   gl_FragColor=vec4(col*(1.05+strand*0.55),alpha);
 }`;
+const SOLAR_FLAME_RIBBON_FRAG = `
+precision mediump float;
+uniform float uTime;
+uniform float uOpacity;
+uniform float uSeed;
+uniform vec3 uHot;
+uniform vec3 uCool;
+varying vec2 vUv;
+float hash(vec2 p){
+  return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453123);
+}
+float noise(vec2 p){
+  vec2 i=floor(p);
+  vec2 f=fract(p);
+  vec2 u=f*f*(3.0-2.0*f);
+  return mix(mix(hash(i),hash(i+vec2(1.,0.)),u.x),mix(hash(i+vec2(0.,1.)),hash(i+vec2(1.,1.)),u.x),u.y);
+}
+float fbm(vec2 p){
+  float v=0.;
+  float a=.5;
+  for(int i=0;i<4;i++){
+    v+=a*noise(p);
+    p=p*2.03+vec2(7.1,3.7);
+    a*=.5;
+  }
+  return v;
+}
+void main(){
+  float along=clamp(vUv.x,0.,1.);
+  float across=abs(vUv.y*2.0-1.0);
+  float endFade=smoothstep(0.0,0.08,along)*(1.0-smoothstep(0.88,1.0,along));
+  float edgeFade=1.0-smoothstep(0.50,1.02,across);
+  float flow=fbm(vec2(along*5.2-uTime*.11+uSeed, vUv.y*2.4+uTime*.2));
+  float filaments=fbm(vec2(along*21.0+uSeed*2.1, vUv.y*8.5-uTime*.48));
+  float torn=edgeFade*(0.42+0.58*smoothstep(0.18,0.92,filaments));
+  float holes=1.0-smoothstep(0.76,0.98,fbm(vec2(along*8.0+uSeed*.4, vUv.y*5.5-uTime*.16)));
+  float body=0.34+0.66*smoothstep(0.2,0.86,flow+filaments*.32);
+  float alpha=uOpacity*endFade*torn*(0.45+0.55*holes)*body;
+  vec3 col=mix(uCool,uHot,smoothstep(0.2,0.86,flow+filaments*.35));
+  col*=0.9+pow(max(0.0,1.0-across),2.0)*1.35;
+  col.g*=0.64;
+  col.b*=0.22;
+  if(alpha<0.004) discard;
+  gl_FragColor=vec4(col,alpha);
+}`;
 
 function makeSolarProminenceMaterial(opacityScale, hotColor, coolColor) {
   return new THREE.ShaderMaterial({
@@ -5339,12 +5385,33 @@ function makeSolarProminenceMaterial(opacityScale, hotColor, coolColor) {
   });
 }
 
+function makeSolarFlameRibbonMaterial(opacityScale, hotColor, coolColor) {
+  return new THREE.ShaderMaterial({
+    uniforms: {
+      uTime: { value: 0 },
+      uOpacity: { value: 0 },
+      uSeed: { value: Math.random() * 1000 },
+      uHot: { value: new THREE.Color(hotColor) },
+      uCool: { value: new THREE.Color(coolColor) },
+    },
+    vertexShader: SOLAR_PROM_VERT,
+    fragmentShader: SOLAR_FLAME_RIBBON_FRAG,
+    transparent: true,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+    depthTest: false,
+    side: THREE.DoubleSide,
+    toneMapped: false,
+    userData: { opacityScale },
+  });
+}
+
 const solarFootTex = makeSolarFootTexture();
 const SOLAR_PROM_MAX_ACTIVE = 3;
 const SOLAR_PROM_MIN_DURATION = 60;
 const SOLAR_PROM_MAX_DURATION = 180;
 const SOLAR_PROM_MAX_START_GAP = 30 * 60;
-const SOLAR_PROM_FIRST_AT = 6;
+const SOLAR_PROM_FIRST_AT = DEBUG_SOLAR_PROM_VIEW ? 1 : 6;
 
 function makeSolarFootMaterial() {
   return new THREE.SpriteMaterial({
@@ -5363,15 +5430,28 @@ function makeSolarProminenceSlot() {
   group.visible = false;
   sunMesh.add(group);
 
-  const coreMat = makeSolarProminenceMaterial(1.35, 0xfff8c8, 0xff5a0c);
-  const glowMat = makeSolarProminenceMaterial(0.45, 0xffd36a, 0xff2500);
-  const strandMat = makeSolarProminenceMaterial(0.7, 0xffc86e, 0xd91b00);
-  const strandBMat = makeSolarProminenceMaterial(0.58, 0xffc86e, 0xd91b00);
+  const coreMat = makeSolarProminenceMaterial(0.34, 0xfff8c8, 0xff5a0c);
+  const glowMat = makeSolarProminenceMaterial(0.12, 0xffd36a, 0xff2500);
+  const strandMat = makeSolarProminenceMaterial(0.18, 0xffc86e, 0xd91b00);
+  const strandBMat = makeSolarProminenceMaterial(0.15, 0xffc86e, 0xd91b00);
+  const sheetMat = makeSolarFlameRibbonMaterial(1.9, 0xff7a22, 0x8c0e00);
+  const flameMat = makeSolarFlameRibbonMaterial(0.2, 0xffb24f, 0xd91b00);
+  const flameBMat = makeSolarFlameRibbonMaterial(0.12, 0xff7a24, 0xa70f00);
+  const sheet = new THREE.Mesh(new THREE.BufferGeometry(), sheetMat);
+  const flame = new THREE.Mesh(new THREE.BufferGeometry(), flameMat);
+  const flameB = new THREE.Mesh(new THREE.BufferGeometry(), flameBMat);
   const core = new THREE.Mesh(new THREE.BufferGeometry(), coreMat);
   const glow = new THREE.Mesh(new THREE.BufferGeometry(), glowMat);
   const strandA = new THREE.Mesh(new THREE.BufferGeometry(), strandMat);
   const strandB = new THREE.Mesh(new THREE.BufferGeometry(), strandBMat);
-  group.add(glow, strandA, strandB, core);
+  sheet.renderOrder = 12;
+  flameB.renderOrder = 13;
+  flame.renderOrder = 14;
+  glow.renderOrder = 15;
+  strandA.renderOrder = 16;
+  strandB.renderOrder = 17;
+  core.renderOrder = 18;
+  group.add(sheet, flameB, flame, glow, strandA, strandB, core);
 
   const footA = new THREE.Sprite(makeSolarFootMaterial());
   const footB = new THREE.Sprite(makeSolarFootMaterial());
@@ -5385,9 +5465,12 @@ function makeSolarProminenceSlot() {
     group,
     core,
     glow,
+    sheet,
+    flame,
+    flameB,
     strandA,
     strandB,
-    materials: [coreMat, glowMat, strandMat, strandBMat],
+    materials: [coreMat, glowMat, strandMat, strandBMat, sheetMat, flameMat, flameBMat],
     footA,
     footB,
     apexGlow,
@@ -5433,6 +5516,7 @@ function rotateAroundAxis(vec, axis, angle) {
 }
 
 function randomSolarProminenceScale() {
+  if (DEBUG_SOLAR_PROM_VIEW) return 1.42;
   const r = Math.random();
   if (r < 0.24) return 0.56 + Math.random() * 0.18;
   if (r > 0.76) return 1.34 + Math.random() * 0.2;
@@ -5440,34 +5524,138 @@ function randomSolarProminenceScale() {
 }
 
 function randomSolarProminenceThickness() {
+  if (DEBUG_SOLAR_PROM_VIEW) return 1.34;
   const r = Math.random();
   if (r < 0.18) return 0.76 + Math.random() * 0.16;
   if (r > 0.78) return 1.24 + Math.random() * 0.24;
   return 0.94 + Math.random() * 0.28;
 }
 
+function makeSolarFlameRibbonGeometry(points, side, tangent, widthBase, seed, widthMul = 1, tangentMul = 1) {
+  const crossSegments = 5;
+  const positions = [];
+  const uvs = [];
+  const indices = [];
+  for (let i = 0; i < points.length; i += 1) {
+    const p = i / (points.length - 1);
+    const rise = Math.sin(p * Math.PI);
+    const endFade = THREE.MathUtils.smoothstep(p, 0, 0.14) * (1 - THREE.MathUtils.smoothstep(p, 0.84, 1));
+    const baseWidth = widthBase * widthMul * (0.34 + rise * 1.25) * (0.42 + endFade * 0.72);
+    for (let j = 0; j < crossSegments; j += 1) {
+      const v = j / (crossSegments - 1);
+      const offset = (v - 0.5) * 2;
+      const ragged =
+        Math.sin(p * 19 + seed * 3.1 + offset * 2.4) * 0.22 +
+        Math.sin(p * 43 - seed * 1.7 + offset * 5.1) * 0.1;
+      const width = baseWidth * (1 + ragged * rise);
+      const flutter =
+        SUN_RADIUS *
+        (Math.sin(p * 31 + seed * 4.2 + offset * 2.6) * 0.006 + Math.sin(p * 13 - seed * 2.8) * 0.004) *
+        rise *
+        tangentMul;
+      const pos = points[i]
+        .clone()
+        .addScaledVector(side, offset * width)
+        .addScaledVector(tangent, flutter);
+      positions.push(pos.x, pos.y, pos.z);
+      uvs.push(p, v);
+    }
+  }
+
+  for (let i = 0; i < points.length - 1; i += 1) {
+    for (let j = 0; j < crossSegments - 1; j += 1) {
+      const a = i * crossSegments + j;
+      const b = a + 1;
+      const c = a + crossSegments;
+      const d = c + 1;
+      indices.push(a, c, b, b, c, d);
+    }
+  }
+
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+  geo.setAttribute("uv", new THREE.Float32BufferAttribute(uvs, 2));
+  geo.setIndex(indices);
+  geo.computeBoundingSphere();
+  return geo;
+}
+
+function makeSolarFlameSheetGeometry(limbDir, tangent, viewDir, width, height, seed) {
+  const xSegments = 34;
+  const ySegments = 14;
+  const positions = [];
+  const uvs = [];
+  const indices = [];
+  for (let i = 0; i <= xSegments; i += 1) {
+    const u = i / xSegments;
+    const bulge = Math.pow(Math.sin(u * Math.PI), 0.55);
+    const plumeHeight = height * (0.18 + bulge * 0.9) * (1 - u * 0.18);
+    const centerShift =
+      height *
+      (Math.sin(u * Math.PI * 2.1 + seed) * 0.12 + Math.sin(u * Math.PI * 5.2 - seed * 0.4) * 0.045) *
+      bulge;
+    const radialLift = width * (u * 0.94 + Math.sin(u * Math.PI) * 0.16);
+    for (let j = 0; j <= ySegments; j += 1) {
+      const v = j / ySegments;
+      const y = (v - 0.5) * 2;
+      const ragged =
+        Math.sin(u * 18 + y * 4.1 + seed) * 0.035 +
+        Math.sin(u * 39 - y * 6.7 + seed * 0.31) * 0.018;
+      const pos = limbDir
+        .clone()
+        .multiplyScalar(SUN_RADIUS * 1.012 + radialLift)
+        .addScaledVector(tangent, centerShift + y * plumeHeight * (1 + ragged))
+        .addScaledVector(viewDir, SUN_RADIUS * (0.026 + 0.012 * bulge));
+      positions.push(pos.x, pos.y, pos.z);
+      uvs.push(u, v);
+    }
+  }
+
+  const row = ySegments + 1;
+  for (let i = 0; i < xSegments; i += 1) {
+    for (let j = 0; j < ySegments; j += 1) {
+      const a = i * row + j;
+      const b = a + 1;
+      const c = a + row;
+      const d = c + 1;
+      indices.push(a, c, b, b, c, d);
+    }
+  }
+
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+  geo.setAttribute("uv", new THREE.Float32BufferAttribute(uvs, 2));
+  geo.setIndex(indices);
+  geo.computeBoundingSphere();
+  return geo;
+}
+
 function setRandomVisibleSolarLimbDir() {
   let bestAngle = Math.random() * Math.PI * 2;
-  for (let attempt = 0; attempt < 14; attempt += 1) {
-    const angle = Math.random() * Math.PI * 2;
-    solarLimbDir
-      .copy(solarLimbAxisA)
-      .multiplyScalar(Math.cos(angle))
-      .addScaledVector(solarLimbAxisB, Math.sin(angle))
-      .normalize();
-    solarPromCandidateWorld.copy(solarLimbDir).multiplyScalar(SUN_RADIUS * 1.18);
-    sunMesh.localToWorld(solarPromCandidateWorld);
-    solarPromCandidateNdc.copy(solarPromCandidateWorld).project(camera);
-    const outsideHud = solarPromCandidateNdc.x > -0.44 || solarPromCandidateNdc.y < 0.56;
-    if (
-      outsideHud &&
-      solarPromCandidateNdc.x > -0.96 &&
-      solarPromCandidateNdc.x < 0.96 &&
-      solarPromCandidateNdc.y > -0.94 &&
-      solarPromCandidateNdc.y < 0.94
-    ) {
-      bestAngle = angle;
-      break;
+  if (DEBUG_SOLAR_PROM_VIEW) {
+    bestAngle = 0.12;
+  } else {
+    for (let attempt = 0; attempt < 14; attempt += 1) {
+      const angle = Math.random() * Math.PI * 2;
+      solarLimbDir
+        .copy(solarLimbAxisA)
+        .multiplyScalar(Math.cos(angle))
+        .addScaledVector(solarLimbAxisB, Math.sin(angle))
+        .normalize();
+      solarPromCandidateWorld.copy(solarLimbDir).multiplyScalar(SUN_RADIUS * 1.18);
+      sunMesh.localToWorld(solarPromCandidateWorld);
+      solarPromCandidateNdc.copy(solarPromCandidateWorld).project(camera);
+      const outsideHud = solarPromCandidateNdc.x > -0.44 || solarPromCandidateNdc.y < 0.56;
+      if (
+        outsideHud &&
+        solarPromCandidateNdc.x > -0.96 &&
+        solarPromCandidateNdc.x < 0.96 &&
+        solarPromCandidateNdc.y > -0.94 &&
+        solarPromCandidateNdc.y < 0.94
+      ) {
+        bestAngle = angle;
+        break;
+      }
     }
   }
   solarLimbDir
@@ -5500,10 +5688,11 @@ function spawnSolarProminence() {
 
   const sizeScale = randomSolarProminenceScale();
   const thicknessScale = randomSolarProminenceThickness();
+  const flameSeed = Math.random() * 1000;
   const sizeT = THREE.MathUtils.clamp((sizeScale - 0.56) / 0.98, 0, 1);
   const thicknessT = THREE.MathUtils.clamp((thicknessScale - 0.76) / 0.72, 0, 1);
   const halfAngle = THREE.MathUtils.degToRad(7 + Math.random() * 8.0) * THREE.MathUtils.lerp(0.62, 1.72, sizeT);
-  const lift = THREE.MathUtils.lerp(0.09, 0.46, sizeT) + Math.random() * THREE.MathUtils.lerp(0.03, 0.08, sizeT);
+  const lift = THREE.MathUtils.lerp(0.11, 0.6, sizeT) + Math.random() * THREE.MathUtils.lerp(0.035, 0.09, sizeT);
   const twist = (Math.random() - 0.5) * SUN_RADIUS * THREE.MathUtils.lerp(0.045, 0.14, sizeT);
   const filamentScale = THREE.MathUtils.lerp(0.58, 1.48, sizeT) * THREE.MathUtils.lerp(0.9, 1.08, thicknessT);
   slot.points.length = 0;
@@ -5511,6 +5700,16 @@ function spawnSolarProminence() {
     const p = i / 24;
     const a = THREE.MathUtils.lerp(-halfAngle, halfAngle, p);
     const rise = Math.sin(p * Math.PI);
+    const plumeLift =
+      rise *
+      (1 +
+        Math.sin(p * Math.PI * 3.0 + flameSeed) * 0.16 +
+        Math.sin(p * Math.PI * 7.0 - flameSeed * 0.31) * 0.07);
+    const raggedSide =
+      SUN_RADIUS *
+      rise *
+      (Math.sin(p * Math.PI * 5.0 + flameSeed * 0.5) * 0.018 + Math.sin(p * Math.PI * 11.0 + flameSeed) * 0.009) *
+      (0.75 + sizeT);
     solarDir
       .copy(solarLimbDir)
       .multiplyScalar(Math.cos(a))
@@ -5521,8 +5720,10 @@ function spawnSolarProminence() {
     slot.points.push(
       solarDir
         .clone()
-        .multiplyScalar(SUN_RADIUS * (1.01 + lift * rise))
+        .multiplyScalar(SUN_RADIUS * (1.01 + lift * plumeLift))
         .addScaledVector(solarSide, wave)
+        .addScaledVector(solarTangent, raggedSide)
+        .addScaledVector(solarViewDir, SUN_RADIUS * 0.018 * (0.25 + rise))
     );
   }
 
@@ -5551,14 +5752,49 @@ function spawnSolarProminence() {
   const glowGeo = new THREE.TubeGeometry(curve, 96, SUN_RADIUS * 0.015 * tubeScale, 12, false);
   const strandGeoA = new THREE.TubeGeometry(strandCurveA, 80, SUN_RADIUS * 0.0036 * tubeScale, 8, false);
   const strandGeoB = new THREE.TubeGeometry(strandCurveB, 80, SUN_RADIUS * 0.0029 * tubeScale, 8, false);
+  const flameGeo = makeSolarFlameRibbonGeometry(
+    slot.points,
+    solarSide,
+    solarTangent,
+    SUN_RADIUS * THREE.MathUtils.lerp(0.045, 0.13, sizeT) * thicknessScale,
+    flameSeed,
+    1.0,
+    1.0
+  );
+  const flameBGeo = makeSolarFlameRibbonGeometry(
+    slot.points,
+    solarSide,
+    solarTangent,
+    SUN_RADIUS * THREE.MathUtils.lerp(0.032, 0.098, sizeT) * thicknessScale,
+    flameSeed + 17.3,
+    0.74,
+    1.35
+  );
+  const sheetGeo = makeSolarFlameSheetGeometry(
+    solarLimbDir,
+    solarTangent,
+    solarViewDir,
+    SUN_RADIUS * THREE.MathUtils.lerp(0.42, 0.86, sizeT),
+    SUN_RADIUS * THREE.MathUtils.lerp(0.22, 0.42, sizeT) * thicknessScale,
+    flameSeed + 33.7
+  );
   slot.core.geometry.dispose();
   slot.glow.geometry.dispose();
+  slot.sheet.geometry.dispose();
+  slot.flame.geometry.dispose();
+  slot.flameB.geometry.dispose();
   slot.strandA.geometry.dispose();
   slot.strandB.geometry.dispose();
   slot.core.geometry = coreGeo;
   slot.glow.geometry = glowGeo;
+  slot.sheet.geometry = sheetGeo;
+  slot.flame.geometry = flameGeo;
+  slot.flameB.geometry = flameBGeo;
   slot.strandA.geometry = strandGeoA;
   slot.strandB.geometry = strandGeoB;
+  slot.sheet.material.uniforms.uSeed.value = flameSeed + 33.7;
+  slot.flame.material.uniforms.uSeed.value = flameSeed;
+  slot.flameB.material.uniforms.uSeed.value = flameSeed + 17.3;
 
   slot.footScale.setScalar(SUN_RADIUS * THREE.MathUtils.lerp(0.13, 0.27, sizeT));
   slot.apexGlowBaseScale = SUN_RADIUS * THREE.MathUtils.lerp(0.18, 0.42, sizeT);
