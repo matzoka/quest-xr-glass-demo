@@ -13,7 +13,7 @@ const klingonButton = document.querySelector("#klingonButton");
 const blackHoleTourButton = document.querySelector("#blackHoleTourButton");
 const controllerHelpButton = document.querySelector("#controllerHelpButton");
 const poseDebugOutputEl = document.querySelector("#poseDebugOutput");
-const APP_VERSION = "v2026.06.19.49";
+const APP_VERSION = "v2026.06.19.50";
 const DEBUG_TOP_VIEW = new URLSearchParams(window.location.search).has("topDebug");
 const DEBUG_TOP_VIEW_DISTANCE = Number(new URLSearchParams(window.location.search).get("topDebugDist"));
 const DEBUG_BLACK_HOLE_VIEW = new URLSearchParams(window.location.search).has("blackHoleDebug");
@@ -1142,6 +1142,7 @@ const auroraMaterial = new THREE.ShaderMaterial({
     ...earthNightUniforms,
     uTime: { value: 0.0 },
     uIntensity: { value: 0.0 },
+    uStorm: { value: 0.0 },
   },
   vertexShader: earthNightVert,
   fragmentShader: `
@@ -1149,6 +1150,7 @@ precision mediump float;
 uniform vec3 uSunDir;
 uniform float uTime;
 uniform float uIntensity;
+uniform float uStorm;
 varying vec2 vUv;
 varying vec3 vNormal;
 void main(){
@@ -1161,8 +1163,9 @@ void main(){
   float wave=0.5+0.5*sin(vUv.x*64.0+uTime*0.95+sin(vUv.y*29.0)*1.7);
   float ribbon=smoothstep(0.58,0.98,wave);
   float shimmer=0.68+0.32*sin(uTime*2.2+vUv.x*17.0+vUv.y*7.0);
+  float stormLane=smoothstep(0.34,0.92,0.5+0.5*sin(vUv.x*11.0+uTime*0.11+sin(vUv.x*3.0)*1.2));
   float disturbance=0.20+0.62*uIntensity;
-  float alpha=polarBand*night*(0.040+0.18*ribbon)*shimmer*uIntensity;
+  float alpha=polarBand*night*(0.030+0.15*ribbon)*(0.74+stormLane*(0.34+uStorm*0.44))*shimmer*uIntensity;
   if(alpha<0.01) discard;
   vec3 color=mix(vec3(0.18,0.95,0.34),vec3(0.24,0.72,0.86),ribbon);
   gl_FragColor=vec4(color*alpha*(1.10+disturbance),alpha*0.64);
@@ -1190,6 +1193,7 @@ function makeAuroraCurtainGeometry(hemisphere = 1, phase = 0) {
   const positions = [];
   const normals = [];
   const uvs = [];
+  const altitudeMixes = [];
   const indices = [];
 
   for (let i = 0; i <= thetaSegments; i++) {
@@ -1238,6 +1242,7 @@ function makeAuroraCurtainGeometry(hemisphere = 1, phase = 0) {
       positions.push(x, y, z);
       normals.push(normal.x, normal.y, normal.z);
       uvs.push(u, v);
+      altitudeMixes.push(altitudeMix);
     }
   }
 
@@ -1256,6 +1261,7 @@ function makeAuroraCurtainGeometry(hemisphere = 1, phase = 0) {
   geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
   geometry.setAttribute("normal", new THREE.Float32BufferAttribute(normals, 3));
   geometry.setAttribute("uv", new THREE.Float32BufferAttribute(uvs, 2));
+  geometry.setAttribute("aAltitudeMix", new THREE.Float32BufferAttribute(altitudeMixes, 1));
   geometry.setIndex(indices);
   geometry.computeBoundingSphere();
   return geometry;
@@ -1266,23 +1272,36 @@ const auroraCurtainMaterial = new THREE.ShaderMaterial({
     ...earthNightUniforms,
     uTime: { value: 0.0 },
     uIntensity: { value: 0.0 },
+    uStorm: { value: 0.0 },
   },
   vertexShader: `
 precision mediump float;
+uniform float uTime;
+uniform float uStorm;
+attribute float aAltitudeMix;
 varying vec2 vUv;
 varying vec3 vNormal;
+varying float vAltitudeMix;
 void main(){
   vUv=uv;
   vNormal=normalize(normal);
-  gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0);
+  vAltitudeMix=aAltitudeMix;
+  vec3 radial=normalize(position);
+  float slowFront=0.5+0.5*sin(uv.x*12.566+uTime*0.055+sin(uv.x*31.416)*0.72);
+  float breathing=0.5+0.5*sin(uv.x*43.0-uTime*0.18+uv.y*3.1);
+  float surge=smoothstep(0.50,0.96,slowFront+uStorm*0.18);
+  float lift=(0.004+0.018*surge+0.010*breathing*aAltitudeMix)*uv.y*(0.35+0.65*uStorm);
+  gl_Position=projectionMatrix*modelViewMatrix*vec4(position+radial*lift,1.0);
 }`,
   fragmentShader: `
 precision mediump float;
 uniform vec3 uSunDir;
 uniform float uTime;
 uniform float uIntensity;
+uniform float uStorm;
 varying vec2 vUv;
 varying vec3 vNormal;
+varying float vAltitudeMix;
 float hash(float n){return fract(sin(n)*43758.5453123);}
 float valueNoise(float x){
   float i=floor(x);
@@ -1297,19 +1316,24 @@ void main(){
   float night=1.0-smoothstep(-0.34,-0.05,lit);
   float height=vUv.y;
   float verticalFade=smoothstep(0.02,0.18,height)*(1.0-smoothstep(0.74,1.0,height));
-  float arcNoise=valueNoise(vUv.x*22.0+sin(uTime*0.036)*1.7);
-  float arcMask=smoothstep(0.24,0.76,arcNoise+0.16*sin(vUv.x*13.0+uTime*0.11));
-  float fineStrand=pow(0.5+0.5*sin(vUv.x*180.0+height*5.4+uTime*1.35),5.0);
-  float broadVeil=0.56+0.44*pow(0.5+0.5*sin(vUv.x*34.0-height*4.0+uTime*0.34),2.0);
-  float verticalPulse=0.78+0.22*sin(height*9.0+uTime*0.72+vUv.x*7.0);
-  float alpha=night*uIntensity*verticalFade*arcMask*verticalPulse*(0.48*broadVeil+0.18*fineStrand);
+  float slowCell=valueNoise(vUv.x*9.0+uTime*0.020);
+  float arcNoise=valueNoise(vUv.x*23.0+sin(uTime*0.031)*1.8);
+  float stormFront=smoothstep(0.36,0.94,slowCell+uStorm*0.22+0.12*sin(vUv.x*7.0-uTime*0.075));
+  float arcMask=smoothstep(0.18,0.74,arcNoise+0.18*sin(vUv.x*13.0+uTime*0.10));
+  float lowCurtain=(1.0-vAltitudeMix)*smoothstep(0.02,0.36,1.0-height);
+  float tallRay=vAltitudeMix*smoothstep(0.22,0.88,height);
+  float fineStrand=pow(0.5+0.5*sin(vUv.x*210.0+height*7.2+uTime*(1.05+uStorm*0.8)),5.0);
+  float broadVeil=0.52+0.48*pow(0.5+0.5*sin(vUv.x*31.0-height*4.1+uTime*0.29),2.0);
+  float verticalPulse=0.76+0.24*sin(height*9.0+uTime*0.63+vUv.x*7.0+stormFront*1.8);
+  float altitudeCharacter=0.50*broadVeil+0.20*fineStrand+0.42*stormFront*(0.65*lowCurtain+1.0*tallRay);
+  float alpha=night*uIntensity*verticalFade*arcMask*verticalPulse*altitudeCharacter;
   if(alpha<0.003) discard;
   vec3 low=vec3(0.12,0.95,0.30);
   vec3 high=vec3(0.22,0.80,0.72);
   vec3 violet=vec3(0.40,0.28,0.82);
   vec3 color=mix(low,high,smoothstep(0.24,0.78,height));
-  color=mix(color,violet,smoothstep(0.70,0.96,height)*0.16);
-  gl_FragColor=vec4(color*alpha*(2.45+uIntensity*1.45),alpha*0.74);
+  color=mix(color,violet,smoothstep(0.70,0.96,height)*0.12*(0.5+vAltitudeMix));
+  gl_FragColor=vec4(color*alpha*(2.35+uIntensity*1.35+stormFront*0.55),alpha*0.72);
 }`,
   transparent: true,
   blending: THREE.AdditiveBlending,
@@ -1336,6 +1360,8 @@ function updateAuroraFlare(dt) {
   if (auroraFlareIntensity < 0.002 && target <= 0.001) auroraFlareIntensity = 0;
   auroraMaterial.uniforms.uIntensity.value = auroraFlareIntensity;
   auroraCurtainMaterial.uniforms.uIntensity.value = auroraFlareIntensity;
+  auroraMaterial.uniforms.uStorm.value = auroraFlareIntensity;
+  auroraCurtainMaterial.uniforms.uStorm.value = auroraFlareIntensity;
   auroraMesh.visible = auroraFlareIntensity > 0.006;
   auroraCurtainGroup.visible = auroraFlareIntensity > 0.012;
 }
