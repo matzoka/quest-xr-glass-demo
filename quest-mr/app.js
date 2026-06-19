@@ -13,7 +13,7 @@ const klingonButton = document.querySelector("#klingonButton");
 const blackHoleTourButton = document.querySelector("#blackHoleTourButton");
 const controllerHelpButton = document.querySelector("#controllerHelpButton");
 const poseDebugOutputEl = document.querySelector("#poseDebugOutput");
-const APP_VERSION = "v2026.06.20.01";
+const APP_VERSION = "v2026.06.20.02";
 const DEBUG_TOP_VIEW = new URLSearchParams(window.location.search).has("topDebug");
 const DEBUG_TOP_VIEW_DISTANCE = Number(new URLSearchParams(window.location.search).get("topDebugDist"));
 const DEBUG_BLACK_HOLE_VIEW = new URLSearchParams(window.location.search).has("blackHoleDebug");
@@ -3326,6 +3326,8 @@ const xrButtonPressSound = {
   buffer: null,
   promise: null,
   source: null,
+  spatialAudio: null,
+  spatialPosition: null,
   failed: false,
 };
 const klingonArrivalSound = {
@@ -3334,6 +3336,8 @@ const klingonArrivalSound = {
   buffer: null,
   promise: null,
   source: null,
+  spatialAudio: null,
+  spatialPosition: null,
   failed: false,
 };
 const klingonDepartureSound = {
@@ -3342,6 +3346,8 @@ const klingonDepartureSound = {
   buffer: null,
   promise: null,
   source: null,
+  spatialAudio: null,
+  spatialPosition: null,
   failed: false,
 };
 
@@ -3451,6 +3457,12 @@ function updateEnterpriseAudioDistance() {
 
 function updateKlingonAudioDistance() {
   setSpatialAudioPosition(klingonGain, klingon.position);
+  updateOneShotAudioDistance(klingonArrivalSound);
+  updateOneShotAudioDistance(klingonDepartureSound);
+}
+
+function updateOneShotAudioDistance(sound) {
+  setSpatialAudioPosition(sound.spatialAudio, sound.spatialPosition);
 }
 
 async function loadShipBuffer() {
@@ -3661,6 +3673,9 @@ function playOneShotAudio(sound, volume = 0.72, sourcePosition = null) {
       } catch (e) {
         /* already stopped */
       }
+      disconnectSpatialAudio(sound.spatialAudio);
+      sound.spatialAudio = null;
+      sound.spatialPosition = null;
     }
     const source = audioContext.createBufferSource();
     sound.source = source;
@@ -3669,6 +3684,8 @@ function playOneShotAudio(sound, volume = 0.72, sourcePosition = null) {
     let spatialAudio = null;
     if (sourcePosition) {
       spatialAudio = connectDistanceGain(source, sourcePosition, volume);
+      sound.spatialAudio = spatialAudio;
+      sound.spatialPosition = sourcePosition;
     } else {
       gain = audioContext.createGain();
       gain.gain.value = volume;
@@ -3676,7 +3693,11 @@ function playOneShotAudio(sound, volume = 0.72, sourcePosition = null) {
       source.connect(gain);
     }
     source.onended = () => {
-      if (sound.source === source) sound.source = null;
+      if (sound.source === source) {
+        sound.source = null;
+        sound.spatialAudio = null;
+        sound.spatialPosition = null;
+      }
       disconnectSpatialAudio(spatialAudio);
       gain?.disconnect();
     };
@@ -3684,6 +3705,8 @@ function playOneShotAudio(sound, volume = 0.72, sourcePosition = null) {
     return sound.buffer.duration || 0;
   } catch (e) {
     sound.source = null;
+    sound.spatialAudio = null;
+    sound.spatialPosition = null;
     return 0;
   }
 }
@@ -8073,7 +8096,15 @@ renderer.setAnimationLoop((timestamp) => {
   updateLocomotion(dt);
   if (
     audioContext?.state === "running" &&
-    (shipSourceGain || warpSourceGain || rareOrbitGain || klingonGain || enterpriseSynthSpatial)
+    (
+      shipSourceGain ||
+      warpSourceGain ||
+      rareOrbitGain ||
+      klingonGain ||
+      klingonArrivalSound.spatialAudio ||
+      klingonDepartureSound.spatialAudio ||
+      enterpriseSynthSpatial
+    )
   ) {
     updateAudioListenerPose();
   }
