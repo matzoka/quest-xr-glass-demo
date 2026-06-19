@@ -15,9 +15,9 @@ https://matzoka.github.io/quest-xr-glass-demo/quest-mr/
 
 Meta Quest 3 の VR で動かしたときの参考動画です。宇宙空間、操作パネル、ブラックホール探訪、惑星・宇宙船演出の雰囲気を確認できます。
 
-[![MyEarth Meta Quest 3 VR reference video](docs/images/myearth-video-poster.jpg)](https://matzoka.github.io/quest-xr-glass-demo/docs/videos/myearth.html)
+[![MyEarth Meta Quest 3 VR reference video](quest-mr/assets/myearth-video-poster.jpg)](https://matzoka.github.io/quest-xr-glass-demo/quest-mr/myearth-video.html)
 
-[動画プレイヤーを開く](https://matzoka.github.io/quest-xr-glass-demo/docs/videos/myearth.html)
+[動画プレイヤーを開く](https://matzoka.github.io/quest-xr-glass-demo/quest-mr/myearth-video.html)
 
 ## Screenshots
 
