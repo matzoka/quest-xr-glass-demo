@@ -13,7 +13,7 @@ const klingonButton = document.querySelector("#klingonButton");
 const blackHoleTourButton = document.querySelector("#blackHoleTourButton");
 const controllerHelpButton = document.querySelector("#controllerHelpButton");
 const poseDebugOutputEl = document.querySelector("#poseDebugOutput");
-const APP_VERSION = "v2026.06.19.47";
+const APP_VERSION = "v2026.06.19.48";
 const DEBUG_TOP_VIEW = new URLSearchParams(window.location.search).has("topDebug");
 const DEBUG_TOP_VIEW_DISTANCE = Number(new URLSearchParams(window.location.search).get("topDebugDist"));
 const DEBUG_BLACK_HOLE_VIEW = new URLSearchParams(window.location.search).has("blackHoleDebug");
@@ -1129,6 +1129,11 @@ const cityLightsMesh = new THREE.Mesh(
 cityLightsMesh.renderOrder = 5;
 earthMesh.add(cityLightsMesh);
 
+const AURORA_SURFACE_RADIUS_SCALE = 1.085;
+const AURORA_CURTAIN_BASE_RADIUS_SCALE = 1.115;
+const AURORA_CURTAIN_HEIGHT_SCALE = 0.30;
+const AURORA_CURTAIN_POLAR_LIFT_SCALE = 0.052;
+
 const auroraMaterial = new THREE.ShaderMaterial({
   uniforms: {
     ...earthNightUniforms,
@@ -1161,11 +1166,15 @@ void main(){
 }`,
   transparent: true,
   blending: THREE.AdditiveBlending,
-  side: THREE.DoubleSide,
+  side: THREE.FrontSide,
   depthWrite: false,
+  depthTest: true,
+  polygonOffset: true,
+  polygonOffsetFactor: -4,
+  polygonOffsetUnits: -4,
 });
 const auroraMesh = new THREE.Mesh(
-  new THREE.SphereGeometry(EARTH_RADIUS * 1.032, 64, 48),
+  new THREE.SphereGeometry(EARTH_RADIUS * AURORA_SURFACE_RADIUS_SCALE, 64, 48),
   auroraMaterial
 );
 auroraMesh.renderOrder = 6;
@@ -1194,9 +1203,9 @@ function makeAuroraCurtainGeometry(hemisphere = 1, phase = 0) {
     for (let j = 0; j <= heightSegments; j++) {
       const v = j / heightSegments;
       const heightWave = Math.sin(theta * 3.0 + phase + v * 1.9) * 0.007;
-      const radius = EARTH_RADIUS * (1.052 + v * 0.24 + heightWave);
+      const radius = EARTH_RADIUS * (AURORA_CURTAIN_BASE_RADIUS_SCALE + v * AURORA_CURTAIN_HEIGHT_SCALE + heightWave);
       const x = Math.cos(theta) * polarRadius * radius;
-      const y = polarY * radius + hemisphere * EARTH_RADIUS * v * 0.032;
+      const y = polarY * radius + hemisphere * EARTH_RADIUS * v * AURORA_CURTAIN_POLAR_LIFT_SCALE;
       const z = Math.sin(theta) * polarRadius * radius;
       const normal = new THREE.Vector3(x, y, z).normalize();
 
