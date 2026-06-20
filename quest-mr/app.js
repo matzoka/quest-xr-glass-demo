@@ -13,7 +13,7 @@ const klingonButton = document.querySelector("#klingonButton");
 const blackHoleTourButton = document.querySelector("#blackHoleTourButton");
 const controllerHelpButton = document.querySelector("#controllerHelpButton");
 const poseDebugOutputEl = document.querySelector("#poseDebugOutput");
-const APP_VERSION = "v2026.06.20.09";
+const APP_VERSION = "v2026.06.20.10";
 const DEBUG_TOP_VIEW = new URLSearchParams(window.location.search).has("topDebug");
 const DEBUG_TOP_VIEW_DISTANCE = Number(new URLSearchParams(window.location.search).get("topDebugDist"));
 const DEBUG_BLACK_HOLE_VIEW = new URLSearchParams(window.location.search).has("blackHoleDebug");
@@ -5551,6 +5551,7 @@ uniform float uTime;
 uniform float uIntensity;
 uniform float uEdgePower;
 uniform float uWaveScale;
+uniform float uVeil;
 uniform vec3 uInnerColor;
 uniform vec3 uOuterColor;
 varying vec3 vWorldPosition;
@@ -5561,21 +5562,25 @@ float wave(vec3 p,float scale,float speed,float phase){
 }
 void main(){
   vec3 viewDir=normalize(cameraPosition-vWorldPosition);
-  float rim=pow(1.0-abs(dot(normalize(vWorldNormal),viewDir)),uEdgePower);
-  float plume=0.64+0.24*wave(vLocalDir,uWaveScale,.20,0.0)+0.12*wave(vLocalDir.yzx,uWaveScale*1.7,-.13,2.4);
-  float tongues=smoothstep(.54,1.0,abs(wave(vLocalDir.zxy,uWaveScale*.72,.09,4.1)));
-  float alpha=uIntensity*rim*clamp(plume,0.22,1.0)*(0.72+tongues*.34);
-  vec3 color=mix(uOuterColor,uInnerColor,tongues);
-  gl_FragColor=vec4(color*(1.0+tongues*.45),alpha);
+  float facing=abs(dot(normalize(vWorldNormal),viewDir));
+  float rim=pow(1.0-facing,uEdgePower);
+  float broad=pow(1.0-facing,0.62);
+  float plume=0.68+0.30*wave(vLocalDir,uWaveScale,.24,0.0)+0.18*wave(vLocalDir.yzx,uWaveScale*1.55,-.17,2.4);
+  float tongues=smoothstep(.36,1.0,abs(wave(vLocalDir.zxy,uWaveScale*.72,.13,4.1)));
+  float hotEdge=smoothstep(.18,.92,rim)*(0.92+tongues*.55);
+  float alpha=uIntensity*(hotEdge+broad*uVeil)*clamp(plume,0.18,1.18);
+  vec3 color=mix(uOuterColor,uInnerColor,smoothstep(.12,.96,tongues+rim*.36));
+  gl_FragColor=vec4(color*(1.08+tongues*.68+rim*.5),alpha);
 }`;
 
-function makeSunHeatHazeMaterial({ intensity, edgePower, waveScale, innerColor, outerColor }) {
+function makeSunHeatHazeMaterial({ intensity, edgePower, waveScale, veil, innerColor, outerColor }) {
   return new THREE.ShaderMaterial({
     uniforms: {
       uTime: { value: 0 },
       uIntensity: { value: intensity },
       uEdgePower: { value: edgePower },
       uWaveScale: { value: waveScale },
+      uVeil: { value: veil },
       uInnerColor: { value: new THREE.Color(innerColor) },
       uOuterColor: { value: new THREE.Color(outerColor) },
     },
@@ -5584,16 +5589,15 @@ function makeSunHeatHazeMaterial({ intensity, edgePower, waveScale, innerColor, 
     transparent: true,
     blending: THREE.AdditiveBlending,
     depthWrite: false,
-    depthTest: true,
+    depthTest: false,
     side: THREE.FrontSide,
     toneMapped: false,
   });
 }
 
 const sunHeatHazeLayers = [
-  { scale: 1.028, intensity: 0.28, edgePower: 1.55, waveScale: 9.0, innerColor: 0xff8a20, outerColor: 0xaa1200 },
-  { scale: 1.075, intensity: 0.16, edgePower: 2.1, waveScale: 6.4, innerColor: 0xff5e12, outerColor: 0x7a0800 },
-  { scale: 1.155, intensity: 0.075, edgePower: 2.9, waveScale: 4.8, innerColor: 0xff2f08, outerColor: 0x430000 },
+  { scale: 1.018, intensity: 0.055, edgePower: 1.2, waveScale: 10.2, veil: 0.008, innerColor: 0xffb13a, outerColor: 0xc61e00 },
+  { scale: 1.046, intensity: 0.038, edgePower: 1.45, waveScale: 7.4, veil: 0.006, innerColor: 0xff7318, outerColor: 0xa90c00 },
 ].map((spec, index) => {
   const material = makeSunHeatHazeMaterial(spec);
   const mesh = new THREE.Mesh(new THREE.SphereGeometry(SUN_RADIUS * spec.scale, 48, 32), material);
@@ -5602,11 +5606,89 @@ const sunHeatHazeLayers = [
   return { mesh, material };
 });
 
+const SUN_HEAT_CORONA_VERT = `
+varying vec2 vUv;
+void main(){
+  vUv=uv;
+  gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0);
+}`;
+
+const SUN_HEAT_CORONA_FRAG = `
+precision mediump float;
+uniform float uTime;
+varying vec2 vUv;
+float hash(vec2 p){
+  return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453123);
+}
+float noise(vec2 p){
+  vec2 i=floor(p);
+  vec2 f=fract(p);
+  vec2 u=f*f*(3.0-2.0*f);
+  return mix(mix(hash(i),hash(i+vec2(1.0,0.0)),u.x),mix(hash(i+vec2(0.0,1.0)),hash(i+vec2(1.0,1.0)),u.x),u.y);
+}
+void main(){
+  vec2 d=vUv-vec2(.5);
+  float r=length(d);
+  float a=atan(d.y,d.x);
+  vec2 flowUv=d*5.4+vec2(uTime*.055,-uTime*.035);
+  float flow=noise(flowUv)+noise(flowUv*2.15+vec2(-uTime*.13,uTime*.09))*.5;
+  flow/=1.5;
+  float turbulence=
+    sin(a*8.0+uTime*.22)*.005+
+    sin(a*15.0-uTime*.16)*.003+
+    (flow-.5)*.016;
+  float disk=.268+turbulence;
+  float dist=max(0.0,r-disk);
+  float innerFade=smoothstep(disk-.055,disk+.028,r);
+  float outerFade=1.0-smoothstep(.455,.54,r);
+  float softGlow=exp(-dist*4.9);
+  float nearHeat=exp(-dist*13.0);
+  float hotSkin=exp(-dist*23.0);
+  float filament=.66+flow*.30+.045*sin(a*11.0+uTime*.19)+.028*sin(a*21.0-uTime*.13);
+  float lick=smoothstep(.78,1.0,filament);
+  float flameReach=smoothstep(.0,.10,dist)*(1.0-smoothstep(.11,.26,dist))*lick;
+  float streaming=.80+.20*noise(d*8.5+vec2(-uTime*.10,uTime*.18));
+  float alpha=innerFade*outerFade*(softGlow*.54+nearHeat*.68+hotSkin*.20+flameReach*.18)*streaming*(0.94+lick*.18);
+  vec3 deep=vec3(.36,.0,.0);
+  vec3 red=vec3(.94,.055,.0);
+  vec3 orange=vec3(1.0,.25,.025);
+  vec3 color=mix(orange,red,smoothstep(.025,.19,dist));
+  color=mix(color,deep,smoothstep(.22,.40,dist));
+  color+=orange*(nearHeat*.42+hotSkin*.20+flameReach*.22);
+  if(alpha<.003) discard;
+  gl_FragColor=vec4(color*(1.06+lick*.24+flow*.16),alpha*.88);
+}`;
+
+const sunHeatCoronaMaterial = new THREE.ShaderMaterial({
+  uniforms: {
+    uTime: { value: 0 },
+  },
+  vertexShader: SUN_HEAT_CORONA_VERT,
+  fragmentShader: SUN_HEAT_CORONA_FRAG,
+  transparent: true,
+  blending: THREE.AdditiveBlending,
+  depthWrite: false,
+  depthTest: true,
+  side: THREE.DoubleSide,
+  toneMapped: false,
+});
+const sunHeatCoronaMesh = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), sunHeatCoronaMaterial);
+sunHeatCoronaMesh.renderOrder = 7;
+sunHeatCoronaMesh.scale.setScalar(SUN_RADIUS * 3.78);
+scene.add(sunHeatCoronaMesh);
+const sunHeatCoronaWorld = new THREE.Vector3();
+
 function updateSunHeatHaze(timeSeconds) {
   for (let i = 0; i < sunHeatHazeLayers.length; i += 1) {
     const layer = sunHeatHazeLayers[i];
     layer.material.uniforms.uTime.value = timeSeconds + i * 7.3;
   }
+  const pulse = 1 + Math.sin(timeSeconds * 0.21) * 0.025 + Math.sin(timeSeconds * 0.047) * 0.018;
+  sunMesh.getWorldPosition(sunHeatCoronaWorld);
+  sunHeatCoronaMesh.position.copy(sunHeatCoronaWorld);
+  sunHeatCoronaMesh.quaternion.copy(camera.quaternion);
+  sunHeatCoronaMesh.scale.setScalar(SUN_RADIUS * 3.78 * pulse);
+  sunHeatCoronaMaterial.uniforms.uTime.value = timeSeconds;
 }
 
 sun.position.copy(sunMesh.position);
