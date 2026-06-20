@@ -13,7 +13,7 @@ const klingonButton = document.querySelector("#klingonButton");
 const blackHoleTourButton = document.querySelector("#blackHoleTourButton");
 const controllerHelpButton = document.querySelector("#controllerHelpButton");
 const poseDebugOutputEl = document.querySelector("#poseDebugOutput");
-const APP_VERSION = "v2026.06.20.07";
+const APP_VERSION = "v2026.06.20.08";
 const DEBUG_TOP_VIEW = new URLSearchParams(window.location.search).has("topDebug");
 const DEBUG_TOP_VIEW_DISTANCE = Number(new URLSearchParams(window.location.search).get("topDebugDist"));
 const DEBUG_BLACK_HOLE_VIEW = new URLSearchParams(window.location.search).has("blackHoleDebug");
@@ -3375,16 +3375,16 @@ const klingonDepartureSound = {
 };
 
 const SHIP_AUDIO_MIN_RATIO = 0.18;
-const SHIP_AUDIO_FULL_DISTANCE = 1.25;
-const SHIP_AUDIO_FLOOR_DISTANCE = 14.0;
+const SHIP_AUDIO_FULL_DISTANCE = 4.0;
+const SHIP_AUDIO_FLOOR_DISTANCE = 24.0;
 const LOCAL_AUDIO_MIN_RATIO = 0.0;
-const ENTERPRISE_ENTRANCE_VOLUME = 0.62;
-const ENTERPRISE_SYNTH_VOLUME = 0.22;
-const ENTERPRISE_RARE_ORBIT_VOLUME = 0.48;
-const ENTERPRISE_WARP_VOLUME = 0.68;
-const KLINGON_THEME_VOLUME = 0.58;
-const KLINGON_ARRIVAL_VOLUME = 0.54;
-const KLINGON_DEPARTURE_VOLUME = 0.56;
+const ENTERPRISE_ENTRANCE_VOLUME = 1.0;
+const ENTERPRISE_SYNTH_VOLUME = 0.42;
+const ENTERPRISE_RARE_ORBIT_VOLUME = 1.0;
+const ENTERPRISE_WARP_VOLUME = 1.0;
+const KLINGON_THEME_VOLUME = 1.0;
+const KLINGON_ARRIVAL_VOLUME = 1.0;
+const KLINGON_DEPARTURE_VOLUME = 1.0;
 
 function getAudioCamera() {
   return renderer.xr.isPresenting ? renderer.xr.getCamera(camera) : camera;
