@@ -13,7 +13,7 @@ const klingonButton = document.querySelector("#klingonButton");
 const blackHoleTourButton = document.querySelector("#blackHoleTourButton");
 const controllerHelpButton = document.querySelector("#controllerHelpButton");
 const poseDebugOutputEl = document.querySelector("#poseDebugOutput");
-const APP_VERSION = "v2026.06.20.05";
+const APP_VERSION = "v2026.06.20.06";
 const DEBUG_TOP_VIEW = new URLSearchParams(window.location.search).has("topDebug");
 const DEBUG_TOP_VIEW_DISTANCE = Number(new URLSearchParams(window.location.search).get("topDebugDist"));
 const DEBUG_BLACK_HOLE_VIEW = new URLSearchParams(window.location.search).has("blackHoleDebug");
@@ -1564,7 +1564,7 @@ for (const sx of [-1, 1]) {
   }
 }
 satellite.position.set(EARTH_RADIUS * 1.7, 0, 0); // orbit radius from Earth center
-satellite.scale.setScalar(0.5); // smaller now that the Moon is in the scene
+satellite.scale.setScalar(0.25); // smaller now that the Moon is in the scene
 
 const satOrbit = new THREE.Group();
 satOrbit.rotation.x = THREE.MathUtils.degToRad(35); // inclined orbit
