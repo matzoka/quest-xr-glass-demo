@@ -13,7 +13,7 @@ const klingonButton = document.querySelector("#klingonButton");
 const blackHoleTourButton = document.querySelector("#blackHoleTourButton");
 const controllerHelpButton = document.querySelector("#controllerHelpButton");
 const poseDebugOutputEl = document.querySelector("#poseDebugOutput");
-const APP_VERSION = "v2026.06.20.10";
+const APP_VERSION = "v2026.06.20.11";
 const DEBUG_TOP_VIEW = new URLSearchParams(window.location.search).has("topDebug");
 const DEBUG_TOP_VIEW_DISTANCE = Number(new URLSearchParams(window.location.search).get("topDebugDist"));
 const DEBUG_BLACK_HOLE_VIEW = new URLSearchParams(window.location.search).has("blackHoleDebug");
@@ -1142,6 +1142,8 @@ const AURORA_CURTAIN_MIN_HEIGHT_SCALE = 0.12;
 const AURORA_CURTAIN_MAX_HEIGHT_SCALE = 0.30;
 const AURORA_CURTAIN_MIN_POLAR_LIFT_SCALE = 0.022;
 const AURORA_CURTAIN_MAX_POLAR_LIFT_SCALE = 0.054;
+const AURORA_XR_VISIBILITY_BOOST = 1.42;
+const AURORA_XR_MIN_VISIBLE_INTENSITY = 0.54;
 
 const auroraMaterial = new THREE.ShaderMaterial({
   uniforms: {
@@ -1152,7 +1154,7 @@ const auroraMaterial = new THREE.ShaderMaterial({
   },
   vertexShader: earthNightVert,
   fragmentShader: `
-precision mediump float;
+precision highp float;
 uniform vec3 uSunDir;
 uniform float uTime;
 uniform float uIntensity;
@@ -1178,7 +1180,7 @@ void main(){
 }`,
   transparent: true,
   blending: THREE.AdditiveBlending,
-  side: THREE.FrontSide,
+  side: THREE.DoubleSide,
   depthWrite: false,
   depthTest: true,
   polygonOffset: true,
@@ -1281,7 +1283,7 @@ const auroraCurtainMaterial = new THREE.ShaderMaterial({
     uStorm: { value: 0.0 },
   },
   vertexShader: `
-precision mediump float;
+precision highp float;
 uniform float uTime;
 uniform float uStorm;
 attribute float aAltitudeMix;
@@ -1300,7 +1302,7 @@ void main(){
   gl_Position=projectionMatrix*modelViewMatrix*vec4(position+radial*lift,1.0);
 }`,
   fragmentShader: `
-precision mediump float;
+precision highp float;
 uniform vec3 uSunDir;
 uniform float uTime;
 uniform float uIntensity;
@@ -1360,7 +1362,11 @@ let auroraFlareIntensity = 0;
 let auroraFlareTarget = 0;
 
 function updateAuroraFlare(dt) {
-  const target = DEBUG_AURORA_VIEW ? 0.92 : auroraFlareTarget;
+  let displayTarget = auroraFlareTarget;
+  if (renderer.xr.isPresenting && auroraFlareTarget > 0.08) {
+    displayTarget = Math.max(auroraFlareTarget * AURORA_XR_VISIBILITY_BOOST, AURORA_XR_MIN_VISIBLE_INTENSITY);
+  }
+  const target = DEBUG_AURORA_VIEW ? 0.92 : THREE.MathUtils.clamp(displayTarget, 0, 1);
   const response = target > auroraFlareIntensity ? 1 - Math.exp(-dt * 1.9) : 1 - Math.exp(-dt * 0.58);
   auroraFlareIntensity = THREE.MathUtils.lerp(auroraFlareIntensity, target, response);
   if (auroraFlareIntensity < 0.002 && target <= 0.001) auroraFlareIntensity = 0;
@@ -1371,6 +1377,22 @@ function updateAuroraFlare(dt) {
   auroraMesh.visible = auroraFlareIntensity > 0.006;
   auroraCurtainGroup.visible = auroraFlareIntensity > 0.012;
 }
+
+function getAuroraDebugState() {
+  return {
+    xrPresenting: renderer.xr.isPresenting,
+    flareTarget: auroraFlareTarget,
+    flareIntensity: auroraFlareIntensity,
+    surfaceVisible: auroraMesh.visible,
+    curtainVisible: auroraCurtainGroup.visible,
+    xrVisibilityBoost: AURORA_XR_VISIBILITY_BOOST,
+    xrMinVisibleIntensity: AURORA_XR_MIN_VISIBLE_INTENSITY,
+  };
+}
+
+window.__questXrDebug = Object.assign(window.__questXrDebug || {}, {
+  getAuroraState: getAuroraDebugState,
+});
 
 const nightSunWorld = new THREE.Vector3();
 const nightSunLocal = new THREE.Vector3();
