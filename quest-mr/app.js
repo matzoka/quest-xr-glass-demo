@@ -13,7 +13,7 @@ const klingonButton = document.querySelector("#klingonButton");
 const blackHoleTourButton = document.querySelector("#blackHoleTourButton");
 const controllerHelpButton = document.querySelector("#controllerHelpButton");
 const poseDebugOutputEl = document.querySelector("#poseDebugOutput");
-const APP_VERSION = "v2026.06.20.08";
+const APP_VERSION = "v2026.06.20.09";
 const DEBUG_TOP_VIEW = new URLSearchParams(window.location.search).has("topDebug");
 const DEBUG_TOP_VIEW_DISTANCE = Number(new URLSearchParams(window.location.search).get("topDebugDist"));
 const DEBUG_BLACK_HOLE_VIEW = new URLSearchParams(window.location.search).has("blackHoleDebug");
@@ -5479,99 +5479,39 @@ varying vec3 vPosition;
 varying vec3 vNormal;
 varying vec2 vUv;
 
-vec3 m289v3(vec3 x){return x-floor(x*(1./289.))*289.;}
-vec4 m289v4(vec4 x){return x-floor(x*(1./289.))*289.;}
-vec4 perm(vec4 x){return m289v4((x*34.+1.)*x);}
-vec4 tiSqrt(vec4 r){return 1.79284291400159-0.85373472095314*r;}
-float snoise(vec3 v){
-  const vec2 C=vec2(1./6.,1./3.);
-  const vec4 D=vec4(0.,.5,1.,2.);
-  vec3 i=floor(v+dot(v,C.yyy));
-  vec3 x0=v-i+dot(i,C.xxx);
-  vec3 g=step(x0.yzx,x0.xyz);
-  vec3 l=1.-g;
-  vec3 i1=min(g.xyz,l.zxy);
-  vec3 i2=max(g.xyz,l.zxy);
-  vec3 x1=x0-i1+C.xxx;
-  vec3 x2=x0-i2+C.yyy;
-  vec3 x3=x0-D.yyy;
-  i=m289v3(i);
-  vec4 p=perm(perm(perm(
-    i.z+vec4(0.,i1.z,i2.z,1.))
-    +i.y+vec4(0.,i1.y,i2.y,1.))
-    +i.x+vec4(0.,i1.x,i2.x,1.));
-  float n_=0.142857142857;
-  vec3 ns=n_*D.wyz-D.xzx;
-  vec4 j=p-49.*floor(p*ns.z*ns.z);
-  vec4 x_=floor(j*ns.z);
-  vec4 y_=floor(j-7.*x_);
-  vec4 x=x_*ns.x+ns.yyyy;
-  vec4 y=y_*ns.x+ns.yyyy;
-  vec4 h=1.-abs(x)-abs(y);
-  vec4 b0=vec4(x.xy,y.xy);
-  vec4 b1=vec4(x.zw,y.zw);
-  vec4 s0=floor(b0)*2.+1.;
-  vec4 s1=floor(b1)*2.+1.;
-  vec4 sh=-step(h,vec4(0.));
-  vec4 a0=b0.xzyw+s0.xzyw*sh.xxyy;
-  vec4 a1=b1.xzyw+s1.xzyw*sh.zzww;
-  vec3 p0=vec3(a0.xy,h.x);
-  vec3 p1=vec3(a0.zw,h.y);
-  vec3 p2=vec3(a1.xy,h.z);
-  vec3 p3=vec3(a1.zw,h.w);
-  vec4 norm=tiSqrt(vec4(dot(p0,p0),dot(p1,p1),dot(p2,p2),dot(p3,p3)));
-  p0*=norm.x;p1*=norm.y;p2*=norm.z;p3*=norm.w;
-  vec4 m=max(.6-vec4(dot(x0,x0),dot(x1,x1),dot(x2,x2),dot(x3,x3)),0.);
-  m=m*m;
-  return 42.*dot(m*m,vec4(dot(p0,x0),dot(p1,x1),dot(p2,x2),dot(p3,x3)));
-}
-// 通常fBm
-float fbm(vec3 p){
-  float v=0.;float a=.5;
-  for(int i=0;i<5;i++){v+=a*snoise(p);p=p*2.+vec3(100.);a*=.5;}
-  return v;
-}
-// Ridged fBm: 暗い背景に尖った明るい炎の筋を作る
-float rfbm(vec3 p){
-  float v=0.;float a=.6;
-  for(int i=0;i<4;i++){
-    float n=1.-abs(snoise(p)); // 0〜1の山形、暗部が0
-    n=n*n;                     // さらに尖らせる
-    v+=a*n;
-    p=p*2.2+vec3(100.);a*=.5;
-  }
-  return v;
+float wave(vec3 p,float scale,float speed,float phase){
+  return sin(dot(p,vec3(scale,scale*.63,-scale*.41))+uTime*speed+phase);
 }
 void main(){
   vec3 n=normalize(vPosition);
-  float t1=uTime*.05;
-  float t2=uTime*.03;
+  float t=uTime;
 
-  // ノイズで UV をゆっくり歪め、プラズマが沸き立つ揺らぎを作る。
-  vec3 q=vec3(
-    fbm(n*3.5+vec3(t1,t1*.6,t1*.3)),
-    fbm(n*3.5+vec3(t2*.7,t2,t2*.5))
-  ,0.);
-  vec2 warp=vec2(q.x,q.y)*0.022;
-  // 細かい対流セル（粒状斑）のさざ波も加える。
-  warp+=vec2(snoise(n*9.+vec3(t2)),snoise(n*9.+vec3(7.,t2,3.)))*0.006;
+  // Quest向けに重い3Dノイズを避け、複数の低コストな波で表面流を作る。
+  float flowA=wave(n,7.2,.18,0.0);
+  float flowB=wave(n.yzx,13.0,-.12,1.9);
+  float granule=wave(n.zxy,34.0,.26,3.4)*wave(n.xyz,23.0,-.21,0.7);
+  vec2 warp=vec2(flowA*.010+flowB*.006,flowB*.009-granule*.004);
 
-  // NASA 由来の太陽テクスチャをサンプリング（歪ませた UV で）。
   vec3 tex=texture2D(uTex,vUv+warp).rgb;
+  vec3 texFlow=texture2D(uTex,vUv-warp*.55+vec2(t*.0012,-t*.0007)).rgb;
+  tex=mix(tex,texFlow,.34);
 
-  // 明部を引き締め、エネルギーを与えて自己発光らしく見せる。
   float lum=dot(tex,vec3(0.299,0.587,0.114));
-  // リッジドノイズで動くフレアの筋を上乗せ（明部だけ強調）。
-  float flare=rfbm(n*5.+q*1.2+vec3(t2*.5));
-  flare=pow(clamp(flare,0.,1.),2.0)*smoothstep(0.35,0.8,lum);
+  float brightCells=smoothstep(.18,.92,granule*.5+.5);
+  float moltenBand=smoothstep(.72,.98,abs(wave(n.xzy,11.0,.09,2.7)));
+  float darkFilament=smoothstep(.76,.99,abs(wave(n.zyx,5.4,.05,4.1))*abs(wave(n,8.8,-.04,1.2)));
 
-  vec3 col=tex*1.45;
-  col+=flare*vec3(1.0,0.45,0.08)*0.7;
+  vec3 ember=vec3(.92,.20,.015);
+  vec3 orange=vec3(1.0,.46,.035);
+  vec3 whiteHot=vec3(1.0,.86,.42);
+  vec3 col=mix(ember,orange,clamp(lum*1.35+brightCells*.18,0.,1.));
+  col+=tex*.72;
+  col+=whiteHot*smoothstep(.48,.9,lum+brightCells*.18)*.62;
+  col+=vec3(1.0,.34,.025)*moltenBand*.20;
+  col-=vec3(.36,.11,.02)*darkFilament*.55;
 
-  // コロナエッジ（縁の輝き、控えめなオレンジ）。
-  float rim=1.-abs(dot(vNormal,vec3(0.,0.,1.)));
-  rim=pow(rim,3.0);
-  col+=rim*vec3(1.0,0.42,0.05)*0.9;
+  float rim=pow(1.-abs(dot(normalize(vNormal),vec3(0.,0.,1.))),2.4);
+  col+=rim*vec3(1.0,.28,.025)*1.05;
 
   gl_FragColor=vec4(col,1.);
 }`;
@@ -5592,6 +5532,83 @@ const sunMesh = new THREE.Mesh(
 );
 sunMesh.position.set(-48, 30, -62);
 scene.add(sunMesh);
+
+const SUN_HEAT_HAZE_VERT = `
+varying vec3 vWorldPosition;
+varying vec3 vWorldNormal;
+varying vec3 vLocalDir;
+void main(){
+  vec4 worldPosition=modelMatrix*vec4(position,1.0);
+  vWorldPosition=worldPosition.xyz;
+  vWorldNormal=normalize(mat3(modelMatrix)*normal);
+  vLocalDir=normalize(position);
+  gl_Position=projectionMatrix*viewMatrix*worldPosition;
+}`;
+
+const SUN_HEAT_HAZE_FRAG = `
+precision mediump float;
+uniform float uTime;
+uniform float uIntensity;
+uniform float uEdgePower;
+uniform float uWaveScale;
+uniform vec3 uInnerColor;
+uniform vec3 uOuterColor;
+varying vec3 vWorldPosition;
+varying vec3 vWorldNormal;
+varying vec3 vLocalDir;
+float wave(vec3 p,float scale,float speed,float phase){
+  return sin(dot(p,vec3(scale,scale*.58,-scale*.37))+uTime*speed+phase);
+}
+void main(){
+  vec3 viewDir=normalize(cameraPosition-vWorldPosition);
+  float rim=pow(1.0-abs(dot(normalize(vWorldNormal),viewDir)),uEdgePower);
+  float plume=0.64+0.24*wave(vLocalDir,uWaveScale,.20,0.0)+0.12*wave(vLocalDir.yzx,uWaveScale*1.7,-.13,2.4);
+  float tongues=smoothstep(.54,1.0,abs(wave(vLocalDir.zxy,uWaveScale*.72,.09,4.1)));
+  float alpha=uIntensity*rim*clamp(plume,0.22,1.0)*(0.72+tongues*.34);
+  vec3 color=mix(uOuterColor,uInnerColor,tongues);
+  gl_FragColor=vec4(color*(1.0+tongues*.45),alpha);
+}`;
+
+function makeSunHeatHazeMaterial({ intensity, edgePower, waveScale, innerColor, outerColor }) {
+  return new THREE.ShaderMaterial({
+    uniforms: {
+      uTime: { value: 0 },
+      uIntensity: { value: intensity },
+      uEdgePower: { value: edgePower },
+      uWaveScale: { value: waveScale },
+      uInnerColor: { value: new THREE.Color(innerColor) },
+      uOuterColor: { value: new THREE.Color(outerColor) },
+    },
+    vertexShader: SUN_HEAT_HAZE_VERT,
+    fragmentShader: SUN_HEAT_HAZE_FRAG,
+    transparent: true,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+    depthTest: true,
+    side: THREE.FrontSide,
+    toneMapped: false,
+  });
+}
+
+const sunHeatHazeLayers = [
+  { scale: 1.028, intensity: 0.28, edgePower: 1.55, waveScale: 9.0, innerColor: 0xff8a20, outerColor: 0xaa1200 },
+  { scale: 1.075, intensity: 0.16, edgePower: 2.1, waveScale: 6.4, innerColor: 0xff5e12, outerColor: 0x7a0800 },
+  { scale: 1.155, intensity: 0.075, edgePower: 2.9, waveScale: 4.8, innerColor: 0xff2f08, outerColor: 0x430000 },
+].map((spec, index) => {
+  const material = makeSunHeatHazeMaterial(spec);
+  const mesh = new THREE.Mesh(new THREE.SphereGeometry(SUN_RADIUS * spec.scale, 48, 32), material);
+  mesh.renderOrder = 8 + index;
+  sunMesh.add(mesh);
+  return { mesh, material };
+});
+
+function updateSunHeatHaze(timeSeconds) {
+  for (let i = 0; i < sunHeatHazeLayers.length; i += 1) {
+    const layer = sunHeatHazeLayers[i];
+    layer.material.uniforms.uTime.value = timeSeconds + i * 7.3;
+  }
+}
+
 sun.position.copy(sunMesh.position);
 sun.target.position.set(0, 0, 0);
 scene.add(sun.target);
@@ -5651,6 +5668,7 @@ void main(){
   })
 );
 sunMesh.add(solarSpotMesh);
+solarSpotMesh.visible = false;
 
 let solarSpotActive = false;
 let solarSpotT = 0;
@@ -5698,12 +5716,14 @@ function spawnSolarSpot() {
   solarSpotDuration = 38 + Math.random() * 24;
   solarSpotT = 0;
   solarSpotActive = true;
+  solarSpotMesh.visible = true;
 }
 
 function updateSolarSpots(dt) {
   solarSpotUniforms.uTime.value = elapsed;
   if (!solarSpotActive) {
     if (elapsed >= nextSolarSpotAt) spawnSolarSpot();
+    solarSpotMesh.visible = solarSpotActive;
     return;
   }
 
@@ -5711,9 +5731,11 @@ function updateSolarSpots(dt) {
   const p = Math.min(1, solarSpotT / solarSpotDuration);
   const fade = THREE.MathUtils.smoothstep(p, 0, 0.14) * (1 - THREE.MathUtils.smoothstep(p, 0.78, 1.0));
   solarSpotUniforms.uSpotOpacity.value = fade;
+  solarSpotMesh.visible = fade > 0.006;
   if (p >= 1) {
     solarSpotActive = false;
     solarSpotUniforms.uSpotOpacity.value = 0;
+    solarSpotMesh.visible = false;
     scheduleNextSolarSpot();
   }
 }
@@ -8214,6 +8236,7 @@ renderer.setAnimationLoop((timestamp) => {
   moonOrbit.rotation.y += dt * MOON_ORBIT_SPEED;
   updatePlane(dt);
   sunMaterial.uniforms.uTime.value = elapsed;
+  updateSunHeatHaze(elapsed);
   sunMesh.rotation.y += dt * 0.03;
   saturnBall.rotation.y += dt * 0.1;
   for (const p of planets) p.mesh.rotation.y += dt * p.spin;
