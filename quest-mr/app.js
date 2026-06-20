@@ -13,7 +13,7 @@ const klingonButton = document.querySelector("#klingonButton");
 const blackHoleTourButton = document.querySelector("#blackHoleTourButton");
 const controllerHelpButton = document.querySelector("#controllerHelpButton");
 const poseDebugOutputEl = document.querySelector("#poseDebugOutput");
-const APP_VERSION = "v2026.06.20.06";
+const APP_VERSION = "v2026.06.20.07";
 const DEBUG_TOP_VIEW = new URLSearchParams(window.location.search).has("topDebug");
 const DEBUG_TOP_VIEW_DISTANCE = Number(new URLSearchParams(window.location.search).get("topDebugDist"));
 const DEBUG_BLACK_HOLE_VIEW = new URLSearchParams(window.location.search).has("blackHoleDebug");
@@ -5922,6 +5922,7 @@ function makeSolarProminenceSlot() {
     localSurfaceDir: new THREE.Vector3(),
     localImpactDir: new THREE.Vector3(),
     earthFacingFactor: 0,
+    auroraDrive: 0,
   };
 }
 
@@ -5986,7 +5987,7 @@ function getSolarProminenceEarthFacingFactor(localSurfaceDir) {
   // Aurora is driven by solar-wind/CME impact on Earth. Far-side events should
   // not energize Earth's aurora in this compressed visual model.
   const earthward = localSurfaceDir.dot(solarEarthLocal);
-  return THREE.MathUtils.smoothstep(earthward, -0.12, 0.68);
+  return THREE.MathUtils.smoothstep(earthward, -0.22, 0.52);
 }
 
 function makeSolarFlameRibbonGeometry(points, side, tangent, widthBase, seed, widthMul = 1, tangentMul = 1) {
@@ -6283,7 +6284,7 @@ function updateSolarProminence(dt) {
     scheduleNextSolarProminence(getActiveSolarProminenceCount());
   }
 
-  let strongestGeoEffectiveOpacity = 0;
+  let strongestAuroraDrive = 0;
   for (const slot of solarProminenceSlots) {
     if (!slot.active) continue;
 
@@ -6297,7 +6298,13 @@ function updateSolarProminence(dt) {
     const fade = fadeIn * fadeOut;
     const pulse = 0.86 + Math.sin(elapsed * 1.1 + slot.duration * 0.13) * 0.06 + Math.sin(elapsed * 2.3) * 0.035;
     const opacity = Math.max(0, fade * pulse);
-    strongestGeoEffectiveOpacity = Math.max(strongestGeoEffectiveOpacity, opacity * slot.earthFacingFactor);
+    const activeLife = THREE.MathUtils.smoothstep(slot.t, 0, 2) *
+      (1 - THREE.MathUtils.smoothstep(slot.t, Math.max(8, slot.duration - 6), slot.duration));
+    const earthFacingActivation = THREE.MathUtils.smoothstep(slot.earthFacingFactor, 0.16, 0.40);
+    const visibleDrive = opacity * slot.earthFacingFactor;
+    const guaranteedDrive = activeLife * earthFacingActivation * 0.38;
+    slot.auroraDrive = Math.max(visibleDrive, guaranteedDrive);
+    strongestAuroraDrive = Math.max(strongestAuroraDrive, slot.auroraDrive);
 
     for (const mat of slot.materials) {
       mat.uniforms.uTime.value = elapsed;
@@ -6315,6 +6322,7 @@ function updateSolarProminence(dt) {
       slot.active = false;
       slot.group.visible = false;
       slot.earthFacingFactor = 0;
+      slot.auroraDrive = 0;
       for (const mat of slot.materials) {
         mat.uniforms.uOpacity.value = 0;
       }
@@ -6324,7 +6332,7 @@ function updateSolarProminence(dt) {
     }
   }
 
-  auroraFlareTarget = THREE.MathUtils.clamp(strongestGeoEffectiveOpacity * 1.18, 0, 1);
+  auroraFlareTarget = THREE.MathUtils.clamp(strongestAuroraDrive * 1.18, 0, 1);
 }
 
 function getSolarProminenceDebugState() {
@@ -6341,6 +6349,7 @@ function getSolarProminenceDebugState() {
       duration: slot.duration,
       remaining: Math.max(0, slot.duration - slot.t),
       earthFacingFactor: slot.earthFacingFactor,
+      auroraDrive: slot.auroraDrive,
     })),
   };
 }
