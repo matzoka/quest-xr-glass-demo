@@ -22,7 +22,7 @@ if (TAXI_ALLOWED && taxiAnalyticsButton) {
   taxiAnalyticsButton.removeAttribute("hidden");
 }
 
-const APP_VERSION = "v2026.09.29.20";
+const APP_VERSION = "v2026.09.29.21";
 const DEBUG_TOP_VIEW = new URLSearchParams(window.location.search).has("topDebug");
 const DEBUG_TOP_VIEW_DISTANCE = Number(new URLSearchParams(window.location.search).get("topDebugDist"));
 const DEBUG_BLACK_HOLE_VIEW = new URLSearchParams(window.location.search).has("blackHoleDebug");
@@ -1858,7 +1858,7 @@ function updateMeteor(dt) {
     if (meteorFlashLife <= 0) meteorFlash.visible = false;
   }
   if (!meteorActive) {
-    if (elapsed >= nextMeteorAt) spawnMeteor();
+    if (elapsed >= nextMeteorAt && !isSceneEventSuppressed()) spawnMeteor();
     return;
   }
   meteorProgress = Math.min(1, meteorProgress + (meteorSpeed * dt) / meteorPathLength);
@@ -2015,7 +2015,7 @@ function spawnComet() {
 
 function updateComet(dt) {
   if (!cometActive) {
-    if (elapsed >= nextCometAt) spawnComet();
+    if (elapsed >= nextCometAt && !isSceneEventSuppressed()) spawnComet();
     return;
   }
   cometT += dt;
@@ -3422,13 +3422,15 @@ const SHIP_AUDIO_MIN_RATIO = 0.18;
 const SHIP_AUDIO_FULL_DISTANCE = 4.0;
 const SHIP_AUDIO_FLOOR_DISTANCE = 24.0;
 const LOCAL_AUDIO_MIN_RATIO = 0.0;
-const ENTERPRISE_ENTRANCE_VOLUME = 1.0;
-const ENTERPRISE_SYNTH_VOLUME = 0.42;
-const ENTERPRISE_RARE_ORBIT_VOLUME = 1.0;
-const ENTERPRISE_WARP_VOLUME = 1.0;
-const KLINGON_THEME_VOLUME = 1.0;
-const KLINGON_ARRIVAL_VOLUME = 1.0;
-const KLINGON_DEPARTURE_VOLUME = 1.0;
+// v21: Enterprise / Klingon sounds 30% quieter (x0.7 of the v20 values 1.0 / 0.42).
+const SHIP_EVENT_VOLUME_SCALE = 0.7;
+const ENTERPRISE_ENTRANCE_VOLUME = 1.0 * SHIP_EVENT_VOLUME_SCALE;
+const ENTERPRISE_SYNTH_VOLUME = 0.42 * SHIP_EVENT_VOLUME_SCALE;
+const ENTERPRISE_RARE_ORBIT_VOLUME = 1.0 * SHIP_EVENT_VOLUME_SCALE;
+const ENTERPRISE_WARP_VOLUME = 1.0 * SHIP_EVENT_VOLUME_SCALE;
+const KLINGON_THEME_VOLUME = 1.0 * SHIP_EVENT_VOLUME_SCALE;
+const KLINGON_ARRIVAL_VOLUME = 1.0 * SHIP_EVENT_VOLUME_SCALE;
+const KLINGON_DEPARTURE_VOLUME = 1.0 * SHIP_EVENT_VOLUME_SCALE;
 
 function getAudioCamera() {
   return renderer.xr.isPresenting ? renderer.xr.getCamera(camera) : camera;
@@ -5083,12 +5085,20 @@ function isXrHandUiAllowed() {
   return xrViewerRoomZone !== null || isViewerInTaxiAnalyticsRoomXr();
 }
 
-// v20: while the viewer is in the taxi room (XR walk-in / teleport, or the 2D preview)
-// no scene events start and their sounds are muted (event audio bus). Due timers are
-// pushed to "leave + grace" so nothing fires the instant the viewer walks out.
-const SCENE_EVENT_RESUME_GRACE_S = 10;
+// v21: scene events / their sounds are suppressed only while the viewer is strictly inside
+// the taxi-room box (XR: live head position every frame, no padding; corridor, solar room
+// and open space all count as "outside"), or while the 2D preview of the taxi room is shown.
+// Leaving restores audio immediately (80 ms fade) and due events start on their normal schedule.
+let xrViewerInTaxiRoomBounds = false;
+function isViewerInsideTaxiRoomBoundsXr() {
+  if (!renderer.xr.isPresenting || !taxiAnalyticsGroup.visible) return false;
+  getViewerPose(viewerWorld);
+  return isPointInPaddedBox(viewerWorld, TAXI_ANALYTICS_ROOM_POSITION, TAXI_ANALYTICS_ROOM_HALF, 0);
+}
+
 function isSceneEventSuppressed() {
-  return inTaxiAnalyticsRoom || taxiAnalyticsPreview2D;
+  if (renderer.xr.isPresenting) return xrViewerInTaxiRoomBounds;
+  return taxiAnalyticsPreview2D && taxiAnalyticsGroup.visible;
 }
 
 function isTaxiMicCapturing() {
@@ -5096,15 +5106,7 @@ function isTaxiMicCapturing() {
 }
 
 function updateSceneEventSuppression() {
-  if (isSceneEventSuppressed()) {
-    const t = elapsed + SCENE_EVENT_RESUME_GRACE_S;
-    if (nextMeteorAt < t) nextMeteorAt = t;
-    if (nextCometAt < t) nextCometAt = t;
-    if (nextShipAt < t) nextShipAt = t;
-    if (nextKlingonAt < t) nextKlingonAt = t;
-    if (nextSolarSpotAt < t) nextSolarSpotAt = t;
-    if (nextSolarProminenceAt < t) nextSolarProminenceAt = t;
-  }
+  xrViewerInTaxiRoomBounds = isViewerInsideTaxiRoomBoundsXr();
   updateAudioBusMutes();
 }
 
@@ -5117,7 +5119,7 @@ function syncTaxiRoomStateWithViewerZone(zone) {
     taxiReturnXrButton.visible = true;
     document.getElementById("taxiChatPanel")?.removeAttribute("hidden");
     statusEl.textContent = "分析用の部屋に入りました。";
-  } else if (zone === "solar" && inTaxiAnalyticsRoom) {
+  } else if (zone !== "taxi" && inTaxiAnalyticsRoom) { // v21: corridor / open space count as leaving too
     inTaxiAnalyticsRoom = false;
     taxiReturnXrButton.visible = false;
     document.getElementById("taxiChatPanel")?.setAttribute("hidden", "");
@@ -5317,7 +5319,7 @@ for (let index = 0; index < 2; index += 1) {
         }
         else if (uiHit.object.userData?.isTaxiQuestionButton) {
           playXrButtonPressSound();
-          processTaxiConversation(uiHit.object.userData.questionText);
+          handleTaxiQuickQuestion(uiHit.object.userData.questionText);
         }
         else if (taxiAnalyticsPanels.includes(uiHit.object)) {
           playXrButtonPressSound();
@@ -5394,7 +5396,7 @@ function updateHandTouch(dt) {
       if (taxiTouch !== "mic" && !touchedScrollDir) playXrButtonPressSound();
       if (taxiTouch === "return") returnFromTaxiAnalyticsRoom();
       else if (taxiTouch === "mic") toggleTaxiVoiceInput();
-      else if (touchedQuestion) processTaxiConversation(touchedQuestion);
+      else if (touchedQuestion) handleTaxiQuickQuestion(touchedQuestion);
       else if (touchedScrollDir) scrollTaxiChatPanel(touchedScrollDir * TAXI_CHAT_SCROLL_STEP_PX);
     }
     taxiButtonTouching[i] = taxiTouch;
@@ -6086,7 +6088,7 @@ function spawnSolarSpot() {
 function updateSolarSpots(dt) {
   solarSpotUniforms.uTime.value = elapsed;
   if (!solarSpotActive) {
-    if (elapsed >= nextSolarSpotAt) spawnSolarSpot();
+    if (elapsed >= nextSolarSpotAt && !isSceneEventSuppressed()) spawnSolarSpot();
     solarSpotMesh.visible = solarSpotActive;
     return;
   }
@@ -6663,7 +6665,7 @@ function spawnSolarProminence() {
 
 function updateSolarProminence(dt) {
   const activeBeforeSpawn = getActiveSolarProminenceCount();
-  if (elapsed >= nextSolarProminenceAt) {
+  if (elapsed >= nextSolarProminenceAt && !isSceneEventSuppressed()) {
     if (activeBeforeSpawn < SOLAR_PROM_MAX_ACTIVE) {
       spawnSolarProminence();
     }
@@ -9409,6 +9411,7 @@ function updateTaxiAnalyticsRoom() {
 
 const TAXI_CONVERSATION_STORAGE_KEY = "questXrTaxiLlmConfig";
 let taxiConversationHistory = [];
+let taxiChatEpoch = 0; // v21: bumped by the クリア button
 let taxiFocusedPanelIndex = -1;
 let taxiFocusAnimationT = 0;
 let taxiSpeechRecognition = null;
@@ -10248,6 +10251,7 @@ async function processTaxiConversation(userMessage) {
   
   taxiConversationHistory.push({ role: "user", content: userMessage });
   updateTaxiChatPanel();
+  const chatEpoch = taxiChatEpoch;
   
   let response;
   const llmConfig = getTaxiLlmConfig();
@@ -10271,6 +10275,7 @@ async function processTaxiConversation(userMessage) {
     stopTaxiThinking();
   }
   
+  if (chatEpoch !== taxiChatEpoch) return; // chat was cleared while waiting
   taxiConversationHistory.push({ role: "assistant", content: response.text });
   if (!taxiIsListening && !taxiVoiceBusy) taxiVoiceStatusText = "";
   updateTaxiChatPanel();
@@ -10916,12 +10921,30 @@ function updateTaxiMicButton() {
 }
 
 // Same labels/questions as the 2D quick buttons (index.html .taxiQuickBtn).
+const TAXI_CLEAR_CHAT_ACTION = "__taxi_clear_chat__";
+
+// v21: the クリア quick button empties the chat (XR panel, 2D log and the history sent
+// to the LLM). Created panels stay; "パネルを消して" (voice/text) still clears them via the LLM.
+function clearTaxiChatHistory() {
+  taxiChatEpoch += 1; // a reply still in flight will not be added to the cleared chat
+  taxiConversationHistory.length = 0;
+  taxiChatRenderedCount = 0;
+  taxiChatScrollPx = 0;
+  updateTaxiChatPanel();
+  setTaxiVoiceStatus("チャット履歴をクリアしました（作成したパネルはそのままです）");
+}
+
+function handleTaxiQuickQuestion(question) {
+  if (question === TAXI_CLEAR_CHAT_ACTION) clearTaxiChatHistory();
+  else if (question) processTaxiConversation(question);
+}
+
 const taxiSuggestedQuestions = [
   { label: "月別売上", question: "月別の売上推移を出して" },
   { label: "曜日別", question: "曜日別の乗車回数を見せて" },
   { label: "車両別", question: "車両ごとの稼働率比較" },
   { label: "一覧", question: "どの一覧表を出せますか？" },
-  { label: "クリア", question: "パネルをクリアして" },
+  { label: "クリア", question: TAXI_CLEAR_CHAT_ACTION }, // v21: clears the chat locally (no LLM call)
 ];
 // v20: 2x (was 0.2 x 0.085 m, gap 0.025); row = 5*0.4 + 4*0.04 = 2.16 m, fits under the 2.2 m chat panel.
 const TAXI_QUESTION_BTN_W = 0.4;
@@ -11136,8 +11159,8 @@ updateTaxiMicButton = function() {
 
 taxiQuickBtns.forEach((btn) => {
   btn.addEventListener("click", () => {
-    const question = btn.dataset.question;
-    if (question) processTaxiConversation(question);
+    if (btn.dataset.action === "clear-chat") clearTaxiChatHistory();
+    else if (btn.dataset.question) processTaxiConversation(btn.dataset.question);
   });
 });
 
