@@ -22,7 +22,7 @@ if (TAXI_ALLOWED && taxiAnalyticsButton) {
   taxiAnalyticsButton.removeAttribute("hidden");
 }
 
-const APP_VERSION = "v2026.09.29.23";
+const APP_VERSION = "v2026.09.29.24";
 const DEBUG_TOP_VIEW = new URLSearchParams(window.location.search).has("topDebug");
 const DEBUG_TOP_VIEW_DISTANCE = Number(new URLSearchParams(window.location.search).get("topDebugDist"));
 const DEBUG_BLACK_HOLE_VIEW = new URLSearchParams(window.location.search).has("blackHoleDebug");
@@ -9145,7 +9145,13 @@ function createDynamicPanel(spec) {
     return { success: false, error: queryResult.error };
   }
   
-  // slot: own slot if the same kind exists, else the first free slot, else the oldest panel's slot
+  // v24 slot rule: a new panel always takes the first EMPTY slot, left to right. It never
+  // replaces another panel. (v19-v23 replaced any panel with the same metric|groupBy, e.g.
+  // "月別売上" bar vs "月別の売上をテーブルで", and reused the oldest slot when all 4 were full.)
+  // Only an identical request (same metric, grouping, chart, limit, sort and title) refreshes
+  // its own panel in place, so pressing the same quick button twice does not add a duplicate.
+  // When all slots are full nothing is removed: the caller gets full=true and the user is
+  // told to press クリア.
   const key = taxiDynamicPanelKey(spec);
   let slot = -1;
   let replaced = false;
@@ -9161,9 +9167,9 @@ function createDynamicPanel(spec) {
       if (!used.has(i)) { slot = i; break; }
     }
     if (slot < 0) {
-      const oldest = dynamicTaxiPanels.shift();
-      slot = oldest.slot;
-      disposeDynamicPanel(oldest);
+      const message = TAXI_PANELS_FULL_MESSAGE;
+      if (typeof statusEl !== "undefined" && statusEl) statusEl.textContent = message;
+      return { success: false, full: true, error: message };
     }
   }
   
@@ -9207,10 +9213,14 @@ function placeTaxiDisplaySlot(mesh, slot, y) {
   }
 }
 
-// Same kind of panel (metric + grouping) replaces itself instead of stacking duplicates.
+// v24: identity of a created panel = the whole normalized request (not just metric|groupBy).
 function taxiDynamicPanelKey(spec) {
-  return `${spec.metric || ""}|${spec.groupBy || ""}`;
+  const chart = spec.chartType || (spec.groupBy ? "bar" : "kpi");
+  const limit = Number(spec.limit) > 0 ? Number(spec.limit) : "";
+  return [spec.metric || "", spec.groupBy || "", chart, limit, spec.sort || "", String(spec.title || "").trim()].join("|");
 }
+
+const TAXI_PANELS_FULL_MESSAGE = "作成パネルがいっぱいです（4枚）。新しいパネルを作るには「クリア」を押してください。";
 
 function disposeDynamicPanel(panel) {
   if (!panel?.mesh) return;
@@ -9673,7 +9683,7 @@ function generateOfflineResponse(userMessage) {
         panelCreated: true,
       };
     } else {
-      return { text: `パネル作成エラー: ${result.error}`, focusPanel: -1 };
+      return { text: result.full ? result.error : `パネル作成エラー: ${result.error}`, focusPanel: -1 };
     }
   }
   
@@ -9837,13 +9847,14 @@ const TAXI_LLM_MAX_ROUNDS = 5;
 
 // v22: does the AI reply say a panel was made/shown?
 function taxiReplyClaimsPanel(text) {
-  return /パネル[^。\n]{0,14}(作成|作り|表示し|追加し|出し|用意し)|(作成|表示|追加)し(ました|た)[^。\n]{0,8}パネル/.test(text || "");
+  if (/できません|できない|作成していません|いっぱい/.test(text || "")) return false; // v24: "cannot create" is not a claim
+  return /パネル[^。\n]{0,14}(作成|作り|表示し|追加し|出し|用意し)|パネル(に|化)し(ました|た)|(作成|表示|追加)し(ました|た)[^。\n]{0,8}パネル/.test(text || ""); // v24: + "パネルにしました"
 }
 
 // v22: last resort when the AI still claims a panel without creating one: build it locally
 // from the request (same keyword parser as the offline mode); otherwise say it was not made.
 function taxiEnsureClaimedPanel(text, userMessage, state) {
-  if (state.panelCreated || !taxiReplyClaimsPanel(text)) return text;
+  if (state.panelCreated || state.panelsFull || !taxiReplyClaimsPanel(text)) return text;
   const intent = extractAnalysisIntent(userMessage);
   if (intent.type === "create_panel") {
     const result = createDynamicPanel(intent.spec);
@@ -9852,6 +9863,7 @@ function taxiEnsureClaimedPanel(text, userMessage, state) {
       console.log("[taxi-ai] tool", "create_panel(local-fallback)", JSON.stringify(intent.spec), { ok: true });
       return text;
     }
+    if (result.full) return result.error;
   }
   return `${text}\n（※パネルは作成できませんでした。もう一度「〇〇別の△△をパネルにして」のように依頼してください）`;
 }
@@ -9896,6 +9908,8 @@ function executeTaxiToolCall(funcName, args, state) {
       return { ok: false, error: `無効なパネル仕様: ${validation.errors.join(", ")}`, validMetrics: Object.keys(TAXI_METRICS), validGroupBy: Object.keys(TAXI_DIMENSIONS) };
     }
     const panelResult = createDynamicPanel(args);
+    if (panelResult.full) state.panelsFull = true;
+    if (panelResult.full) return { ok: false, full: true, error: panelResult.error, instruction: "パネルは作成していない。既存のパネルは消していない。ユーザーに、作成パネルが4枚でいっぱいなので「クリア」を押してから依頼するよう伝えること。" };
     if (!panelResult.success) return { ok: false, error: `パネル作成エラー: ${panelResult.error}` };
     state.panelCreated = true;
     const metricLabel = TAXI_METRICS[args.metric]?.label || args.metric;
@@ -10268,7 +10282,7 @@ ${taxiPanelData.map((p, i) => `${i}: ${p.title} - ${p.value} (${p.unit})`).join(
       }
       // v22: the model often copies earlier "パネルを作成しました" replies from the history without
       // calling create_panel, so the 2nd+ panel never appeared. Nudge it once to really call the tool.
-      if (!state.panelCreated && !state.panelNudged && !finalRound && taxiReplyClaimsPanel(text)) {
+      if (!state.panelCreated && !state.panelsFull && !state.panelNudged && !finalRound && taxiReplyClaimsPanel(text)) {
         state.panelNudged = true;
         messages.push({ role: "assistant", content: text });
         messages.push({ role: "user", content: "（自動チェック）今回はまだ create_panel ツールが呼ばれていないため、パネルは作成されていません。今回の依頼内容に合うパネルを今すぐ create_panel で作成し、その結果に基づいて短く回答してください。" });
