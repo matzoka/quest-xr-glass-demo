@@ -8438,23 +8438,29 @@ for (let i = 0; i < taxiPanelData.length; i++) {
 }
 
 const taxiRoomTitleCanvas = document.createElement("canvas");
-taxiRoomTitleCanvas.width = 800;
+taxiRoomTitleCanvas.width = 1200;
 taxiRoomTitleCanvas.height = 120;
 const taxiTitleCtx = taxiRoomTitleCanvas.getContext("2d");
 taxiTitleCtx.fillStyle = "rgba(18, 12, 32, 0.85)";
-taxiTitleCtx.fillRect(0, 0, 800, 120);
+taxiTitleCtx.fillRect(0, 0, 1200, 120);
 taxiTitleCtx.strokeStyle = "rgba(168, 132, 255, 0.5)";
 taxiTitleCtx.lineWidth = 2;
-taxiTitleCtx.strokeRect(4, 4, 792, 112);
-taxiTitleCtx.font = "bold 48px Arial, Helvetica, sans-serif";
+taxiTitleCtx.strokeRect(4, 4, 1192, 112);
+const taxiRoomTitleText = "分析用の部屋 - タクシー業務ダッシュボード";
+const maxTitleTextWidth = 1120;
+let titleFontSize = 48;
+do {
+  taxiTitleCtx.font = `bold ${titleFontSize}px Arial, Helvetica, sans-serif`;
+  titleFontSize -= 2;
+} while (titleFontSize > 28 && taxiTitleCtx.measureText(taxiRoomTitleText).width > maxTitleTextWidth);
 taxiTitleCtx.fillStyle = "#e4daff";
 taxiTitleCtx.textAlign = "center";
-taxiTitleCtx.fillText("分析用の部屋 - タクシー業務ダッシュボード", 400, 75);
+taxiTitleCtx.fillText(taxiRoomTitleText, 600, 75);
 const taxiRoomTitleTex = new THREE.CanvasTexture(taxiRoomTitleCanvas);
 taxiRoomTitleTex.colorSpace = THREE.SRGBColorSpace;
 
 const taxiRoomTitleMesh = new THREE.Mesh(
-  new THREE.PlaneGeometry(2.4, 0.36),
+  new THREE.PlaneGeometry(3.6, 0.36),
   new THREE.MeshBasicMaterial({ map: taxiRoomTitleTex, transparent: true, side: THREE.DoubleSide })
 );
 taxiRoomTitleMesh.position.set(
