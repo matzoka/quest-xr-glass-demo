@@ -22,7 +22,7 @@ if (TAXI_ALLOWED && taxiAnalyticsButton) {
   taxiAnalyticsButton.removeAttribute("hidden");
 }
 
-const APP_VERSION = "v2026.09.29.18";
+const APP_VERSION = "v2026.09.29.19";
 const DEBUG_TOP_VIEW = new URLSearchParams(window.location.search).has("topDebug");
 const DEBUG_TOP_VIEW_DISTANCE = Number(new URLSearchParams(window.location.search).get("topDebugDist"));
 const DEBUG_BLACK_HOLE_VIEW = new URLSearchParams(window.location.search).has("blackHoleDebug");
@@ -7924,42 +7924,46 @@ taxiAnalyticsGroup.add(taxiAnalyticsLight2);
 
 function makeTaxiAnalyticsPanelTexture(title, value, unit, chartType) {
   const c = document.createElement("canvas");
-  c.width = 512;
-  c.height = 384;
+  // 2x resolution for the 2x panel; drawing uses the old 512x384 logical layout
+  const W = 512;
+  const H = 384;
+  c.width = W * 2;
+  c.height = H * 2;
   const ctx = c.getContext("2d");
+  ctx.scale(2, 2);
 
   ctx.fillStyle = "rgba(18, 12, 32, 0.92)";
-  ctx.fillRect(0, 0, c.width, c.height);
+  ctx.fillRect(0, 0, W, H);
 
   ctx.strokeStyle = "rgba(168, 132, 255, 0.65)";
   ctx.lineWidth = 3;
-  ctx.strokeRect(8, 8, c.width - 16, c.height - 16);
+  ctx.strokeRect(8, 8, W - 16, H - 16);
 
   ctx.fillStyle = "rgba(168, 132, 255, 0.12)";
-  ctx.fillRect(12, 12, c.width - 24, 52);
+  ctx.fillRect(12, 12, W - 24, 52);
 
-  ctx.font = "bold 28px Arial, Helvetica, sans-serif";
+  ctx.font = "bold 32px Arial, Helvetica, sans-serif";
   ctx.fillStyle = "#e4daff";
   ctx.textAlign = "center";
-  ctx.fillText(title, c.width / 2, 48);
+  ctx.fillText(title, W / 2, 48);
 
-  ctx.font = "14px Arial, Helvetica, sans-serif";
+  ctx.font = "17px Arial, Helvetica, sans-serif";
   ctx.fillStyle = "rgba(255, 200, 100, 0.9)";
-  ctx.fillText("⚠ サンプルデータ", c.width / 2, 82);
+  ctx.fillText("⚠ サンプルデータ", W / 2, 82);
 
-  ctx.font = "bold 56px Arial, Helvetica, sans-serif";
+  ctx.font = "bold 64px Arial, Helvetica, sans-serif";
   ctx.fillStyle = "#ffffff";
-  ctx.fillText(value, c.width / 2, 160);
+  ctx.fillText(value, W / 2, 160);
 
-  ctx.font = "22px Arial, Helvetica, sans-serif";
+  ctx.font = "26px Arial, Helvetica, sans-serif";
   ctx.fillStyle = "#a884ff";
-  ctx.fillText(unit, c.width / 2, 195);
+  ctx.fillText(unit, W / 2, 195);
 
   if (chartType === "bar") {
     const bars = [0.6, 0.8, 0.45, 0.9, 0.7, 0.55, 0.85];
     const barW = 48;
     const barGap = 12;
-    const startX = (c.width - (bars.length * barW + (bars.length - 1) * barGap)) / 2;
+    const startX = (W - (bars.length * barW + (bars.length - 1) * barGap)) / 2;
     const maxH = 100;
     const baseY = 340;
     ctx.fillStyle = "rgba(168, 132, 255, 0.75)";
@@ -7967,7 +7971,7 @@ function makeTaxiAnalyticsPanelTexture(title, value, unit, chartType) {
       const h = bars[i] * maxH;
       ctx.fillRect(startX + i * (barW + barGap), baseY - h, barW, h);
     }
-    ctx.font = "12px Arial";
+    ctx.font = "15px Arial";
     ctx.fillStyle = "#8866cc";
     const days = ["月", "火", "水", "木", "金", "土", "日"];
     for (let i = 0; i < days.length; i++) {
@@ -7976,7 +7980,7 @@ function makeTaxiAnalyticsPanelTexture(title, value, unit, chartType) {
   } else if (chartType === "line") {
     const points = [0.3, 0.25, 0.5, 0.8, 1.0, 0.7, 0.4, 0.2];
     const startX = 50;
-    const endX = c.width - 50;
+    const endX = W - 50;
     const baseY = 340;
     const maxH = 100;
     ctx.beginPath();
@@ -7989,7 +7993,7 @@ function makeTaxiAnalyticsPanelTexture(title, value, unit, chartType) {
       else ctx.lineTo(x, y);
     }
     ctx.stroke();
-    ctx.font = "12px Arial";
+    ctx.font = "15px Arial";
     ctx.fillStyle = "#8866cc";
     const hours = ["6時", "9時", "12時", "15時", "18時", "21時", "24時", "3時"];
     for (let i = 0; i < hours.length; i++) {
@@ -7997,7 +8001,7 @@ function makeTaxiAnalyticsPanelTexture(title, value, unit, chartType) {
       ctx.fillText(hours[i], x, baseY + 18);
     }
   } else if (chartType === "pie") {
-    const cx = c.width / 2;
+    const cx = W / 2;
     const cy = 280;
     const r = 60;
     const segments = [0.35, 0.25, 0.22, 0.18];
@@ -8013,12 +8017,12 @@ function makeTaxiAnalyticsPanelTexture(title, value, unit, chartType) {
       ctx.fill();
       angle += slice;
     }
-    ctx.font = "12px Arial";
+    ctx.font = "15px Arial";
     ctx.fillStyle = "#e4daff";
     ctx.fillText("走行中 35%", cx - 85, cy + 85);
     ctx.fillText("待機 25%", cx + 55, cy + 85);
   } else if (chartType === "gauge") {
-    const cx = c.width / 2;
+    const cx = W / 2;
     const cy = 295;
     const r = 65;
     ctx.beginPath();
@@ -8031,7 +8035,7 @@ function makeTaxiAnalyticsPanelTexture(title, value, unit, chartType) {
     ctx.strokeStyle = "rgba(168, 132, 255, 0.9)";
     ctx.lineWidth = 16;
     ctx.stroke();
-    ctx.font = "12px Arial";
+    ctx.font = "15px Arial";
     ctx.fillStyle = "#8866cc";
     ctx.fillText("0%", cx - r - 5, cy + 20);
     ctx.fillText("100%", cx + r - 10, cy + 20);
@@ -8877,52 +8881,54 @@ function runTaxiFreeQuery(args = {}) {
 // ---------------------------------------------------------------------------
 const MAX_DYNAMIC_PANELS = 4;
 const dynamicTaxiPanels = [];
-const DYNAMIC_PANEL_WIDTH = 1.0;
-const DYNAMIC_PANEL_HEIGHT = 0.85;
-const DYNAMIC_PANEL_Z_OFFSET = 1.2;
+const DYNAMIC_PANEL_WIDTH = 2.0; // v19: 2x (was 1.0 x 0.85)
+const DYNAMIC_PANEL_HEIGHT = 1.7;
 
 function renderDynamicPanelTexture(spec, queryResult) {
   const c = document.createElement("canvas");
-  c.width = 480;
-  c.height = 400;
+  const W = 480;
+  const H = 400;
+  c.width = W * 2;
+  c.height = H * 2;
   const ctx = c.getContext("2d");
+  ctx.scale(2, 2);
   
   ctx.fillStyle = "rgba(15, 10, 28, 0.94)";
-  ctx.fillRect(0, 0, c.width, c.height);
+  ctx.fillRect(0, 0, W, H);
   
   ctx.strokeStyle = "rgba(100, 180, 255, 0.6)";
   ctx.lineWidth = 2;
-  ctx.strokeRect(4, 4, c.width - 8, c.height - 8);
+  ctx.strokeRect(4, 4, W - 8, H - 8);
   
   ctx.fillStyle = "rgba(100, 180, 255, 0.12)";
-  ctx.fillRect(8, 8, c.width - 16, 44);
+  ctx.fillRect(8, 8, W - 16, 44);
   
   const title = spec.title || `${TAXI_METRICS[spec.metric]?.label || spec.metric}${spec.groupBy ? ` (${TAXI_DIMENSIONS[spec.groupBy]?.label || spec.groupBy})` : ""}`;
-  ctx.font = "bold 20px Arial, Helvetica, sans-serif";
+  ctx.font = "bold 24px Arial, Helvetica, sans-serif";
   ctx.fillStyle = "#a8d4ff";
   ctx.textAlign = "center";
-  ctx.fillText(truncateText(ctx, title, c.width - 40), c.width / 2, 38);
+  ctx.fillText(truncateText(ctx, title, W - 40), W / 2, 38);
   
-  ctx.font = "11px Arial";
+  ctx.font = "14px Arial";
   ctx.fillStyle = "rgba(255, 200, 100, 0.85)";
-  ctx.fillText("⚠ サンプルデータ", c.width / 2, 58);
+  ctx.fillText("⚠ サンプルデータ", W / 2, 58);
   
   const chartType = spec.chartType || (spec.groupBy ? "bar" : "kpi");
   const data = queryResult.data || [];
   
   if (chartType === "kpi" || (!spec.groupBy && data.length === 1)) {
-    ctx.font = "bold 48px Arial";
+    ctx.font = "bold 56px Arial";
     ctx.fillStyle = "#ffffff";
-    ctx.fillText(data[0]?.formatted || "N/A", c.width / 2, 180);
-    ctx.font = "18px Arial";
+    ctx.fillText(data[0]?.formatted || "N/A", W / 2, 180);
+    ctx.font = "22px Arial";
     ctx.fillStyle = "#8899bb";
-    ctx.fillText(TAXI_METRICS[spec.metric]?.label || "", c.width / 2, 215);
+    ctx.fillText(TAXI_METRICS[spec.metric]?.label || "", W / 2, 215);
   } else if (chartType === "bar") {
-    renderBarChart(ctx, data, 30, 80, c.width - 60, 280);
+    renderBarChart(ctx, data, 30, 80, W - 60, 280);
   } else if (chartType === "line") {
-    renderLineChart(ctx, data, 30, 80, c.width - 60, 280);
+    renderLineChart(ctx, data, 30, 80, W - 60, 280);
   } else if (chartType === "table") {
-    renderTable(ctx, data, spec, 20, 75, c.width - 40, 300);
+    renderTable(ctx, data, spec, 20, 75, W - 40, 300);
   }
   
   const tex = new THREE.CanvasTexture(c);
@@ -8954,7 +8960,7 @@ function renderBarChart(ctx, data, x, y, width, height) {
     ctx.fillStyle = "rgba(100, 180, 255, 0.8)";
     ctx.fillRect(bx, by, barWidth, barH);
     
-    ctx.font = "10px Arial";
+    ctx.font = "13px Arial";
     ctx.fillStyle = "#aabbcc";
     ctx.textAlign = "center";
     ctx.save();
@@ -8997,7 +9003,7 @@ function renderLineChart(ctx, data, x, y, width, height) {
     ctx.fill();
   }
   
-  ctx.font = "10px Arial";
+  ctx.font = "13px Arial";
   ctx.fillStyle = "#aabbcc";
   ctx.textAlign = "center";
   const labelStep = Math.ceil(data.length / 8);
@@ -9015,14 +9021,14 @@ function renderTable(ctx, data, spec, x, y, width, height) {
   ctx.fillStyle = "rgba(60, 80, 100, 0.3)";
   ctx.fillRect(x, y, width, 26);
   
-  ctx.font = "bold 12px Arial";
+  ctx.font = "bold 15px Arial";
   ctx.fillStyle = "#a8d4ff";
   ctx.textAlign = "left";
   ctx.fillText(TAXI_DIMENSIONS[spec.groupBy]?.label || "項目", x + 10, y + 18);
   ctx.textAlign = "right";
   ctx.fillText(TAXI_METRICS[spec.metric]?.label || "値", x + width - 10, y + 18);
   
-  ctx.font = "12px Arial";
+  ctx.font = "15px Arial";
   for (let i = 0; i < displayData.length; i++) {
     const ry = y + 30 + i * rowHeight;
     if (i % 2 === 0) {
@@ -9055,13 +9061,25 @@ function createDynamicPanel(spec) {
     return { success: false, error: queryResult.error };
   }
   
-  if (dynamicTaxiPanels.length >= MAX_DYNAMIC_PANELS) {
-    const oldest = dynamicTaxiPanels.shift();
-    if (oldest.mesh) {
-      oldest.mesh.geometry.dispose();
-      oldest.mesh.material.map?.dispose();
-      oldest.mesh.material.dispose();
-      taxiAnalyticsGroup.remove(oldest.mesh);
+  // slot: own slot if the same kind exists, else the first free slot, else the oldest panel's slot
+  const key = taxiDynamicPanelKey(spec);
+  let slot = -1;
+  let replaced = false;
+  const sameIdx = dynamicTaxiPanels.findIndex((p) => p.key === key);
+  if (sameIdx >= 0) {
+    const same = dynamicTaxiPanels.splice(sameIdx, 1)[0];
+    slot = same.slot;
+    replaced = true;
+    disposeDynamicPanel(same);
+  } else {
+    const used = new Set(dynamicTaxiPanels.map((p) => p.slot));
+    for (let i = 0; i < Math.min(MAX_DYNAMIC_PANELS, TAXI_DISPLAY_SLOT_COUNT); i++) {
+      if (!used.has(i)) { slot = i; break; }
+    }
+    if (slot < 0) {
+      const oldest = dynamicTaxiPanels.shift();
+      slot = oldest.slot;
+      disposeDynamicPanel(oldest);
     }
   }
   
@@ -9071,20 +9089,10 @@ function createDynamicPanel(spec) {
     new THREE.MeshBasicMaterial({ map: texture, transparent: true, side: THREE.DoubleSide })
   );
   
-  const panelIndex = dynamicTaxiPanels.length;
-  const row = Math.floor(panelIndex / 2);
-  const col = panelIndex % 2;
-  
-  mesh.position.set(
-    TAXI_ANALYTICS_ROOM_POSITION.x + (col - 0.5) * (DYNAMIC_PANEL_WIDTH + 0.15),
-    TAXI_ANALYTICS_ROOM_POSITION.y + 0.3 - row * (DYNAMIC_PANEL_HEIGHT + 0.1),
-    TAXI_ANALYTICS_ROOM_POSITION.z - TAXI_ANALYTICS_ROOM_HALF.z + DYNAMIC_PANEL_Z_OFFSET
-  );
-  mesh.rotation.x = -0.06;
-  
+  placeTaxiDisplaySlot(mesh, slot, TAXI_CREATED_ROW_Y);
   taxiAnalyticsGroup.add(mesh);
   
-  const panelInfo = { spec, queryResult, mesh, createdAt: Date.now() };
+  const panelInfo = { spec, queryResult, mesh, key, slot, replaced, createdAt: Date.now() };
   dynamicTaxiPanels.push(panelInfo);
   
   return {
@@ -9092,6 +9100,40 @@ function createDynamicPanel(spec) {
     panel: panelInfo,
     summary: `${spec.title || TAXI_METRICS[spec.metric]?.label}を表示しました（${queryResult.data.length}件のデータ）`,
   };
+}
+
+// Display slots (v19): one "row" of 4 slots that wraps from the left wall (front -> back)
+// onto the back wall, i.e. left-to-right as seen from the room. Fixed dashboard panels
+// occupy the top row; LLM-created panels go into the row directly BELOW, same slot index,
+// on the same wall plane (no forward offset, no tilt).
+const TAXI_DISPLAY_SLOT_COUNT = 4;
+const TAXI_DISPLAY_SLOT_PITCH = 2.6; // fixed panel width 2.4 + gap 0.2
+const TAXI_FIXED_ROW_Y = TAXI_ANALYTICS_ROOM_POSITION.y + 1.1; // 3.3 (2.4..4.2)
+const TAXI_CREATED_ROW_Y = TAXI_FIXED_ROW_Y - 0.9 - 0.1 - DYNAMIC_PANEL_HEIGHT / 2; // 1.45 (0.6..2.3)
+
+function placeTaxiDisplaySlot(mesh, slot, y) {
+  const wallX = TAXI_ANALYTICS_ROOM_POSITION.x - TAXI_ANALYTICS_ROOM_HALF.x + 0.3; // 11.3
+  const wallZ = TAXI_ANALYTICS_ROOM_POSITION.z - TAXI_ANALYTICS_ROOM_HALF.z + 0.4; // -5.8
+  mesh.rotation.set(0, 0, 0);
+  if (slot < 2) {
+    mesh.position.set(wallX, y, TAXI_ANALYTICS_ROOM_POSITION.z + (0.5 - slot) * TAXI_DISPLAY_SLOT_PITCH);
+    mesh.rotation.y = Math.PI / 2; // faces +x
+  } else {
+    mesh.position.set(TAXI_ANALYTICS_ROOM_POSITION.x + (slot - 2.5) * TAXI_DISPLAY_SLOT_PITCH, y, wallZ);
+  }
+}
+
+// Same kind of panel (metric + grouping) replaces itself instead of stacking duplicates.
+function taxiDynamicPanelKey(spec) {
+  return `${spec.metric || ""}|${spec.groupBy || ""}`;
+}
+
+function disposeDynamicPanel(panel) {
+  if (!panel?.mesh) return;
+  panel.mesh.geometry.dispose();
+  panel.mesh.material.map?.dispose();
+  panel.mesh.material.dispose();
+  taxiAnalyticsGroup.remove(panel.mesh);
 }
 
 function clearDynamicPanels() {
@@ -9127,9 +9169,9 @@ function listAvailableAnalyses() {
 }
 
 const taxiAnalyticsPanels = [];
-const TAXI_PANEL_WIDTH = 1.2;
-const TAXI_PANEL_HEIGHT = 0.9;
-const TAXI_PANEL_GAP = 0.25;
+const TAXI_PANEL_WIDTH = 2.4; // v19: 2x (was 1.2 x 0.9)
+const TAXI_PANEL_HEIGHT = 1.8;
+const TAXI_PANEL_GAP = 0.2;
 const TAXI_PANEL_START_X = TAXI_ANALYTICS_ROOM_POSITION.x - ((taxiPanelData.length - 1) * (TAXI_PANEL_WIDTH + TAXI_PANEL_GAP)) / 2;
 
 for (let i = 0; i < taxiPanelData.length; i++) {
@@ -9142,12 +9184,8 @@ for (let i = 0; i < taxiPanelData.length; i++) {
       side: THREE.DoubleSide,
     })
   );
-  panelMesh.position.set(
-    TAXI_PANEL_START_X + i * (TAXI_PANEL_WIDTH + TAXI_PANEL_GAP),
-    TAXI_ANALYTICS_ROOM_POSITION.y + 0.35,
-    TAXI_ANALYTICS_ROOM_POSITION.z - TAXI_ANALYTICS_ROOM_HALF.z + 0.6
-  );
-  panelMesh.rotation.x = -0.08;
+  // v19: top row of the display slots (left wall front, left wall back, back wall left, back wall right)
+  placeTaxiDisplaySlot(panelMesh, i, TAXI_FIXED_ROW_Y);
   taxiAnalyticsGroup.add(panelMesh);
   taxiAnalyticsPanels.push(panelMesh);
 }
@@ -9258,8 +9296,9 @@ function teleportToTaxiAnalyticsRoom() {
   } else {
     taxiAnalyticsPreview2D = true;
     camera.up.set(0, 1, 0);
-    camera.position.copy(taxiAnalyticsTeleportTarget);
-    camera.lookAt(TAXI_ANALYTICS_ROOM_POSITION.x, TAXI_ANALYTICS_ROOM_POSITION.y + 0.3, TAXI_ANALYTICS_ROOM_POSITION.z - TAXI_ANALYTICS_ROOM_HALF.z);
+    // v19: panels are on the left + back walls, so look into that corner from the front-right
+    camera.position.set(TAXI_ANALYTICS_ROOM_POSITION.x + 3.0, TAXI_ANALYTICS_ROOM_POSITION.y + 0.2, TAXI_ANALYTICS_ROOM_POSITION.z + 3.8);
+    camera.lookAt(TAXI_ANALYTICS_ROOM_POSITION.x - 1.8, TAXI_ANALYTICS_ROOM_POSITION.y + 0.15, TAXI_ANALYTICS_ROOM_POSITION.z - 2.4);
     statusEl.textContent = "分析用の部屋（2Dプレビュー）。AIアシスタントに質問できます。";
   }
   
@@ -10107,6 +10146,52 @@ ${taxiPanelData.map((p, i) => `${i}: ${p.title} - ${p.value} (${p.unit})`).join(
   }
 }
 
+// Animated "・・・" while waiting for the AI. Shown as a temporary AI message in the XR
+// chat panel and the 2D chat; never stored in taxiConversationHistory.
+let taxiThinkingText = "";
+let taxiThinkingCount = 0;
+let taxiThinkingTimer = null;
+let taxiThinkingStep = 0;
+let taxiThinkingEl = null;
+const TAXI_THINKING_FRAMES = ["・", "・・", "・・・"];
+const TAXI_THINKING_INTERVAL_MS = 400;
+
+function renderTaxiThinking() {
+  if (taxiChatPanelMesh) makeTaxiChatPanelTexture(taxiConversationHistory);
+  if (taxiThinkingEl && taxiThinkingEl.isConnected) {
+    const textDiv = taxiThinkingEl.lastChild;
+    if (textDiv) textDiv.textContent = taxiThinkingText;
+  } else if (taxiThinkingText) {
+    update2DTaxiChatMessages();
+  }
+}
+
+function startTaxiThinking() {
+  taxiThinkingCount += 1;
+  if (taxiThinkingCount > 1) return;
+  taxiThinkingStep = 0;
+  taxiThinkingText = TAXI_THINKING_FRAMES[0];
+  taxiChatScrollPx = 0; // auto-scroll to the indicator
+  update2DTaxiChatMessages();
+  renderTaxiThinking();
+  taxiThinkingTimer = setInterval(() => {
+    taxiThinkingStep = (taxiThinkingStep + 1) % TAXI_THINKING_FRAMES.length;
+    taxiThinkingText = TAXI_THINKING_FRAMES[taxiThinkingStep];
+    renderTaxiThinking();
+  }, TAXI_THINKING_INTERVAL_MS);
+}
+
+function stopTaxiThinking() {
+  taxiThinkingCount = Math.max(0, taxiThinkingCount - 1);
+  if (taxiThinkingCount > 0) return;
+  if (taxiThinkingTimer) clearInterval(taxiThinkingTimer);
+  taxiThinkingTimer = null;
+  taxiThinkingText = "";
+  if (taxiThinkingEl) taxiThinkingEl.remove();
+  taxiThinkingEl = null;
+  if (taxiChatPanelMesh) makeTaxiChatPanelTexture(taxiConversationHistory);
+}
+
 async function processTaxiConversation(userMessage) {
   if (!userMessage.trim()) return;
   
@@ -10116,15 +10201,23 @@ async function processTaxiConversation(userMessage) {
   let response;
   const llmConfig = getTaxiLlmConfig();
   
-  if (llmConfig) {
-    response = await callLlmBackend(userMessage, llmConfig);
-    if (response.fallback) {
-      const offlineResponse = generateOfflineResponse(userMessage);
-      response.text += "\n\n" + offlineResponse.text;
-      response.focusPanel = offlineResponse.focusPanel;
+  startTaxiThinking();
+  try {
+    if (llmConfig) {
+      response = await callLlmBackend(userMessage, llmConfig);
+      if (response.fallback) {
+        const offlineResponse = generateOfflineResponse(userMessage);
+        response.text += "\n\n" + offlineResponse.text;
+        response.focusPanel = offlineResponse.focusPanel;
+      }
+    } else {
+      response = generateOfflineResponse(userMessage);
     }
-  } else {
-    response = generateOfflineResponse(userMessage);
+  } catch (e) {
+    console.error("[taxi-ai] conversation failed", e);
+    response = { text: `エラーが発生しました: ${e?.message || e}`, focusPanel: -1 };
+  } finally {
+    stopTaxiThinking();
   }
   
   taxiConversationHistory.push({ role: "assistant", content: response.text });
@@ -10420,12 +10513,12 @@ function updateTaxiPanelFocus() {
     const panel = taxiAnalyticsPanels[i];
     const isFocused = i === taxiFocusedPanelIndex;
     
-    const targetScale = isFocused ? 1.15 : 1.0;
+    const targetScale = isFocused ? 1.06 : 1.0;
     const currentScale = panel.scale.x;
     panel.scale.setScalar(THREE.MathUtils.lerp(currentScale, targetScale, 0.08));
     
     if (isFocused) {
-      const pulse = Math.sin(taxiFocusAnimationT * 3) * 0.03 + 1.15;
+      const pulse = Math.sin(taxiFocusAnimationT * 3) * 0.015 + 1.05;
       panel.scale.setScalar(pulse);
     }
   }
@@ -10433,14 +10526,18 @@ function updateTaxiPanelFocus() {
 
 // XR chat panel: the whole (recent) conversation is laid out on a virtual
 // column and a scroll window is drawn onto a persistent canvas. 0 = latest.
-const TAXI_CHAT_CANVAS_W = 600;
-const TAXI_CHAT_CANVAS_H = 500;
-const TAXI_CHAT_VIEW_TOP = 52;
-const TAXI_CHAT_VIEW_BOTTOM = TAXI_CHAT_CANVAS_H - 34;
-const TAXI_CHAT_LINE_H = 19;
+// v19: panel 2.2 x 1.84 m (2x), canvas 1200 x 1000 (same px/m as before), body text 34px (was 15px on 600 px).
+const TAXI_CHAT_PANEL_W = 2.2;
+const TAXI_CHAT_PANEL_H = 1.84;
+const TAXI_CHAT_CANVAS_W = 1200;
+const TAXI_CHAT_CANVAS_H = 1000;
+const TAXI_CHAT_VIEW_TOP = 108;
+const TAXI_CHAT_VIEW_BOTTOM = TAXI_CHAT_CANVAS_H - 70;
+const TAXI_CHAT_FONT_PX = 34;
+const TAXI_CHAT_LINE_H = 44;
 const TAXI_CHAT_MAX_RENDER_MESSAGES = 40;
-const TAXI_CHAT_SCROLL_STEP_PX = 150;
-const TAXI_CHAT_STICK_SCROLL_PX_PER_S = 520;
+const TAXI_CHAT_SCROLL_STEP_PX = 320;
+const TAXI_CHAT_STICK_SCROLL_PX_PER_S = 1100;
 let taxiChatScrollPx = 0; // how far the view is scrolled up from the latest message
 let taxiChatMaxScrollPx = 0;
 let taxiChatRenderedCount = -1;
@@ -10458,14 +10555,14 @@ function layoutTaxiChatMessages(ctx, messages, textWidth) {
         if (lines.length && lines[lines.length - 1] !== "") lines.push("");
         continue;
       }
-      lines.push(...wrapText(ctx, para, textWidth, 15));
+      lines.push(...wrapText(ctx, para, textWidth, TAXI_CHAT_FONT_PX));
     }
     while (lines.length && lines[lines.length - 1] === "") lines.pop();
-    const h = 22 + Math.max(1, lines.length) * TAXI_CHAT_LINE_H + 6;
-    blocks.push({ isUser: msg.role === "user", lines, y: total, h });
-    total += h + 8;
+    const h = 46 + Math.max(1, lines.length) * TAXI_CHAT_LINE_H + 12;
+    blocks.push({ isUser: msg.role === "user", thinking: !!msg.thinking, lines, y: total, h });
+    total += h + 16;
   }
-  return { blocks, total: Math.max(0, total - 8) };
+  return { blocks, total: Math.max(0, total - 16) };
 }
 
 function drawTaxiChatPanel(ctx, messages, scrollPx, statusText) {
@@ -10475,29 +10572,29 @@ function drawTaxiChatPanel(ctx, messages, scrollPx, statusText) {
   ctx.fillStyle = "rgba(12, 8, 20, 0.92)";
   ctx.fillRect(0, 0, W, H);
   ctx.strokeStyle = "rgba(100, 180, 255, 0.6)";
-  ctx.lineWidth = 2;
-  ctx.strokeRect(4, 4, W - 8, H - 8);
+  ctx.lineWidth = 4;
+  ctx.strokeRect(6, 6, W - 12, H - 12);
   ctx.fillStyle = "rgba(100, 180, 255, 0.15)";
-  ctx.fillRect(8, 8, W - 16, 36);
-  ctx.font = "bold 18px Arial, Helvetica, sans-serif";
+  ctx.fillRect(12, 12, W - 24, 80);
+  ctx.font = "bold 40px Arial, Helvetica, sans-serif";
   ctx.fillStyle = "#a8d4ff";
   ctx.textAlign = "center";
-  ctx.fillText("AI 分析アシスタント（サンプルデータ）", W / 2, 32);
+  ctx.fillText("AI 分析アシスタント（サンプルデータ）", W / 2, 66);
 
   const viewH = TAXI_CHAT_VIEW_BOTTOM - TAXI_CHAT_VIEW_TOP;
-  const padding = 16;
-  const scrollbarW = 10;
-  const boxW = W - padding * 2 - scrollbarW - 6;
-  const textWidth = boxW - 12;
+  const padding = 28;
+  const scrollbarW = 18;
+  const boxW = W - padding * 2 - scrollbarW - 12;
+  const textWidth = boxW - 28;
   ctx.textAlign = "left";
 
   if (messages.length === 0) {
     taxiChatMaxScrollPx = 0;
     ctx.fillStyle = "rgba(200, 200, 200, 0.6)";
-    ctx.font = "italic 14px Arial";
+    ctx.font = "italic 32px Arial";
     ctx.textAlign = "center";
     ctx.fillText("マイクボタンを押すか、下の質問ボタンを押してください", W / 2, H / 2);
-    ctx.fillText("例：「売上は？」「ピーク時間は？」", W / 2, H / 2 + 24);
+    ctx.fillText("例：「売上は？」「ピーク時間は？」", W / 2, H / 2 + 52);
     ctx.textAlign = "left";
   } else {
     const { blocks, total } = layoutTaxiChatMessages(ctx, messages, textWidth);
@@ -10515,11 +10612,11 @@ function drawTaxiChatPanel(ctx, messages, scrollPx, statusText) {
       ctx.fillStyle = block.isUser ? "rgba(168, 132, 255, 0.2)" : "rgba(100, 180, 255, 0.15)";
       ctx.fillRect(padding, y, boxW, block.h);
       ctx.fillStyle = block.isUser ? "#d4c4ff" : "#c8e4ff";
-      ctx.font = "bold 12px Arial";
-      ctx.fillText(block.isUser ? "あなた:" : "AI:", padding + 6, y + 15);
-      ctx.font = "15px Arial";
+      ctx.font = "bold 26px Arial";
+      ctx.fillText(block.isUser ? "あなた:" : block.thinking ? "AI（考え中）:" : "AI:", padding + 14, y + 34);
+      ctx.font = `${TAXI_CHAT_FONT_PX}px Arial`;
       for (let i = 0; i < block.lines.length; i++) {
-        ctx.fillText(block.lines[i], padding + 6, y + 22 + (i + 1) * TAXI_CHAT_LINE_H - 4);
+        ctx.fillText(block.lines[i], padding + 14, y + 46 + (i + 1) * TAXI_CHAT_LINE_H - 10);
       }
     }
     ctx.restore();
@@ -10527,19 +10624,19 @@ function drawTaxiChatPanel(ctx, messages, scrollPx, statusText) {
       const trackX = W - padding - scrollbarW;
       ctx.fillStyle = "rgba(255, 255, 255, 0.12)";
       ctx.fillRect(trackX, TAXI_CHAT_VIEW_TOP, scrollbarW, viewH);
-      const thumbH = Math.max(28, (viewH * viewH) / (total || 1));
+      const thumbH = Math.max(56, (viewH * viewH) / (total || 1));
       const thumbY = TAXI_CHAT_VIEW_TOP + (viewH - thumbH) * ((maxScroll - scroll) / maxScroll);
       ctx.fillStyle = "rgba(143, 247, 255, 0.75)";
       ctx.fillRect(trackX, thumbY, scrollbarW, thumbH);
     }
   }
 
-  ctx.font = "13px Arial";
+  ctx.font = "28px Arial";
   ctx.fillStyle = statusText ? "#ffd27a" : "rgba(200, 200, 220, 0.65)";
   const footer = statusText || (taxiChatMaxScrollPx > 0
     ? (Math.min(Math.max(scrollPx, 0), taxiChatMaxScrollPx) > 0 ? "▼で最新へ / パネルを指してスティック上下でスクロール" : "▲で過去の会話 / パネルを指してスティック上下でスクロール")
     : "🎤 または下の質問ボタンで質問できます");
-  ctx.fillText(truncateTaxiChatLine(ctx, footer, W - padding * 2), padding, H - 14);
+  ctx.fillText(truncateTaxiChatLine(ctx, footer, W - padding * 2), padding, H - 26);
 }
 
 function truncateTaxiChatLine(ctx, text, maxWidth) {
@@ -10556,7 +10653,9 @@ function makeTaxiChatPanelTexture(messages = []) {
     taxiChatCanvas.height = TAXI_CHAT_CANVAS_H;
     taxiChatCtx = taxiChatCanvas.getContext("2d");
   }
-  drawTaxiChatPanel(taxiChatCtx, messages, taxiChatScrollPx, taxiVoiceStatusText);
+  // the thinking indicator is drawn as a temporary AI message; it is never part of taxiConversationHistory
+  const shown = taxiThinkingText ? [...messages, { role: "assistant", content: taxiThinkingText, thinking: true }] : messages;
+  drawTaxiChatPanel(taxiChatCtx, shown, taxiChatScrollPx, taxiVoiceStatusText);
   if (!taxiChatPanelTexture) {
     taxiChatPanelTexture = new THREE.CanvasTexture(taxiChatCanvas);
     taxiChatPanelTexture.colorSpace = THREE.SRGBColorSpace;
@@ -10592,17 +10691,18 @@ let taxiChatPanelTexture = null;
 function createTaxiChatPanel() {
   makeTaxiChatPanelTexture([]);
   taxiChatPanelMesh = new THREE.Mesh(
-    new THREE.PlaneGeometry(1.1, 0.92),
+    new THREE.PlaneGeometry(TAXI_CHAT_PANEL_W, TAXI_CHAT_PANEL_H),
     new THREE.MeshBasicMaterial({
       map: taxiChatPanelTexture,
       transparent: true,
       side: THREE.DoubleSide,
     })
   );
+  // v19: (17.8, 2.3, -2.0), 45° like before; moved inward so the 2.2 m panel + side buttons stay inside x <= 19
   taxiChatPanelMesh.position.set(
-    TAXI_ANALYTICS_ROOM_POSITION.x + TAXI_ANALYTICS_ROOM_HALF.x - 0.7,
-    TAXI_ANALYTICS_ROOM_POSITION.y + 0.4,
-    TAXI_ANALYTICS_ROOM_POSITION.z
+    TAXI_ANALYTICS_ROOM_POSITION.x + TAXI_ANALYTICS_ROOM_HALF.x - 1.2,
+    TAXI_ANALYTICS_ROOM_POSITION.y + 0.1,
+    TAXI_ANALYTICS_ROOM_POSITION.z + 0.2
   );
   taxiChatPanelMesh.rotation.y = -Math.PI / 4;
   taxiChatPanelMesh.userData.isTaxiChatPanel = true;
@@ -10667,7 +10767,7 @@ function createTaxiChatScrollButtons() {
       new THREE.PlaneGeometry(0.13, 0.13),
       new THREE.MeshBasicMaterial({ map: makeTaxiChatScrollButtonTexture(dir), transparent: true, side: THREE.DoubleSide })
     );
-    placeOnTaxiChatPanel(btn, 0.64, dir > 0 ? 0.33 : 0.13, 0.01);
+    placeOnTaxiChatPanel(btn, TAXI_CHAT_PANEL_W / 2 + 0.03 + 0.065, dir > 0 ? 0.62 : 0.42, 0.01);
     btn.userData.isTaxiChatScroll = true;
     btn.userData.scrollDir = dir;
     btn.userData.xrHitSize = { w: 0.13, h: 0.13, d: 0.06 };
@@ -10748,7 +10848,7 @@ function createTaxiMicButton() {
     })
   );
   // Right of the chat panel, below the ▲▼ scroll buttons.
-  placeOnTaxiChatPanel(taxiMicButtonMesh, 0.69, -0.28, 0.02);
+  placeOnTaxiChatPanel(taxiMicButtonMesh, TAXI_CHAT_PANEL_W / 2 + 0.03 + 0.11, -0.15, 0.02);
   taxiMicButtonMesh.userData.isTaxiMicButton = true;
   taxiMicButtonMesh.userData.xrHitSize = { w: 0.22, h: 0.22, d: 0.06 };
   taxiAnalyticsGroup.add(taxiMicButtonMesh);
@@ -10805,7 +10905,7 @@ const taxiQuestionButtons = [];
 function createTaxiQuestionButtons() {
   const n = taxiSuggestedQuestions.length;
   const rowW = n * TAXI_QUESTION_BTN_W + (n - 1) * TAXI_QUESTION_BTN_GAP;
-  const localY = -0.46 - 0.025 - TAXI_QUESTION_BTN_H / 2;
+  const localY = -TAXI_CHAT_PANEL_H / 2 - 0.025 - TAXI_QUESTION_BTN_H / 2;
   
   for (let i = 0; i < n; i++) {
     const q = taxiSuggestedQuestions[i];
@@ -10858,6 +10958,8 @@ createTaxiChatPanel();
 createTaxiChatScrollButtons();
 createTaxiMicButton();
 createTaxiQuestionButtons();
+// v19: return button under the quick-question row (it used to cover the back-wall panels)
+placeOnTaxiChatPanel(taxiReturnXrButton, 0, -TAXI_CHAT_PANEL_H / 2 - 0.025 - TAXI_QUESTION_BTN_H - 0.06 - 0.09, 0.02);
 
 // 2D UI Elements for Taxi Conversation
 const taxiChatPanelEl = document.getElementById("taxiChatPanel");
@@ -10925,6 +11027,20 @@ function update2DTaxiChatMessages() {
     textSpan.textContent = msg.content;
     div.appendChild(textSpan);
     taxiChatMessagesEl.appendChild(div);
+  }
+  taxiThinkingEl = null;
+  if (taxiThinkingText) {
+    const div = document.createElement("div");
+    div.className = "taxiChatMsg assistant thinking";
+    const roleSpan = document.createElement("div");
+    roleSpan.className = "role";
+    roleSpan.textContent = "AI";
+    div.appendChild(roleSpan);
+    const textSpan = document.createElement("div");
+    textSpan.textContent = taxiThinkingText;
+    div.appendChild(textSpan);
+    taxiChatMessagesEl.appendChild(div);
+    taxiThinkingEl = div;
   }
   taxiChatMessagesEl.scrollTop = taxiChatMessagesEl.scrollHeight;
 }
