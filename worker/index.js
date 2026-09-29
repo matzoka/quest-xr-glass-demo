@@ -123,6 +123,104 @@ function isTaxiRoomPath(pathname) {
 }
 
 /**
+ * Generic same-origin LLM relay: POST /api/llm
+ * - Requires a valid taxi cookie
+ * - Upstream URL comes from the X-LLM-Endpoint header (settings endpoint),
+ *   normalized to end with /chat/completions
+ * - API key comes only from the browser's Authorization header
+ * - Blocks non-https, self host / workers.dev, localhost, IP literals
+ */
+const LLM_RELAY_PATH = "/api/llm";
+const LLM_MAX_BODY_BYTES = 256 * 1024;
+const LLM_TIMEOUT_MS = 60000;
+const LLM_USER_AGENT = "quest-xr-taxi-assistant/1.0";
+
+function jsonResponse(status, obj) {
+  return new Response(JSON.stringify(obj), {
+    status,
+    headers: { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" },
+  });
+}
+
+function resolveLlmEndpoint(raw, selfHost) {
+  if (!raw) return { error: "Missing X-LLM-Endpoint header" };
+  let u;
+  try {
+    u = new URL(String(raw).trim());
+  } catch (e) {
+    return { error: "Invalid endpoint URL" };
+  }
+  if (u.protocol !== "https:") return { error: "Endpoint must use https://" };
+  if (u.username || u.password) return { error: "Credentials in endpoint URL are not allowed" };
+  if (u.port && u.port !== "443") return { error: "Non-standard ports are not allowed" };
+  const host = u.hostname.toLowerCase().replace(/\.$/, "");
+  if (
+    host === selfHost ||
+    host.endsWith(".workers.dev") || host === "workers.dev" ||
+    host === "localhost" || host.endsWith(".localhost") ||
+    /^\d{1,3}(\.\d{1,3}){3}$/.test(host) || host.includes(":") || host.startsWith("[") ||
+    !host.includes(".")
+  ) {
+    return { error: "Endpoint host not allowed" };
+  }
+  u.hash = "";
+  u.pathname = u.pathname.replace(/\/+$/, "");
+  if (!u.pathname.endsWith("/chat/completions")) u.pathname += "/chat/completions";
+  return { url: u.toString() };
+}
+
+async function handleLlmRelay(request, env, taxiAllowed, selfHost) {
+  if (request.method !== "POST") {
+    return new Response("Method Not Allowed", { status: 405, headers: { Allow: "POST" } });
+  }
+  if (!taxiAllowed) return jsonResponse(401, { error: { message: "Unauthorized" } });
+
+  const resolved = resolveLlmEndpoint(request.headers.get("X-LLM-Endpoint"), selfHost);
+  if (resolved.error) return jsonResponse(400, { error: { message: resolved.error } });
+
+  const m = /^Bearer\s+(.+)$/i.exec(request.headers.get("Authorization") || "");
+  const apiKey = m ? m[1].trim() : "";
+  if (!apiKey) {
+    return jsonResponse(400, { error: { message: "Missing API key: set it in the settings (Authorization: Bearer <key>)" } });
+  }
+
+  const declared = parseInt(request.headers.get("Content-Length") || "0", 10);
+  if (declared > LLM_MAX_BODY_BYTES) return jsonResponse(413, { error: { message: "Payload too large" } });
+  const body = await request.arrayBuffer();
+  if (body.byteLength > LLM_MAX_BODY_BYTES) return jsonResponse(413, { error: { message: "Payload too large" } });
+  if (body.byteLength === 0) return jsonResponse(400, { error: { message: "Empty body" } });
+
+  const session = (request.headers.get("X-Opencode-Session") || "").slice(0, 128) || crypto.randomUUID();
+
+  let upstreamRes;
+  try {
+    upstreamRes = await fetch(resolved.url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${apiKey}`,
+        "User-Agent": LLM_USER_AGENT,
+        "x-opencode-session": session,
+      },
+      body,
+      redirect: "manual",
+      signal: AbortSignal.timeout(LLM_TIMEOUT_MS),
+    });
+  } catch (e) {
+    const timeout = e && (e.name === "TimeoutError" || e.name === "AbortError");
+    return jsonResponse(timeout ? 504 : 502, { error: { message: timeout ? "Upstream timeout" : "Upstream fetch failed" } });
+  }
+
+  return new Response(upstreamRes.body, {
+    status: upstreamRes.status,
+    headers: {
+      "Content-Type": upstreamRes.headers.get("Content-Type") || "application/json",
+      "Cache-Control": "no-store",
+    },
+  });
+}
+
+/**
  * Main request handler
  */
 export default {
@@ -180,6 +278,11 @@ export default {
 
     // If no secret is configured, taxi features are disabled entirely
     const taxiAllowed = isAuthenticated && !!secret;
+
+    // Same-origin LLM relay (requires taxi cookie)
+    if (pathname === LLM_RELAY_PATH) {
+      return handleLlmRelay(request, env, taxiAllowed, url.hostname.toLowerCase());
+    }
 
     // Block direct access to taxi room assets if not authenticated
     if (isTaxiRoomPath(pathname) && !taxiAllowed) {

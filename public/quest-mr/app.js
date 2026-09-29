@@ -22,7 +22,7 @@ if (TAXI_ALLOWED && taxiAnalyticsButton) {
   taxiAnalyticsButton.removeAttribute("hidden");
 }
 
-const APP_VERSION = "v2026.09.29.10";
+const APP_VERSION = "v2026.09.29.11";
 const DEBUG_TOP_VIEW = new URLSearchParams(window.location.search).has("topDebug");
 const DEBUG_TOP_VIEW_DISTANCE = Number(new URLSearchParams(window.location.search).get("topDebugDist"));
 const DEBUG_BLACK_HOLE_VIEW = new URLSearchParams(window.location.search).has("blackHoleDebug");
@@ -8651,6 +8651,13 @@ const taxiGeneralResponses = {
   sampleDataNote: "※ これらはすべてサンプルデータです。実際のデータ連携には別途設定が必要です。",
 };
 
+// LLM requests go through the same-origin Worker relay (/api/llm), which
+// forwards to the settings endpoint (many providers send no CORS headers).
+const TAXI_LLM_RELAY_PATH = "/api/llm";
+const taxiLlmSessionId = (typeof crypto !== "undefined" && crypto.randomUUID)
+  ? crypto.randomUUID()
+  : `taxi-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+
 function getTaxiLlmConfig() {
   try {
     const stored = localStorage.getItem(TAXI_CONVERSATION_STORAGE_KEY);
@@ -8989,11 +8996,14 @@ ${taxiPanelData.map((p, i) => `${i}: ${p.title} - ${p.value} (${p.unit})`).join(
   ];
 
   try {
-    const response = await fetch(config.endpoint, {
+    const response = await fetch(TAXI_LLM_RELAY_PATH, {
       method: "POST",
+      credentials: "same-origin",
       headers: {
         "Content-Type": "application/json",
         "Authorization": `Bearer ${config.apiKey}`,
+        "X-LLM-Endpoint": config.endpoint,
+        "X-Opencode-Session": taxiLlmSessionId,
       },
       body: JSON.stringify({
         model: config.model || "gpt-4o-mini",
