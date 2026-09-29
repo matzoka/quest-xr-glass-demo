@@ -22,7 +22,7 @@ if (TAXI_ALLOWED && taxiAnalyticsButton) {
   taxiAnalyticsButton.removeAttribute("hidden");
 }
 
-const APP_VERSION = "v2026.09.29.12";
+const APP_VERSION = "v2026.09.29.13";
 const DEBUG_TOP_VIEW = new URLSearchParams(window.location.search).has("topDebug");
 const DEBUG_TOP_VIEW_DISTANCE = Number(new URLSearchParams(window.location.search).get("topDebugDist"));
 const DEBUG_BLACK_HOLE_VIEW = new URLSearchParams(window.location.search).has("blackHoleDebug");
@@ -7999,7 +7999,7 @@ function generateTaxiDataset() {
       
       trips.push({
         id: tripId++,
-        date: new Date(d).toISOString().split("T")[0],
+        date: taxiLocalDateString(d),
         year: d.getFullYear(),
         month: d.getMonth() + 1,
         day: d.getDate(),
@@ -8163,6 +8163,328 @@ function aggregateMetric(rows, metric, metricDef) {
     default:
       return 0;
   }
+}
+
+// ---------------------------------------------------------------------------
+// Free-form query tool for the AI assistant (query_data)
+// Aggregates the synthetic trips with arbitrary filters and returns compact
+// statistics (total / count / avg / max / min, per-group and per-day) that
+// are sent back to the LLM as tool results.
+// ---------------------------------------------------------------------------
+const TAXI_QUERY_MAX_GROUPS = 31;
+const TAXI_QUERY_DEFAULT_GROUPS = 10;
+const TAXI_ADDITIVE_METRICS = ["tripCount", "fare", "distance", "occupiedTime", "emptyTime"];
+const TAXI_PER_TRIP_FIELDS = { fare: "fare", avgFare: "fare", distance: "distance", avgDistance: "distance", occupiedTime: "occupiedMinutes", emptyTime: "emptyMinutes" };
+const TAXI_READINGS = {
+  新宿: "しんじゅく", 渋谷: "しぶや", 池袋: "いけぶくろ", 品川: "しながわ",
+  銀座: "ぎんざ", 上野: "うえの", 浅草: "あさくさ", 六本木: "ろっぽんぎ",
+  田中: "たなか", 鈴木: "すずき", 佐藤: "さとう", 山田: "やまだ",
+  高橋: "たかはし", 伊藤: "いとう", 渡辺: "わたなべ", 中村: "なかむら",
+};
+const TAXI_WEEKDAY_ALIASES = { sun: "日", mon: "月", tue: "火", wed: "水", thu: "木", fri: "金", sat: "土" };
+
+function taxiRound(v, digits = 1) {
+  if (v === null || v === undefined || !Number.isFinite(v)) return null;
+  const f = Math.pow(10, digits);
+  return Math.round(v * f) / f;
+}
+
+function taxiLocalDateString(d) {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+function taxiNormText(s) {
+  return String(s ?? "")
+    .normalize("NFKC")
+    .trim()
+    .toLowerCase()
+    .replace(/[\u30a1-\u30f6]/g, ch => String.fromCharCode(ch.charCodeAt(0) - 0x60))
+    .replace(/\s+/g, "");
+}
+
+function taxiEditDistance(a, b) {
+  const m = a.length, n = b.length;
+  const dp = Array.from({ length: m + 1 }, (_, i) => [i, ...new Array(n).fill(0)]);
+  for (let j = 0; j <= n; j++) dp[0][j] = j;
+  for (let i = 1; i <= m; i++) {
+    for (let j = 1; j <= n; j++) {
+      dp[i][j] = Math.min(dp[i - 1][j] + 1, dp[i][j - 1] + 1, dp[i - 1][j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+    }
+  }
+  return dp[m][n];
+}
+
+const TAXI_TERM_SUFFIX_RE = /(区|駅|周辺|エリア|地区|さん|氏|運転手|ドライバー|号車)$/u;
+
+// Reading / suffix variant of exactly one valid value (e.g. "シンジュク", "新宿区", "スズキさん")
+function taxiStrongMatch(value, validValues) {
+  const v = taxiNormText(value).replace(TAXI_TERM_SUFFIX_RE, "");
+  if (!v) return null;
+  const hits = validValues.filter(c => v === taxiNormText(c) || v === TAXI_READINGS[c]);
+  return hits.length === 1 ? hits[0] : null;
+}
+
+// Suggest the closest valid values (kanji or reading, e.g. "シンジュク区" -> 新宿)
+function taxiSuggest(value, validValues, max = 3) {
+  const v = taxiNormText(value).replace(TAXI_TERM_SUFFIX_RE, "");
+  const scored = validValues.map(cand => {
+    const forms = [taxiNormText(cand), TAXI_READINGS[cand]].filter(Boolean);
+    let best = Infinity;
+    for (const f of forms) {
+      let d = taxiEditDistance(v, f) / Math.max(v.length, f.length, 1);
+      if (v && (f.includes(v) || v.includes(f))) d = Math.min(d, 0.1);
+      best = Math.min(best, d);
+    }
+    return { cand, d: best };
+  });
+  scored.sort((a, b) => a.d - b.d);
+  // No clear candidate (e.g. "車両Z": every vehicle is equally far) -> let validValues speak
+  if (scored.length > max && scored[0].d === scored[max].d) return [];
+  return scored.filter(s => s.d <= 0.67).slice(0, max).map(s => s.cand);
+}
+
+// Normalise trivial formatting variants; returns null when the value is unknown.
+function taxiCanonicalValue(kind, raw) {
+  const s = String(raw ?? "").normalize("NFKC").trim();
+  if (kind === "weekday") {
+    const w = s.replace(/曜日?$/u, "");
+    if (TAXI_WEEKDAYS.includes(w)) return w;
+    const alias = TAXI_WEEKDAY_ALIASES[w.toLowerCase().slice(0, 3)];
+    return alias || null;
+  }
+  if (kind === "vehicle") {
+    const m = /^(?:車両)?\s*([A-Za-z])(?:号車)?$/u.exec(s);
+    const c = m ? `車両${m[1].toUpperCase()}` : s;
+    return TAXI_VEHICLES.includes(c) ? c : null;
+  }
+  if (kind === "driver") {
+    const c = s.replace(/(さん|氏)$/u, "");
+    return TAXI_DRIVERS.includes(c) ? c : null;
+  }
+  if (kind === "area") return TAXI_AREAS.includes(s) ? s : null;
+  return null;
+}
+
+function taxiFilterValues(kind, input, fieldName, validValues, errors, applied) {
+  if (input === undefined || input === null || input === "") return null;
+  const list = Array.isArray(input) ? input : [input];
+  if (list.length === 0) return null;
+  const out = [];
+  for (const raw of list) {
+    const c = taxiCanonicalValue(kind, raw);
+    const strong = c ? null : taxiStrongMatch(raw, validValues);
+    if (c) {
+      out.push(c);
+    } else if (strong) {
+      out.push(strong);
+      (applied.corrections = applied.corrections || []).push({
+        from: raw,
+        to: strong,
+        message: `「${raw}」はデータに無い表記のため「${strong}」として集計した。回答では必ず「もしかして${strong}のことですか？」と確認を添えること`,
+      });
+    } else {
+      errors.push({
+        field: fieldName,
+        value: raw,
+        message: `「${raw}」はデータに存在しない値です`,
+        suggestions: taxiSuggest(raw, validValues),
+        validValues,
+      });
+    }
+  }
+  applied[fieldName] = out;
+  return out.length ? new Set(out) : null;
+}
+
+function taxiNumberOrNull(v) {
+  if (v === undefined || v === null || v === "") return null;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : NaN;
+}
+
+function taxiMetricValue(rows, metric) {
+  if (!rows.length) return TAXI_ADDITIVE_METRICS.includes(metric) ? 0 : null;
+  return aggregateMetric(rows, metric, TAXI_METRICS[metric]);
+}
+
+function taxiStatsOver(entries) {
+  // entries: [{ key, value }] (value may be null for empty groups)
+  const vals = entries.filter(e => e.value !== null && Number.isFinite(e.value));
+  if (!vals.length) return null;
+  let max = vals[0], min = vals[0], sum = 0;
+  for (const e of vals) {
+    sum += e.value;
+    if (e.value > max.value) max = e;
+    if (e.value < min.value) min = e;
+  }
+  return {
+    groupCount: vals.length,
+    sum: taxiRound(sum, 1),
+    average: taxiRound(sum / vals.length, 1),
+    max: { key: max.key, value: taxiRound(max.value, 1) },
+    min: { key: min.key, value: taxiRound(min.value, 1) },
+  };
+}
+
+function runTaxiFreeQuery(args = {}) {
+  const metric = args.metric || "tripCount";
+  const errors = [];
+  if (!TAXI_METRICS[metric]) {
+    errors.push({ field: "metric", value: metric, message: `無効なメトリック: ${metric}`, validValues: Object.keys(TAXI_METRICS) });
+  }
+  const groupBy = args.groupBy || "";
+  if (groupBy && !TAXI_DIMENSIONS[groupBy]) {
+    errors.push({ field: "groupBy", value: groupBy, message: `無効な集計軸: ${groupBy}`, validValues: Object.keys(TAXI_DIMENSIONS) });
+  }
+
+  const allDates = [...new Set(taxiTrips.map(t => t.date))].sort();
+  const dataRange = { from: allDates[0], to: allDates[allDates.length - 1] };
+  const applied = {};
+  const dateRe = /^\d{4}-\d{2}-\d{2}$/;
+  const dateFrom = args.dateFrom ? String(args.dateFrom) : null;
+  const dateTo = args.dateTo ? String(args.dateTo) : null;
+  for (const [k, v] of [["dateFrom", dateFrom], ["dateTo", dateTo]]) {
+    if (v && !dateRe.test(v)) errors.push({ field: k, value: v, message: "日付は YYYY-MM-DD 形式で指定してください", validRange: dataRange });
+  }
+  if (dateFrom) applied.dateFrom = dateFrom;
+  if (dateTo) applied.dateTo = dateTo;
+
+  const hourFrom = taxiNumberOrNull(args.hourFrom);
+  const hourTo = taxiNumberOrNull(args.hourTo);
+  if (hourFrom !== null && !(Number.isInteger(hourFrom) && hourFrom >= 0 && hourFrom <= 23)) {
+    errors.push({ field: "hourFrom", value: args.hourFrom, message: "hourFrom は 0〜23 の整数です（開始時刻・含む）" });
+  }
+  if (hourTo !== null && !(Number.isInteger(hourTo) && hourTo >= 1 && hourTo <= 24)) {
+    errors.push({ field: "hourTo", value: args.hourTo, message: "hourTo は 1〜24 の整数です（終了時刻・含まない）" });
+  }
+  let hourSet = null;
+  if ((hourFrom !== null || hourTo !== null) && !errors.some(e => e.field.startsWith("hour"))) {
+    const hf = hourFrom ?? 0;
+    const ht = hourTo ?? 24;
+    hourSet = new Set();
+    if (hf < ht) {
+      for (let h = hf; h < ht; h++) hourSet.add(h);
+    } else {
+      for (let h = hf; h < 24; h++) hourSet.add(h);
+      for (let h = 0; h < ht; h++) hourSet.add(h);
+    }
+    const hs = [...hourSet];
+    applied.hours = `${hf}:00〜${ht}:00（${ht}時ちょうどは含まない。乗車開始hour=${hs.join(",")}）`;
+  }
+
+  const weekdaySet = taxiFilterValues("weekday", args.weekdays, "weekdays", TAXI_WEEKDAYS, errors, applied);
+  const vehicleSet = taxiFilterValues("vehicle", args.vehicles, "vehicles", TAXI_VEHICLES, errors, applied);
+  const driverSet = taxiFilterValues("driver", args.drivers, "drivers", TAXI_DRIVERS, errors, applied);
+  const pickupSet = taxiFilterValues("area", args.pickupAreas, "pickupAreas", TAXI_AREAS, errors, applied);
+  const dropoffSet = taxiFilterValues("area", args.dropoffAreas, "dropoffAreas", TAXI_AREAS, errors, applied);
+
+  const ranges = {};
+  for (const k of ["distanceMin", "distanceMax", "fareMin", "fareMax"]) {
+    const n = taxiNumberOrNull(args[k]);
+    if (Number.isNaN(n)) errors.push({ field: k, value: args[k], message: `${k} は数値で指定してください` });
+    else if (n !== null) { ranges[k] = n; applied[k] = n; }
+  }
+
+  if (errors.length) {
+    return {
+      error: "指定された条件に無効な値があります。suggestions の候補をユーザーに「もしかして〇〇のことですか？」と確認してください。",
+      invalid: errors,
+      dataRange,
+    };
+  }
+
+  // Base calendar filter (date range + weekday) defines which days exist
+  const inCalendar = t =>
+    (!dateFrom || t.date >= dateFrom) && (!dateTo || t.date <= dateTo) &&
+    (!weekdaySet || weekdaySet.has(t.weekday));
+  const calendarDays = [...new Set(taxiTrips.filter(inCalendar).map(t => t.date))].sort();
+
+  const rows = taxiTrips.filter(t =>
+    inCalendar(t) &&
+    (!hourSet || hourSet.has(t.hour)) &&
+    (!vehicleSet || vehicleSet.has(t.vehicle)) &&
+    (!driverSet || driverSet.has(t.driver)) &&
+    (!pickupSet || pickupSet.has(t.pickupArea)) &&
+    (!dropoffSet || dropoffSet.has(t.dropoffArea)) &&
+    (ranges.distanceMin === undefined || t.distance >= ranges.distanceMin) &&
+    (ranges.distanceMax === undefined || t.distance <= ranges.distanceMax) &&
+    (ranges.fareMin === undefined || t.fare >= ranges.fareMin) &&
+    (ranges.fareMax === undefined || t.fare <= ranges.fareMax)
+  );
+
+  const def = TAXI_METRICS[metric];
+  const overall = taxiMetricValue(rows, metric);
+  const result = {
+    metric,
+    metricLabel: def.label,
+    unit: def.unit,
+    filters: applied,
+    dataRange,
+    matchedTrips: rows.length,
+    daysInPeriod: calendarDays.length,
+    value: taxiRound(overall, 1),
+    valueFormatted: overall === null ? "データなし" : def.format(overall),
+  };
+
+  // Per-trip stats (1回あたり) for fare / distance / time metrics
+  const tripField = TAXI_PER_TRIP_FIELDS[metric];
+  if (tripField && rows.length) {
+    let max = rows[0], min = rows[0], sum = 0;
+    for (const t of rows) {
+      sum += t[tripField];
+      if (t[tripField] > max[tripField]) max = t;
+      if (t[tripField] < min[tripField]) min = t;
+    }
+    const brief = t => ({ value: t[tripField], date: t.date, hour: t.hour, vehicle: t.vehicle, driver: t.driver, pickupArea: t.pickupArea, dropoffArea: t.dropoffArea });
+    result.perTrip = { field: tripField, average: taxiRound(sum / rows.length, 1), max: brief(max), min: brief(min) };
+  }
+
+  // Per-day stats (1日あたり): average / max day / min day over all days in the period
+  if (TAXI_ADDITIVE_METRICS.includes(metric) && groupBy !== "date" && calendarDays.length) {
+    const byDay = new Map(calendarDays.map(d => [d, []]));
+    for (const t of rows) byDay.get(t.date)?.push(t);
+    const dayEntries = calendarDays.map(d => ({ key: d, value: taxiMetricValue(byDay.get(d), metric) }));
+    const s = taxiStatsOver(dayEntries);
+    if (s) result.perDay = { days: s.groupCount, average: s.average, max: s.max, min: s.min };
+  }
+
+  if (groupBy) {
+    const dim = TAXI_DIMENSIONS[groupBy];
+    let domain;
+    if (groupBy === "date") domain = calendarDays;
+    else if (groupBy === "month") domain = [...new Set(taxiTrips.filter(inCalendar).map(t => t.month))];
+    else if (groupBy === "hour") domain = hourSet ? [...hourSet] : Array.from({ length: 24 }, (_, h) => h);
+    else if (groupBy === "weekday") domain = weekdaySet ? TAXI_WEEKDAYS.filter(w => weekdaySet.has(w)) : [...TAXI_WEEKDAYS];
+    else if (groupBy === "vehicle") domain = vehicleSet ? [...vehicleSet] : [...TAXI_VEHICLES];
+    else if (groupBy === "driver") domain = driverSet ? [...driverSet] : [...TAXI_DRIVERS];
+    else if (groupBy === "pickupArea") domain = pickupSet ? [...pickupSet] : [...TAXI_AREAS];
+    else if (groupBy === "dropoffArea") domain = dropoffSet ? [...dropoffSet] : [...TAXI_AREAS];
+    else domain = [...new Set(rows.map(t => t[dim.field]))];
+
+    const buckets = new Map(domain.map(k => [k, []]));
+    for (const t of rows) {
+      const k = t[dim.field];
+      if (!buckets.has(k)) buckets.set(k, []);
+      buckets.get(k).push(t);
+    }
+    const labelOf = k => (dim.format ? dim.format(k) : String(k));
+    let entries = [...buckets.entries()].map(([k, rs]) => ({ key: labelOf(k), rawKey: k, value: taxiMetricValue(rs, metric), trips: rs.length }));
+    result.groupStats = { groupBy, groupLabel: dim.label, ...taxiStatsOver(entries) };
+    if (!TAXI_ADDITIVE_METRICS.includes(metric)) delete result.groupStats.sum;
+
+    const sort = args.sort || (groupBy === "date" || groupBy === "hour" || groupBy === "month" || groupBy === "weekday" ? "key" : "desc");
+    if (sort === "desc") entries.sort((a, b) => (b.value ?? -Infinity) - (a.value ?? -Infinity));
+    else if (sort === "asc") entries.sort((a, b) => (a.value ?? Infinity) - (b.value ?? Infinity));
+    else if (dim.sort) entries.sort((a, b) => dim.sort(a.rawKey, b.rawKey));
+    else entries.sort((a, b) => (a.rawKey < b.rawKey ? -1 : a.rawKey > b.rawKey ? 1 : 0));
+
+    const limit = Math.max(1, Math.min(TAXI_QUERY_MAX_GROUPS, parseInt(args.limit, 10) || TAXI_QUERY_DEFAULT_GROUPS));
+    result.groups = entries.slice(0, limit).map(e => ({ key: e.key, value: taxiRound(e.value, 1), trips: e.trips }));
+    if (entries.length > limit) result.groupsTruncated = `${entries.length}グループ中 ${limit}件のみ表示（sort=${sort}）`;
+  }
+
+  result.note = "サンプル（合成）データによる集計結果";
+  return result;
 }
 
 // ---------------------------------------------------------------------------
@@ -8885,6 +9207,44 @@ const LLM_TOOLS = [
   {
     type: "function",
     function: {
+      name: "query_data",
+      description: "サンプルのタクシー乗車データを自由な条件で集計し、統計値(JSON)を返す。数値を答える前に必ずこれを呼ぶこと。返り値: value=条件全体の集計値, matchedTrips=該当乗車数, perDay=1日あたりの平均/最大日/最小日(加算系メトリック), perTrip=1乗車あたりの平均/最大/最小(売上・距離・時間), groupBy指定時は groupStats(グループ間の平均/最大/最小) と groups(上位N件)。未知の値を指定すると error と suggestions(近い候補) と validValues が返る。",
+      parameters: {
+        type: "object",
+        properties: {
+          metric: {
+            type: "string",
+            enum: Object.keys(TAXI_METRICS),
+            description: "tripCount=乗車回数(件), fare=売上(円,合計), distance=走行距離(km,合計), avgFare=平均運賃(円/回), avgDistance=平均距離(km/回), occupiedTime=実車時間(分), emptyTime=空車時間(分), utilizationRate=稼働率(%)=実車/(実車+空車)",
+          },
+          dateFrom: { type: "string", description: "開始日 YYYY-MM-DD（この日を含む）" },
+          dateTo: { type: "string", description: "終了日 YYYY-MM-DD（この日を含む）" },
+          hourFrom: { type: "integer", description: "乗車開始時刻の下限 0-23（含む）。例:「15時から18時まで」→ hourFrom=15, hourTo=18（15:00〜17:59）" },
+          hourTo: { type: "integer", description: "乗車開始時刻の上限 1-24（含まない）。hourFrom>hourTo なら深夜をまたぐ（例 22→2）" },
+          weekdays: { type: "array", items: { type: "string", enum: TAXI_WEEKDAYS }, description: "曜日（日,月,火,水,木,金,土）。例: 日曜日→[\"日\"], 週末→[\"土\",\"日\"]" },
+          vehicles: { type: "array", items: { type: "string" }, description: `車両: ${TAXI_VEHICLES.join(",")}。車両・ドライバー・エリアはユーザーが言った表記をそのまま渡す（読み替えはツール側で行い、corrections や suggestions を返す）` },
+          drivers: { type: "array", items: { type: "string" }, description: `ドライバー: ${TAXI_DRIVERS.join(",")}` },
+          pickupAreas: { type: "array", items: { type: "string" }, description: `乗車エリア: ${TAXI_AREAS.join(",")}` },
+          dropoffAreas: { type: "array", items: { type: "string" }, description: `降車エリア: ${TAXI_AREAS.join(",")}` },
+          distanceMin: { type: "number", description: "1乗車の距離(km)の下限（含む）" },
+          distanceMax: { type: "number", description: "1乗車の距離(km)の上限（含む）" },
+          fareMin: { type: "number", description: "1乗車の運賃(円)の下限（含む）" },
+          fareMax: { type: "number", description: "1乗車の運賃(円)の上限（含む）" },
+          groupBy: {
+            type: "string",
+            enum: Object.keys(TAXI_DIMENSIONS),
+            description: "集計軸（任意）: date=日別, month=月別, weekday=曜日別, hour=時間帯別, vehicle=車両別, driver=ドライバー別, pickupArea=乗車エリア別, dropoffArea=降車エリア別",
+          },
+          sort: { type: "string", enum: ["desc", "asc", "key"], description: "groups の並び順（desc=値の大きい順, asc=小さい順, key=軸の順）" },
+          limit: { type: "integer", description: `groups に返す件数（既定${TAXI_QUERY_DEFAULT_GROUPS}, 最大${TAXI_QUERY_MAX_GROUPS}）` },
+        },
+        required: ["metric"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
       name: "create_panel",
       description: "Create a new analysis panel with specified metric and grouping. The panel will be rendered with data from the sample dataset.",
       parameters: {
@@ -8958,20 +9318,73 @@ const LLM_TOOLS = [
   },
 ];
 
+const TAXI_LLM_MAX_ROUNDS = 4;
+
+function taxiCompactToolJson(obj) {
+  let s = JSON.stringify(obj);
+  if (s.length > 6000) s = s.slice(0, 6000) + "…(truncated)";
+  return s;
+}
+
+function executeTaxiToolCall(funcName, args, state) {
+  if (funcName === "query_data") {
+    return runTaxiFreeQuery(args);
+  }
+  if (funcName === "create_panel") {
+    const validation = validateAnalysisSpec(args);
+    if (!validation.valid) {
+      return { ok: false, error: `無効なパネル仕様: ${validation.errors.join(", ")}`, validMetrics: Object.keys(TAXI_METRICS), validGroupBy: Object.keys(TAXI_DIMENSIONS) };
+    }
+    const panelResult = createDynamicPanel(args);
+    if (!panelResult.success) return { ok: false, error: `パネル作成エラー: ${panelResult.error}` };
+    state.panelCreated = true;
+    const metricLabel = TAXI_METRICS[args.metric]?.label || args.metric;
+    const dimLabel = args.groupBy ? `${TAXI_DIMENSIONS[args.groupBy]?.label}` : "";
+    const qr = panelResult.panel?.queryResult || {};
+    const data = (qr.data || []).slice(0, 12).map(d => ({ label: d.label, value: taxiRound(d.value, 1) }));
+    return { ok: true, message: `${dimLabel}${metricLabel}のパネルを作成しました`, items: (qr.data || []).length, data, total: taxiRound(qr.total, 1) };
+  }
+  if (funcName === "focus_panel") {
+    const idx = Number(args.panelIndex);
+    if (idx >= 0 && idx < 4) {
+      state.focusPanel = idx;
+      return { ok: true, message: `${taxiPanelData[idx]?.title}パネルをハイライトしました`, panel: taxiPanelData[idx] };
+    }
+    return { ok: false, error: "panelIndex は 0〜3 です" };
+  }
+  if (funcName === "clear_panels") {
+    const clearResult = clearDynamicPanels();
+    return { ok: true, message: clearResult.message };
+  }
+  if (funcName === "list_capabilities") {
+    const info = listAvailableAnalyses();
+    return {
+      metrics: info.metrics.map(m => `${m}(${TAXI_METRICS[m].label})`),
+      dimensions: info.dimensions.map(d => `${d}(${TAXI_DIMENSIONS[d].label})`),
+      examples: info.examples,
+    };
+  }
+  return { ok: false, error: `未知のツール: ${funcName}` };
+}
+
 async function callLlmBackend(userMessage, config) {
+  const dataRange = taxiTrips.length ? `${taxiTrips[0].date}〜${taxiTrips[taxiTrips.length - 1].date}` : "-";
   const datasetSummary = `
-サンプルデータセット情報:
-- 期間: 過去${TAXI_MONTHS}ヶ月
+サンプルデータセット情報（合成データ）:
+- 期間: 過去${TAXI_MONTHS}ヶ月（${dataRange}、今日=${taxiLocalDateString(new Date())}）
 - 総トリップ数: ${taxiTrips.length.toLocaleString()}件
-- 車両数: ${TAXI_VEHICLES.length}台
-- ドライバー数: ${TAXI_DRIVERS.length}人
-- エリア数: ${TAXI_AREAS.length}箇所
+- 有効な値の一覧（これ以外の値はデータに存在しない）:
+  - 車両: ${TAXI_VEHICLES.join("、")}
+  - ドライバー: ${TAXI_DRIVERS.join("、")}
+  - エリア（乗車/降車）: ${TAXI_AREAS.join("、")}
+  - 曜日: ${TAXI_WEEKDAYS.join("、")}
+  - 時刻: 0〜23時（乗車開始時刻）
 
 利用可能なメトリック: ${Object.entries(TAXI_METRICS).map(([k, v]) => `${k}(${v.label})`).join(", ")}
 利用可能な集計軸: ${Object.entries(TAXI_DIMENSIONS).map(([k, v]) => `${k}(${v.label})`).join(", ")}
 `;
 
-  const systemPrompt = `あなたはタクシー業務分析アシスタントです。ユーザーの分析リクエストに応じて、適切なツールを呼び出してパネルを作成してください。
+  const systemPrompt = `あなたはタクシー業務分析アシスタントです。ユーザーの質問にはツールでサンプルデータを集計してから答えてください。
 
 ${datasetSummary}
 
@@ -8979,114 +9392,90 @@ ${datasetSummary}
 ${taxiPanelData.map((p, i) => `${i}: ${p.title} - ${p.value} (${p.unit})`).join("\n")}
 
 ルール:
-1. ユーザーが分析を依頼したら、create_panelツールを使用してパネルを作成
-2. 既存の固定パネルについて質問されたら、focus_panelでハイライト
-3. 利用可能な分析を聞かれたら、list_capabilitiesを使用
-4. パネルを消したいと言われたら、clear_panelsを使用
-5. 数値は絶対に自分で生成せず、必ずツールを呼び出してデータから計算させる
-6. 日本語で簡潔に回答
-
-これはサンプルデータであることを伝えてください。`;
+1. 数値の質問（売上・乗車回数・平均・最高・最低・比較など）は必ず query_data を呼び、その結果の数値だけを使って答える。数値は絶対に自分で生成・推測しない。
+2. 「平均」「最高」「最低」で単位が曖昧なときは、乗車回数・売上なら1日あたり（perDay）、運賃・距離なら1乗車あたり（perTrip）を基本にし、どちらの意味か一言添える。最高/最低の日付やグループ名も添える。
+3. 条件（期間・曜日・時間帯・車両・ドライバー・エリア・距離・運賃）は query_data の引数で指定する。「15時から18時まで」は hourFrom=15, hourTo=18。
+4. 音声認識の聞き間違い・誤字・存在しない値（例: 一覧にないエリア名/ドライバー名/車両名、25時などありえない時刻、似た音の名前）に見えるときは、有効な値の一覧から最も近い候補を選び「もしかして〇〇のことですか？」と提案する。query_data が error と suggestions を返した場合も同様にする。ユーザーの言葉が有効な値と完全に一致しないとき（カタカナ・ひらがな表記、「新宿区」「新宿駅」のような付け足し、似た音の別名など）も、黙って読み替えずに必ず「もしかして〇〇のことですか？」と一言添える。候補が1つに絞れる場合は、その候補で query_data を実行して「〇〇であれば…です」と数値も添える。query_data の filters.corrections に読み替えがあれば、回答の最初に必ず「もしかして〇〇のことですか？」と書く。ありえない時刻（25時など）を自分で別の時刻に読み替えた場合も「もしかして〇時のことですか？」と確認する。
+5. パネル表示を頼まれたら create_panel、固定パネルについての質問は focus_panel、分析の一覧は list_capabilities、パネル削除は clear_panels を使う。
+6. 回答は自然な日本語で簡潔に（2〜4文程度）。表・Markdown（**など）・ツールの内部名（perDay, groupStats など）は使わない。
+7. 回答の最後に、これはサンプルデータであることを必ず一言添える（例:「※サンプルデータです」）。`;
 
   const messages = [
     { role: "system", content: systemPrompt },
     ...taxiConversationHistory.slice(-6),
-    { role: "user", content: userMessage },
   ];
+  // processTaxiConversation already pushed the user message into the history
+  const last = messages[messages.length - 1];
+  if (!(last && last.role === "user" && last.content === userMessage)) {
+    messages.push({ role: "user", content: userMessage });
+  }
+
+  const state = { focusPanel: -1, panelCreated: false, toolNotes: [] };
 
   try {
-    const response = await fetch(TAXI_LLM_RELAY_PATH, {
-      method: "POST",
-      credentials: "same-origin",
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": `Bearer ${config.apiKey}`,
-        "X-LLM-Endpoint": config.endpoint,
-        "X-Opencode-Session": taxiLlmSessionId,
-      },
-      body: JSON.stringify({
-        model: config.model || "gpt-4o-mini",
-        messages,
-        tools: LLM_TOOLS,
-        tool_choice: "auto",
-        max_tokens: 800,
-        temperature: 0.5,
-      }),
-    });
+    for (let round = 0; round < TAXI_LLM_MAX_ROUNDS; round++) {
+      const finalRound = round === TAXI_LLM_MAX_ROUNDS - 1;
+      const response = await fetch(TAXI_LLM_RELAY_PATH, {
+        method: "POST",
+        credentials: "same-origin",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${config.apiKey}`,
+          "X-LLM-Endpoint": config.endpoint,
+          "X-Opencode-Session": taxiLlmSessionId,
+        },
+        body: JSON.stringify({
+          model: config.model || "gpt-4o-mini",
+          messages,
+          tools: LLM_TOOLS,
+          tool_choice: finalRound ? "none" : "auto",
+          max_tokens: 1200,
+          temperature: 0.3,
+        }),
+      });
 
-    if (!response.ok) {
-      throw new Error(`API error: ${response.status}`);
-    }
-
-    const data = await response.json();
-    const choice = data.choices?.[0];
-    
-    if (!choice) {
-      return { text: "応答を取得できませんでした。", focusPanel: -1, fallback: true };
-    }
-    
-    const toolCalls = choice.message?.tool_calls;
-    if (toolCalls && toolCalls.length > 0) {
-      const results = [];
-      let focusPanel = -1;
-      
-      for (const toolCall of toolCalls) {
-        const funcName = toolCall.function?.name;
-        let args = {};
-        try {
-          args = JSON.parse(toolCall.function?.arguments || "{}");
-        } catch (e) {
-          results.push(`ツール引数のパースエラー: ${e.message}`);
-          continue;
-        }
-        
-        if (funcName === "create_panel") {
-          const validation = validateAnalysisSpec(args);
-          if (!validation.valid) {
-            results.push(`無効なパネル仕様: ${validation.errors.join(", ")}`);
-            continue;
-          }
-          const panelResult = createDynamicPanel(args);
-          if (panelResult.success) {
-            const metricLabel = TAXI_METRICS[args.metric]?.label || args.metric;
-            const dimLabel = args.groupBy ? `${TAXI_DIMENSIONS[args.groupBy]?.label}` : "";
-            const dataCount = panelResult.panel?.queryResult?.data?.length || 0;
-            results.push(`${dimLabel}${metricLabel}のパネルを作成しました（${dataCount}件）`);
-          } else {
-            results.push(`パネル作成エラー: ${panelResult.error}`);
-          }
-        } else if (funcName === "focus_panel") {
-          const idx = args.panelIndex;
-          if (idx >= 0 && idx < 4) {
-            focusPanel = idx;
-            results.push(`${taxiPanelData[idx]?.title}パネルをハイライトしました`);
-          }
-        } else if (funcName === "clear_panels") {
-          const clearResult = clearDynamicPanels();
-          results.push(clearResult.message);
-        } else if (funcName === "list_capabilities") {
-          const info = listAvailableAnalyses();
-          results.push(`利用可能な分析:\nメトリック: ${info.metrics.map(m => TAXI_METRICS[m].label).join("、")}\n集計軸: ${info.dimensions.map(d => TAXI_DIMENSIONS[d].label).join("、")}`);
-        }
+      if (!response.ok) {
+        throw new Error(`API error: ${response.status}`);
       }
-      
-      let textContent = choice.message?.content || "";
-      if (results.length > 0) {
-        textContent = textContent ? `${textContent}\n\n${results.join("\n")}` : results.join("\n");
-      }
-      
-      return { text: textContent || "処理を完了しました。", focusPanel, panelCreated: true };
-    }
-    
-    let text = choice.message?.content || "応答を取得できませんでした。";
-    let focusPanel = -1;
-    const focusMatch = text.match(/\[FOCUS_PANEL:(\d)\]/);
-    if (focusMatch) {
-      focusPanel = parseInt(focusMatch[1]);
-      text = text.replace(/\[FOCUS_PANEL:\d\]/g, "").trim();
-    }
 
-    return { text, focusPanel };
+      const data = await response.json();
+      const choice = data.choices?.[0];
+      if (!choice) {
+        return { text: "応答を取得できませんでした。", focusPanel: -1, fallback: true };
+      }
+
+      const msg = choice.message || {};
+      const toolCalls = Array.isArray(msg.tool_calls) ? msg.tool_calls : [];
+      if (toolCalls.length > 0 && !finalRound) {
+        messages.push({ role: "assistant", content: msg.content || "", tool_calls: toolCalls });
+        for (const toolCall of toolCalls) {
+          const funcName = toolCall.function?.name;
+          let result;
+          try {
+            const args = JSON.parse(toolCall.function?.arguments || "{}") || {};
+            result = executeTaxiToolCall(funcName, args, state);
+          } catch (e) {
+            result = { ok: false, error: `ツール引数のパースエラー: ${e.message}` };
+          }
+          if (result && result.message) state.toolNotes.push(result.message);
+          console.log("[taxi-ai] tool", funcName, toolCall.function?.arguments, result);
+          messages.push({ role: "tool", tool_call_id: toolCall.id, content: taxiCompactToolJson(result) });
+        }
+        continue;
+      }
+
+      let text = (msg.content || "").trim();
+      let focusPanel = state.focusPanel;
+      const focusMatch = text.match(/\[FOCUS_PANEL:(\d)\]/);
+      if (focusMatch) {
+        focusPanel = parseInt(focusMatch[1]);
+        text = text.replace(/\[FOCUS_PANEL:\d\]/g, "").trim();
+      }
+      text = text.replace(/\*\*/g, "");
+      if (!text) text = state.toolNotes.length ? state.toolNotes.join("\n") : "応答を取得できませんでした。";
+      return { text, focusPanel, panelCreated: state.panelCreated };
+    }
+    return { text: state.toolNotes.join("\n") || "処理を完了しました。", focusPanel: state.focusPanel, panelCreated: state.panelCreated };
   } catch (error) {
     console.error("LLM API error:", error);
     return { text: `LLMエラー: ${error.message}。オフラインモードで応答します。`, focusPanel: -1, fallback: true };
