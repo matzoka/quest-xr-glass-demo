@@ -11,7 +11,7 @@
       <section class="panel">
         <div class="titleRow">
           <h1>Quest XR 地球デモ</h1>
-          <span class="versionBadge" aria-label="App version">v2026.09.29.01</span>
+          <span class="versionBadge" aria-label="App version">v2026.09.29.02</span>
         </div>
         <p id="status">地球を準備中…</p>
         <div class="actions">
@@ -27,7 +27,51 @@
         </div>
         <textarea id="poseDebugOutput" class="poseDebugOutput" readonly hidden aria-label="Pose debug URL"></textarea>
       </section>
+      <section class="panel taxiChatPanel" id="taxiChatPanel" hidden>
+        <div class="taxiChatHeader">
+          <span>AI 分析アシスタント</span>
+          <span class="taxiSampleBadge">サンプルデータ</span>
+          <button class="taxiSettingsBtn" id="taxiSettingsBtn" type="button" title="LLM設定">⚙</button>
+        </div>
+        <div class="taxiChatMessages" id="taxiChatMessages"></div>
+        <div class="taxiChatInput">
+          <input type="text" id="taxiChatInput" placeholder="質問を入力（例：売上は？）" autocomplete="off" />
+          <button class="taxiMicBtn" id="taxiMicBtn" type="button" title="音声入力">🎤</button>
+          <button class="taxiSendBtn" id="taxiSendBtn" type="button">送信</button>
+        </div>
+        <div class="taxiQuickQuestions">
+          <button class="taxiQuickBtn" data-question="売上は？">売上</button>
+          <button class="taxiQuickBtn" data-question="乗車回数は？">乗車</button>
+          <button class="taxiQuickBtn" data-question="ピーク時間は？">ピーク</button>
+          <button class="taxiQuickBtn" data-question="稼働率は？">稼働</button>
+        </div>
+      </section>
     </main>
+    <div class="modalOverlay" id="taxiSettingsModal" hidden>
+      <div class="modalContent">
+        <h2>LLM バックエンド設定</h2>
+        <p class="modalNote">オプション：OpenAI互換エンドポイントを設定すると、より自然な会話ができます。設定しない場合はオフラインモード（インテントマッチング）で動作します。</p>
+        <p class="modalWarning">⚠ APIキーはブラウザのlocalStorageに保存され、設定したエンドポイントにのみ送信されます。このリポジトリには送信されません。</p>
+        <label class="modalLabel">
+          エンドポイントURL
+          <input type="url" id="llmEndpoint" placeholder="https://api.openai.com/v1/chat/completions" />
+        </label>
+        <label class="modalLabel">
+          APIキー
+          <input type="password" id="llmApiKey" placeholder="sk-..." />
+        </label>
+        <label class="modalLabel">
+          モデル（オプション）
+          <input type="text" id="llmModel" placeholder="gpt-4o-mini" />
+        </label>
+        <div class="modalActions">
+          <button id="llmSaveBtn" type="button">保存</button>
+          <button id="llmClearBtn" type="button" class="secondary">クリア</button>
+          <button id="llmCloseBtn" type="button" class="secondary">閉じる</button>
+        </div>
+        <p class="modalStatus" id="llmStatus"></p>
+      </div>
+    </div>
     <script type="importmap">
       {
         "imports": {
@@ -36,6 +80,6 @@
         }
       }
     </script>
-    <script type="module" src="./app.js?v=2026.09.29.01"></script>
+    <script type="module" src="./app.js?v=2026.09.29.02"></script>
   </body>
 </html>

@@ -153,12 +153,270 @@ p {
   pointer-events: auto;
 }
 
+/* Taxi Chat Panel */
+.taxiChatPanel {
+  right: 18px;
+  left: auto;
+  top: 18px;
+  width: 320px;
+  max-width: calc(100vw - 400px);
+  border-color: rgba(168, 132, 255, 0.35);
+  background: rgba(12, 8, 20, 0.88);
+}
+
+.taxiChatHeader {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid rgba(168, 132, 255, 0.25);
+  font-weight: 700;
+  color: #d4c4ff;
+}
+
+.taxiSampleBadge {
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: rgba(255, 180, 80, 0.25);
+  color: #ffcc88;
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.taxiSettingsBtn {
+  margin-left: auto;
+  padding: 4px 8px;
+  border: 1px solid rgba(168, 132, 255, 0.4);
+  border-radius: 4px;
+  background: rgba(60, 45, 90, 0.6);
+  color: #d4c4ff;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.taxiSettingsBtn:hover {
+  background: rgba(80, 60, 120, 0.8);
+}
+
+.taxiChatMessages {
+  max-height: 180px;
+  overflow-y: auto;
+  margin-bottom: 10px;
+  padding: 8px;
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.3);
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.taxiChatMessages:empty::before {
+  content: "マイクボタンまたはテキストで質問してください。";
+  color: rgba(200, 200, 200, 0.5);
+  font-style: italic;
+}
+
+.taxiChatMsg {
+  margin-bottom: 8px;
+  padding: 6px 8px;
+  border-radius: 6px;
+}
+
+.taxiChatMsg.user {
+  background: rgba(168, 132, 255, 0.2);
+  color: #e4daff;
+}
+
+.taxiChatMsg.assistant {
+  background: rgba(100, 180, 255, 0.15);
+  color: #c8e4ff;
+}
+
+.taxiChatMsg .role {
+  font-size: 10px;
+  font-weight: 700;
+  margin-bottom: 2px;
+  opacity: 0.7;
+}
+
+.taxiChatInput {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.taxiChatInput input {
+  flex: 1;
+  min-width: 0;
+  padding: 8px 10px;
+  border: 1px solid rgba(168, 132, 255, 0.35);
+  border-radius: 6px;
+  background: rgba(20, 15, 35, 0.9);
+  color: #f0f0f0;
+  font-size: 13px;
+}
+
+.taxiChatInput input::placeholder {
+  color: rgba(200, 200, 200, 0.4);
+}
+
+.taxiMicBtn, .taxiSendBtn {
+  padding: 8px 12px;
+  border: 1px solid rgba(168, 132, 255, 0.4);
+  border-radius: 6px;
+  background: rgba(60, 45, 90, 0.8);
+  color: #e4daff;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.taxiMicBtn:hover, .taxiSendBtn:hover {
+  background: rgba(80, 60, 120, 0.9);
+}
+
+.taxiMicBtn.listening {
+  background: rgba(255, 80, 80, 0.8);
+  border-color: rgba(255, 100, 100, 0.6);
+  animation: pulse 1s infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.7; }
+}
+
+.taxiQuickQuestions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.taxiQuickBtn {
+  padding: 5px 10px;
+  border: 1px solid rgba(168, 132, 255, 0.3);
+  border-radius: 4px;
+  background: rgba(40, 30, 60, 0.7);
+  color: #c8b8e8;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.taxiQuickBtn:hover {
+  background: rgba(60, 45, 90, 0.9);
+}
+
+/* Modal */
+.modalOverlay {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.75);
+  z-index: 100;
+}
+
+.modalContent {
+  max-width: 420px;
+  width: calc(100% - 40px);
+  padding: 20px 24px;
+  border: 1px solid rgba(168, 132, 255, 0.4);
+  border-radius: 12px;
+  background: rgba(18, 12, 28, 0.98);
+  color: #e4daff;
+}
+
+.modalContent h2 {
+  margin: 0 0 12px 0;
+  font-size: 18px;
+}
+
+.modalNote {
+  margin-bottom: 10px;
+  font-size: 13px;
+  color: #a8a0c0;
+}
+
+.modalWarning {
+  margin-bottom: 14px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: rgba(255, 180, 80, 0.15);
+  color: #ffcc88;
+  font-size: 12px;
+}
+
+.modalLabel {
+  display: block;
+  margin-bottom: 12px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.modalLabel input {
+  display: block;
+  width: 100%;
+  margin-top: 4px;
+  padding: 8px 10px;
+  border: 1px solid rgba(168, 132, 255, 0.35);
+  border-radius: 6px;
+  background: rgba(20, 15, 35, 0.9);
+  color: #f0f0f0;
+  font-size: 13px;
+  box-sizing: border-box;
+}
+
+.modalActions {
+  display: flex;
+  gap: 10px;
+  margin-top: 16px;
+}
+
+.modalActions button {
+  flex: 1;
+  padding: 10px;
+  border: 1px solid rgba(168, 132, 255, 0.5);
+  border-radius: 6px;
+  background: rgba(80, 60, 120, 0.9);
+  color: #f0f0f0;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.modalActions button:hover {
+  background: rgba(100, 75, 150, 1);
+}
+
+.modalActions button.secondary {
+  background: rgba(40, 30, 60, 0.8);
+  border-color: rgba(120, 100, 160, 0.4);
+}
+
+.modalStatus {
+  margin-top: 10px;
+  font-size: 12px;
+  color: #a8d4ff;
+}
+
 @media (max-width: 520px) {
   .panel {
     left: 12px;
     right: 12px;
     top: 12px;
     max-width: none;
+  }
+
+  .taxiChatPanel {
+    position: fixed;
+    top: auto;
+    bottom: 12px;
+    left: 12px;
+    right: 12px;
+    width: auto;
+    max-width: none;
+    max-height: 45vh;
   }
 
   .actions {

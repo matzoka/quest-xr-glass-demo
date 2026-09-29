@@ -14,7 +14,7 @@ const blackHoleTourButton = document.querySelector("#blackHoleTourButton");
 const controllerHelpButton = document.querySelector("#controllerHelpButton");
 const taxiAnalyticsButton = document.querySelector("#taxiAnalyticsButton");
 const poseDebugOutputEl = document.querySelector("#poseDebugOutput");
-const APP_VERSION = "v2026.09.29.01";
+const APP_VERSION = "v2026.09.29.02";
 const DEBUG_TOP_VIEW = new URLSearchParams(window.location.search).has("topDebug");
 const DEBUG_TOP_VIEW_DISTANCE = Number(new URLSearchParams(window.location.search).get("topDebugDist"));
 const DEBUG_BLACK_HOLE_VIEW = new URLSearchParams(window.location.search).has("blackHoleDebug");
@@ -3091,6 +3091,8 @@ async function enterXr(mode) {
       inTaxiAnalyticsRoom = false;
       taxiAnalyticsPreview2D = false;
       taxiReturnXrButton.visible = false;
+      const taxiChatPanelElTmp = document.getElementById("taxiChatPanel");
+      if (taxiChatPanelElTmp) taxiChatPanelElTmp.setAttribute("hidden", "");
       setHandPresenceVisible(false);
       setControllerHelpVisible(false);
       currentMode = "preview";
@@ -5050,6 +5052,10 @@ function getXrUiTargets() {
   ];
   if (poseDebugXrButton.visible) targets.push(poseDebugXrHitArea, poseDebugXrButton);
   if (taxiReturnXrButton.visible) targets.push(taxiReturnXrButton);
+  if (inTaxiAnalyticsRoom) {
+    if (taxiMicButtonMesh) targets.push(taxiMicButtonMesh);
+    targets.push(...taxiQuestionButtons);
+  }
   return targets;
 }
 
@@ -5145,6 +5151,14 @@ for (let index = 0; index < 2; index += 1) {
           playXrButtonPressSound();
           returnFromTaxiAnalyticsRoom();
         }
+        else if (uiHit.object.userData?.isTaxiMicButton) {
+          playXrButtonPressSound();
+          toggleTaxiVoiceInput();
+        }
+        else if (uiHit.object.userData?.isTaxiQuestionButton) {
+          playXrButtonPressSound();
+          processTaxiConversation(uiHit.object.userData.questionText);
+        }
         return;
       }
     }
@@ -5198,6 +5212,19 @@ function updateHandTouch(dt) {
       initAudio();
       playXrButtonPressSound();
       returnFromTaxiAnalyticsRoom();
+    }
+
+    if (inTaxiAnalyticsRoom && checkTaxiMicButtonHit(tmpHand) && !xrButtonTouching[i]) {
+      initAudio();
+      playXrButtonPressSound();
+      toggleTaxiVoiceInput();
+    }
+
+    const touchedQuestion = inTaxiAnalyticsRoom ? checkTaxiQuestionButtonHit(tmpHand) : null;
+    if (touchedQuestion && !xrButtonTouching[i]) {
+      initAudio();
+      playXrButtonPressSound();
+      processTaxiConversation(touchedQuestion);
     }
 
     const touchingPoseDebug = isPoseDebugButtonTouched(tmpHand);
@@ -8043,15 +8070,23 @@ function teleportToTaxiAnalyticsRoom() {
     camera.up.set(0, 1, 0);
     camera.position.copy(taxiAnalyticsTeleportTarget);
     camera.lookAt(TAXI_ANALYTICS_ROOM_POSITION.x, TAXI_ANALYTICS_ROOM_POSITION.y + 0.3, TAXI_ANALYTICS_ROOM_POSITION.z - TAXI_ANALYTICS_ROOM_HALF.z);
-    statusEl.textContent = "分析用の部屋（2Dプレビュー）。VR/ARで入ると中を歩き回れます。";
+    statusEl.textContent = "分析用の部屋（2Dプレビュー）。AIアシスタントに質問できます。";
+  }
+  
+  const chatPanelEl = document.getElementById("taxiChatPanel");
+  if (chatPanelEl) {
+    chatPanelEl.removeAttribute("hidden");
   }
 }
 
 function returnFromTaxiAnalyticsRoom() {
-  if (!inTaxiAnalyticsRoom) return;
+  if (!inTaxiAnalyticsRoom && !taxiAnalyticsPreview2D) return;
   inTaxiAnalyticsRoom = false;
   taxiAnalyticsPreview2D = false;
   taxiReturnXrButton.visible = false;
+
+  const chatPanelEl = document.getElementById("taxiChatPanel");
+  if (chatPanelEl) chatPanelEl.setAttribute("hidden", "");
 
   if (renderer.xr.isPresenting && xrBaseRefSpace) {
     resetToHome();
@@ -8084,7 +8119,735 @@ function updateTaxiAnalyticsRoom() {
   if (renderer.xr.isPresenting) {
     taxiReturnXrButton.visible = inTaxiAnalyticsRoom;
   }
+  
+  updateTaxiPanelFocus();
 }
+
+// ---------------------------------------------------------------------------
+// Taxi Analytics AI Conversation System
+// ---------------------------------------------------------------------------
+
+const TAXI_CONVERSATION_STORAGE_KEY = "questXrTaxiLlmConfig";
+let taxiConversationHistory = [];
+let taxiFocusedPanelIndex = -1;
+let taxiFocusAnimationT = 0;
+let taxiSpeechRecognition = null;
+let taxiIsListening = false;
+let taxiSpeechSynthesisEnabled = true;
+
+const taxiPanelKeywords = {
+  0: ["売上", "売り上げ", "収益", "金額", "日次", "revenue", "sales", "daily"],
+  1: ["乗車", "回数", "件数", "トリップ", "trips", "rides", "count"],
+  2: ["ピーク", "時間", "時間帯", "いつ", "何時", "peak", "hours", "when", "busy"],
+  3: ["稼働", "稼働率", "効率", "車両", "utilization", "efficiency", "vehicle"],
+};
+
+const taxiPanelResponses = {
+  0: {
+    summary: "本日の日次売上は ¥847,200 です。週の中では水曜日が最も高く、土曜日がそれに続いています。",
+    detail: "売上データを詳しく見ると、月曜から日曜にかけて60%、80%、45%、90%、70%、55%、85%の相対的な売上パターンが見られます。週末と週の真ん中が好調です。"
+  },
+  1: {
+    summary: "本日の乗車回数は 156 件です。これは平均的な1日の数値です。",
+    detail: "時間帯別では、通勤時間（9時頃）と夕方（18時頃）にピークがあります。深夜3時頃が最も少なく、全体の約20%程度まで落ち込みます。"
+  },
+  2: {
+    summary: "ピーク時間帯は 18時から21時 です。夕方の通勤・外出需要が集中しています。",
+    detail: "詳細を見ると、6時に30%、9時に25%、12時に50%、15時に80%、18時に100%（ピーク）、21時に70%、24時に40%、3時に20%の需要分布があります。"
+  },
+  3: {
+    summary: "全車両の平均稼働率は 78% です。良好な稼働状況です。",
+    detail: "稼働状況の内訳は、走行中が35%、待機が25%、その他（休憩・充電等）が残りを占めています。80%以上を目指すと更なる効率化が可能です。"
+  },
+};
+
+const taxiGeneralResponses = {
+  greeting: "こんにちは！タクシー業務分析アシスタントです。サンプルデータを使って分析のお手伝いをします。「売上は？」「ピーク時間は？」などと質問してください。",
+  unknown: "すみません、その質問はサンプルデータでは対応できません。「売上」「乗車回数」「ピーク時間」「稼働率」について質問してみてください。",
+  allPanels: "現在4つの分析パネルがあります：日次売上（¥847,200）、乗車回数（156件）、ピーク時間帯（18-21時）、車両稼働率（78%）。詳しく知りたい項目を教えてください。",
+  sampleDataNote: "※ これらはすべてサンプルデータです。実際のデータ連携には別途設定が必要です。",
+};
+
+function getTaxiLlmConfig() {
+  try {
+    const stored = localStorage.getItem(TAXI_CONVERSATION_STORAGE_KEY);
+    if (stored) {
+      const config = JSON.parse(stored);
+      if (config.endpoint && config.apiKey) return config;
+    }
+  } catch (e) {
+    console.warn("Failed to load LLM config:", e);
+  }
+  return null;
+}
+
+function setTaxiLlmConfig(endpoint, apiKey) {
+  try {
+    localStorage.setItem(TAXI_CONVERSATION_STORAGE_KEY, JSON.stringify({ endpoint, apiKey }));
+    return true;
+  } catch (e) {
+    console.error("Failed to save LLM config:", e);
+    return false;
+  }
+}
+
+function clearTaxiLlmConfig() {
+  try {
+    localStorage.removeItem(TAXI_CONVERSATION_STORAGE_KEY);
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+
+function matchTaxiPanelIntent(text) {
+  const lowerText = text.toLowerCase();
+  let bestMatch = -1;
+  let bestScore = 0;
+  
+  for (const [panelIdx, keywords] of Object.entries(taxiPanelKeywords)) {
+    let score = 0;
+    for (const keyword of keywords) {
+      if (lowerText.includes(keyword.toLowerCase())) {
+        score += keyword.length;
+      }
+    }
+    if (score > bestScore) {
+      bestScore = score;
+      bestMatch = parseInt(panelIdx);
+    }
+  }
+  
+  return bestMatch;
+}
+
+function generateOfflineResponse(userMessage) {
+  const lowerMsg = userMessage.toLowerCase();
+  
+  if (lowerMsg.includes("こんにちは") || lowerMsg.includes("はじめ") || lowerMsg.includes("hello") || lowerMsg.includes("hi")) {
+    return { text: taxiGeneralResponses.greeting, focusPanel: -1 };
+  }
+  
+  if (lowerMsg.includes("全部") || lowerMsg.includes("すべて") || lowerMsg.includes("一覧") || lowerMsg.includes("概要") || lowerMsg.includes("all")) {
+    return { text: taxiGeneralResponses.allPanels, focusPanel: -1 };
+  }
+  
+  const panelIdx = matchTaxiPanelIntent(userMessage);
+  
+  if (panelIdx >= 0) {
+    const response = taxiPanelResponses[panelIdx];
+    const wantsDetail = lowerMsg.includes("詳") || lowerMsg.includes("detail") || lowerMsg.includes("もっと");
+    const text = wantsDetail ? response.detail : response.summary;
+    return { text, focusPanel: panelIdx };
+  }
+  
+  return { text: taxiGeneralResponses.unknown, focusPanel: -1 };
+}
+
+async function callLlmBackend(userMessage, config) {
+  const systemPrompt = `あなたはタクシー業務分析アシスタントです。以下のサンプルデータを元に、ユーザーの質問に日本語で答えてください。
+
+利用可能なパネルデータ:
+${taxiPanelData.map((p, i) => `パネル${i}: ${p.title} - ${p.value} (${p.unit})`).join("\n")}
+
+回答時に特定のパネルをフォーカスしたい場合は、回答の最後に [FOCUS_PANEL:番号] を追加してください（番号は0-3）。
+例: [FOCUS_PANEL:0] は日次売上パネルをフォーカスします。
+
+簡潔に、フレンドリーに回答してください。これはサンプルデータであることを必要に応じて伝えてください。`;
+
+  const messages = [
+    { role: "system", content: systemPrompt },
+    ...taxiConversationHistory.slice(-6),
+    { role: "user", content: userMessage },
+  ];
+
+  try {
+    const response = await fetch(config.endpoint, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${config.apiKey}`,
+      },
+      body: JSON.stringify({
+        model: config.model || "gpt-4o-mini",
+        messages,
+        max_tokens: 500,
+        temperature: 0.7,
+      }),
+    });
+
+    if (!response.ok) {
+      throw new Error(`API error: ${response.status}`);
+    }
+
+    const data = await response.json();
+    let text = data.choices?.[0]?.message?.content || "応答を取得できませんでした。";
+    
+    let focusPanel = -1;
+    const focusMatch = text.match(/\[FOCUS_PANEL:(\d)\]/);
+    if (focusMatch) {
+      focusPanel = parseInt(focusMatch[1]);
+      text = text.replace(/\[FOCUS_PANEL:\d\]/g, "").trim();
+    }
+
+    return { text, focusPanel };
+  } catch (error) {
+    console.error("LLM API error:", error);
+    return { text: `LLMエラー: ${error.message}。オフラインモードで応答します。`, focusPanel: -1, fallback: true };
+  }
+}
+
+async function processTaxiConversation(userMessage) {
+  if (!userMessage.trim()) return;
+  
+  taxiConversationHistory.push({ role: "user", content: userMessage });
+  updateTaxiChatPanel();
+  
+  let response;
+  const llmConfig = getTaxiLlmConfig();
+  
+  if (llmConfig) {
+    response = await callLlmBackend(userMessage, llmConfig);
+    if (response.fallback) {
+      const offlineResponse = generateOfflineResponse(userMessage);
+      response.text += "\n\n" + offlineResponse.text;
+      response.focusPanel = offlineResponse.focusPanel;
+    }
+  } else {
+    response = generateOfflineResponse(userMessage);
+  }
+  
+  taxiConversationHistory.push({ role: "assistant", content: response.text });
+  updateTaxiChatPanel();
+  
+  if (response.focusPanel >= 0 && response.focusPanel < taxiAnalyticsPanels.length) {
+    setTaxiFocusedPanel(response.focusPanel);
+  }
+  
+  if (taxiSpeechSynthesisEnabled && "speechSynthesis" in window) {
+    speakTaxiResponse(response.text);
+  }
+}
+
+function speakTaxiResponse(text) {
+  if (!("speechSynthesis" in window)) return;
+  
+  window.speechSynthesis.cancel();
+  
+  const utterance = new SpeechSynthesisUtterance(text);
+  utterance.lang = "ja-JP";
+  utterance.rate = 1.0;
+  utterance.pitch = 1.0;
+  utterance.volume = 0.8;
+  
+  const voices = window.speechSynthesis.getVoices();
+  const japaneseVoice = voices.find(v => v.lang.startsWith("ja"));
+  if (japaneseVoice) utterance.voice = japaneseVoice;
+  
+  window.speechSynthesis.speak(utterance);
+}
+
+function initTaxiSpeechRecognition() {
+  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SpeechRecognition) {
+    console.log("Speech recognition not supported");
+    return false;
+  }
+  
+  taxiSpeechRecognition = new SpeechRecognition();
+  taxiSpeechRecognition.lang = "ja-JP";
+  taxiSpeechRecognition.continuous = false;
+  taxiSpeechRecognition.interimResults = false;
+  
+  taxiSpeechRecognition.onresult = (event) => {
+    const transcript = event.results[0][0].transcript;
+    processTaxiConversation(transcript);
+    taxiIsListening = false;
+    updateTaxiMicButton();
+  };
+  
+  taxiSpeechRecognition.onerror = (event) => {
+    console.log("Speech recognition error:", event.error);
+    taxiIsListening = false;
+    updateTaxiMicButton();
+    if (event.error === "no-speech") {
+      statusEl.textContent = "音声が検出されませんでした。もう一度お試しください。";
+    }
+  };
+  
+  taxiSpeechRecognition.onend = () => {
+    taxiIsListening = false;
+    updateTaxiMicButton();
+  };
+  
+  return true;
+}
+
+function toggleTaxiVoiceInput() {
+  if (!taxiSpeechRecognition && !initTaxiSpeechRecognition()) {
+    statusEl.textContent = "このブラウザは音声認識に対応していません。";
+    return;
+  }
+  
+  if (taxiIsListening) {
+    taxiSpeechRecognition.stop();
+    taxiIsListening = false;
+  } else {
+    taxiSpeechRecognition.start();
+    taxiIsListening = true;
+    statusEl.textContent = "話してください...（例：売上は？）";
+  }
+  updateTaxiMicButton();
+}
+
+function setTaxiFocusedPanel(index) {
+  taxiFocusedPanelIndex = index;
+  taxiFocusAnimationT = 0;
+}
+
+function updateTaxiPanelFocus() {
+  if (!inTaxiAnalyticsRoom) {
+    for (let i = 0; i < taxiAnalyticsPanels.length; i++) {
+      const panel = taxiAnalyticsPanels[i];
+      panel.scale.setScalar(1);
+      if (panel.material.emissive) panel.material.emissive.setHex(0x000000);
+    }
+    return;
+  }
+  
+  taxiFocusAnimationT += 0.016;
+  
+  for (let i = 0; i < taxiAnalyticsPanels.length; i++) {
+    const panel = taxiAnalyticsPanels[i];
+    const isFocused = i === taxiFocusedPanelIndex;
+    
+    const targetScale = isFocused ? 1.15 : 1.0;
+    const currentScale = panel.scale.x;
+    panel.scale.setScalar(THREE.MathUtils.lerp(currentScale, targetScale, 0.08));
+    
+    if (isFocused) {
+      const pulse = Math.sin(taxiFocusAnimationT * 3) * 0.03 + 1.15;
+      panel.scale.setScalar(pulse);
+    }
+  }
+}
+
+function makeTaxiChatPanelTexture(messages = []) {
+  const c = document.createElement("canvas");
+  c.width = 600;
+  c.height = 500;
+  const ctx = c.getContext("2d");
+  
+  ctx.fillStyle = "rgba(12, 8, 20, 0.92)";
+  ctx.fillRect(0, 0, c.width, c.height);
+  
+  ctx.strokeStyle = "rgba(100, 180, 255, 0.6)";
+  ctx.lineWidth = 2;
+  ctx.strokeRect(4, 4, c.width - 8, c.height - 8);
+  
+  ctx.fillStyle = "rgba(100, 180, 255, 0.15)";
+  ctx.fillRect(8, 8, c.width - 16, 36);
+  
+  ctx.font = "bold 18px Arial, Helvetica, sans-serif";
+  ctx.fillStyle = "#a8d4ff";
+  ctx.textAlign = "center";
+  ctx.fillText("AI 分析アシスタント（サンプルデータ）", c.width / 2, 32);
+  
+  const maxLines = 12;
+  const lineHeight = 32;
+  const startY = 65;
+  const padding = 16;
+  
+  ctx.textAlign = "left";
+  ctx.font = "15px Arial, Helvetica, sans-serif";
+  
+  const recentMessages = messages.slice(-8);
+  let y = startY;
+  
+  for (const msg of recentMessages) {
+    const isUser = msg.role === "user";
+    ctx.fillStyle = isUser ? "rgba(168, 132, 255, 0.2)" : "rgba(100, 180, 255, 0.15)";
+    
+    const lines = wrapText(ctx, msg.content, c.width - padding * 3, 14);
+    const boxHeight = lines.length * 18 + 12;
+    
+    if (y + boxHeight > c.height - 20) break;
+    
+    ctx.fillRect(padding, y - 2, c.width - padding * 2, boxHeight);
+    
+    ctx.fillStyle = isUser ? "#d4c4ff" : "#c8e4ff";
+    ctx.font = "bold 12px Arial";
+    ctx.fillText(isUser ? "あなた:" : "AI:", padding + 6, y + 12);
+    
+    ctx.font = "14px Arial";
+    for (let i = 0; i < lines.length && i < 3; i++) {
+      ctx.fillText(lines[i], padding + 6, y + 28 + i * 18);
+    }
+    if (lines.length > 3) {
+      ctx.fillStyle = "rgba(200, 200, 200, 0.6)";
+      ctx.fillText("...", padding + 6, y + 28 + 3 * 18);
+    }
+    
+    y += boxHeight + 8;
+  }
+  
+  if (messages.length === 0) {
+    ctx.fillStyle = "rgba(200, 200, 200, 0.6)";
+    ctx.font = "italic 14px Arial";
+    ctx.textAlign = "center";
+    ctx.fillText("マイクボタンを押すか、質問ボタンをタップしてください", c.width / 2, c.height / 2);
+    ctx.fillText("例：「売上は？」「ピーク時間は？」", c.width / 2, c.height / 2 + 24);
+  }
+  
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+
+function wrapText(ctx, text, maxWidth, fontSize) {
+  ctx.font = `${fontSize}px Arial`;
+  const words = text.split("");
+  const lines = [];
+  let currentLine = "";
+  
+  for (const char of words) {
+    const testLine = currentLine + char;
+    const metrics = ctx.measureText(testLine);
+    if (metrics.width > maxWidth && currentLine.length > 0) {
+      lines.push(currentLine);
+      currentLine = char;
+    } else {
+      currentLine = testLine;
+    }
+  }
+  if (currentLine) lines.push(currentLine);
+  return lines;
+}
+
+let taxiChatPanelMesh = null;
+let taxiChatPanelTexture = null;
+
+function createTaxiChatPanel() {
+  taxiChatPanelTexture = makeTaxiChatPanelTexture([]);
+  taxiChatPanelMesh = new THREE.Mesh(
+    new THREE.PlaneGeometry(1.1, 0.92),
+    new THREE.MeshBasicMaterial({
+      map: taxiChatPanelTexture,
+      transparent: true,
+      side: THREE.DoubleSide,
+    })
+  );
+  taxiChatPanelMesh.position.set(
+    TAXI_ANALYTICS_ROOM_POSITION.x + TAXI_ANALYTICS_ROOM_HALF.x - 0.7,
+    TAXI_ANALYTICS_ROOM_POSITION.y + 0.4,
+    TAXI_ANALYTICS_ROOM_POSITION.z
+  );
+  taxiChatPanelMesh.rotation.y = -Math.PI / 4;
+  taxiAnalyticsGroup.add(taxiChatPanelMesh);
+}
+
+function updateTaxiChatPanel() {
+  if (!taxiChatPanelMesh) return;
+  const oldTex = taxiChatPanelTexture;
+  taxiChatPanelTexture = makeTaxiChatPanelTexture(taxiConversationHistory);
+  taxiChatPanelMesh.material.map = taxiChatPanelTexture;
+  taxiChatPanelMesh.material.needsUpdate = true;
+  if (oldTex) oldTex.dispose();
+}
+
+function makeTaxiMicButtonTexture(isListening) {
+  const c = document.createElement("canvas");
+  c.width = 200;
+  c.height = 200;
+  const ctx = c.getContext("2d");
+  
+  ctx.beginPath();
+  ctx.arc(100, 100, 90, 0, Math.PI * 2);
+  ctx.fillStyle = isListening ? "rgba(255, 100, 100, 0.9)" : "rgba(100, 180, 255, 0.85)";
+  ctx.fill();
+  ctx.strokeStyle = "rgba(255, 255, 255, 0.8)";
+  ctx.lineWidth = 4;
+  ctx.stroke();
+  
+  ctx.fillStyle = "#ffffff";
+  ctx.beginPath();
+  ctx.roundRect(85, 55, 30, 50, 8);
+  ctx.fill();
+  
+  ctx.strokeStyle = "#ffffff";
+  ctx.lineWidth = 4;
+  ctx.beginPath();
+  ctx.arc(100, 95, 25, 0, Math.PI);
+  ctx.stroke();
+  
+  ctx.beginPath();
+  ctx.moveTo(100, 120);
+  ctx.lineTo(100, 140);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(85, 140);
+  ctx.lineTo(115, 140);
+  ctx.stroke();
+  
+  if (isListening) {
+    ctx.font = "bold 14px Arial";
+    ctx.fillStyle = "#ffffff";
+    ctx.textAlign = "center";
+    ctx.fillText("聴いています...", 100, 175);
+  }
+  
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+
+let taxiMicButtonMesh = null;
+let taxiMicButtonTexture = null;
+
+function createTaxiMicButton() {
+  taxiMicButtonTexture = makeTaxiMicButtonTexture(false);
+  taxiMicButtonMesh = new THREE.Mesh(
+    new THREE.PlaneGeometry(0.22, 0.22),
+    new THREE.MeshBasicMaterial({
+      map: taxiMicButtonTexture,
+      transparent: true,
+      side: THREE.DoubleSide,
+    })
+  );
+  taxiMicButtonMesh.position.set(
+    TAXI_ANALYTICS_ROOM_POSITION.x + TAXI_ANALYTICS_ROOM_HALF.x - 0.7,
+    TAXI_ANALYTICS_ROOM_POSITION.y - 0.25,
+    TAXI_ANALYTICS_ROOM_POSITION.z + 0.65
+  );
+  taxiMicButtonMesh.rotation.y = -Math.PI / 4;
+  taxiMicButtonMesh.userData.isTaxiMicButton = true;
+  taxiMicButtonMesh.userData.xrHitSize = { w: 0.22, h: 0.22, d: 0.06 };
+  taxiAnalyticsGroup.add(taxiMicButtonMesh);
+}
+
+function updateTaxiMicButton() {
+  if (!taxiMicButtonMesh) return;
+  const oldTex = taxiMicButtonTexture;
+  taxiMicButtonTexture = makeTaxiMicButtonTexture(taxiIsListening);
+  taxiMicButtonMesh.material.map = taxiMicButtonTexture;
+  taxiMicButtonMesh.material.needsUpdate = true;
+  if (oldTex) oldTex.dispose();
+}
+
+const taxiSuggestedQuestions = [
+  "売上は？",
+  "乗車回数は？",
+  "ピーク時間は？",
+  "稼働率は？",
+  "全部見せて",
+];
+
+function makeTaxiQuestionButtonTexture(text) {
+  const c = document.createElement("canvas");
+  c.width = 280;
+  c.height = 60;
+  const ctx = c.getContext("2d");
+  
+  ctx.fillStyle = "rgba(60, 45, 90, 0.9)";
+  ctx.roundRect(0, 0, c.width, c.height, 12);
+  ctx.fill();
+  ctx.strokeStyle = "rgba(168, 132, 255, 0.7)";
+  ctx.lineWidth = 2;
+  ctx.stroke();
+  
+  ctx.font = "bold 22px Arial, Helvetica, sans-serif";
+  ctx.fillStyle = "#e4daff";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText(text, c.width / 2, c.height / 2);
+  
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+
+const taxiQuestionButtons = [];
+
+function createTaxiQuestionButtons() {
+  const startX = TAXI_ANALYTICS_ROOM_POSITION.x - TAXI_ANALYTICS_ROOM_HALF.x + 0.9;
+  const startY = TAXI_ANALYTICS_ROOM_POSITION.y + 0.2;
+  const startZ = TAXI_ANALYTICS_ROOM_POSITION.z;
+  
+  for (let i = 0; i < taxiSuggestedQuestions.length; i++) {
+    const q = taxiSuggestedQuestions[i];
+    const btn = new THREE.Mesh(
+      new THREE.PlaneGeometry(0.42, 0.09),
+      new THREE.MeshBasicMaterial({
+        map: makeTaxiQuestionButtonTexture(q),
+        transparent: true,
+        side: THREE.DoubleSide,
+      })
+    );
+    btn.position.set(startX, startY - i * 0.12, startZ);
+    btn.rotation.y = Math.PI / 4;
+    btn.userData.isTaxiQuestionButton = true;
+    btn.userData.questionText = q;
+    btn.userData.xrHitSize = { w: 0.42, h: 0.09, d: 0.06 };
+    taxiAnalyticsGroup.add(btn);
+    taxiQuestionButtons.push(btn);
+  }
+}
+
+function checkTaxiQuestionButtonHit(point) {
+  for (const btn of taxiQuestionButtons) {
+    tmpVec.copy(point);
+    btn.worldToLocal(tmpVec);
+    const size = btn.userData.xrHitSize;
+    if (
+      Math.abs(tmpVec.x) <= size.w * 0.5 &&
+      Math.abs(tmpVec.y) <= size.h * 0.5 &&
+      Math.abs(tmpVec.z) <= size.d * 0.5
+    ) {
+      return btn.userData.questionText;
+    }
+  }
+  return null;
+}
+
+function checkTaxiMicButtonHit(point) {
+  if (!taxiMicButtonMesh) return false;
+  tmpVec.copy(point);
+  taxiMicButtonMesh.worldToLocal(tmpVec);
+  const size = taxiMicButtonMesh.userData.xrHitSize;
+  return (
+    Math.abs(tmpVec.x) <= size.w * 0.5 &&
+    Math.abs(tmpVec.y) <= size.h * 0.5 &&
+    Math.abs(tmpVec.z) <= size.d * 0.5
+  );
+}
+
+createTaxiChatPanel();
+createTaxiMicButton();
+createTaxiQuestionButtons();
+
+// 2D UI Elements for Taxi Conversation
+const taxiChatPanelEl = document.getElementById("taxiChatPanel");
+const taxiChatMessagesEl = document.getElementById("taxiChatMessages");
+const taxiChatInputEl = document.getElementById("taxiChatInput");
+const taxiSendBtnEl = document.getElementById("taxiSendBtn");
+const taxiMicBtnEl = document.getElementById("taxiMicBtn");
+const taxiSettingsBtnEl = document.getElementById("taxiSettingsBtn");
+const taxiSettingsModalEl = document.getElementById("taxiSettingsModal");
+const llmEndpointEl = document.getElementById("llmEndpoint");
+const llmApiKeyEl = document.getElementById("llmApiKey");
+const llmModelEl = document.getElementById("llmModel");
+const llmSaveBtnEl = document.getElementById("llmSaveBtn");
+const llmClearBtnEl = document.getElementById("llmClearBtn");
+const llmCloseBtnEl = document.getElementById("llmCloseBtn");
+const llmStatusEl = document.getElementById("llmStatus");
+const taxiQuickBtns = document.querySelectorAll(".taxiQuickBtn");
+
+function update2DTaxiChatMessages() {
+  if (!taxiChatMessagesEl) return;
+  taxiChatMessagesEl.innerHTML = "";
+  for (const msg of taxiConversationHistory.slice(-10)) {
+    const div = document.createElement("div");
+    div.className = `taxiChatMsg ${msg.role}`;
+    const roleSpan = document.createElement("div");
+    roleSpan.className = "role";
+    roleSpan.textContent = msg.role === "user" ? "あなた" : "AI";
+    div.appendChild(roleSpan);
+    const textSpan = document.createElement("div");
+    textSpan.textContent = msg.content;
+    div.appendChild(textSpan);
+    taxiChatMessagesEl.appendChild(div);
+  }
+  taxiChatMessagesEl.scrollTop = taxiChatMessagesEl.scrollHeight;
+}
+
+const originalUpdateTaxiChatPanel = updateTaxiChatPanel;
+updateTaxiChatPanel = function() {
+  originalUpdateTaxiChatPanel();
+  update2DTaxiChatMessages();
+};
+
+function handle2DTaxiSend() {
+  if (!taxiChatInputEl) return;
+  const text = taxiChatInputEl.value.trim();
+  if (text) {
+    processTaxiConversation(text);
+    taxiChatInputEl.value = "";
+  }
+}
+
+taxiSendBtnEl?.addEventListener("click", handle2DTaxiSend);
+taxiChatInputEl?.addEventListener("keydown", (e) => {
+  if (e.key === "Enter") {
+    e.preventDefault();
+    handle2DTaxiSend();
+  }
+});
+
+taxiMicBtnEl?.addEventListener("click", () => {
+  toggleTaxiVoiceInput();
+});
+
+const originalUpdateTaxiMicButton = updateTaxiMicButton;
+updateTaxiMicButton = function() {
+  originalUpdateTaxiMicButton();
+  if (taxiMicBtnEl) {
+    taxiMicBtnEl.classList.toggle("listening", taxiIsListening);
+    taxiMicBtnEl.textContent = taxiIsListening ? "⏹" : "🎤";
+  }
+};
+
+taxiQuickBtns.forEach((btn) => {
+  btn.addEventListener("click", () => {
+    const question = btn.dataset.question;
+    if (question) processTaxiConversation(question);
+  });
+});
+
+taxiSettingsBtnEl?.addEventListener("click", () => {
+  if (taxiSettingsModalEl) {
+    taxiSettingsModalEl.hidden = false;
+    const config = getTaxiLlmConfig();
+    if (config) {
+      if (llmEndpointEl) llmEndpointEl.value = config.endpoint || "";
+      if (llmApiKeyEl) llmApiKeyEl.value = config.apiKey || "";
+      if (llmModelEl) llmModelEl.value = config.model || "";
+    }
+  }
+});
+
+llmSaveBtnEl?.addEventListener("click", () => {
+  const endpoint = llmEndpointEl?.value.trim();
+  const apiKey = llmApiKeyEl?.value.trim();
+  const model = llmModelEl?.value.trim();
+  
+  if (!endpoint || !apiKey) {
+    if (llmStatusEl) llmStatusEl.textContent = "エンドポイントとAPIキーは必須です。";
+    return;
+  }
+  
+  try {
+    localStorage.setItem(TAXI_CONVERSATION_STORAGE_KEY, JSON.stringify({ endpoint, apiKey, model }));
+    if (llmStatusEl) llmStatusEl.textContent = "設定を保存しました。LLMモードで動作します。";
+  } catch (e) {
+    if (llmStatusEl) llmStatusEl.textContent = "保存に失敗しました: " + e.message;
+  }
+});
+
+llmClearBtnEl?.addEventListener("click", () => {
+  clearTaxiLlmConfig();
+  if (llmEndpointEl) llmEndpointEl.value = "";
+  if (llmApiKeyEl) llmApiKeyEl.value = "";
+  if (llmModelEl) llmModelEl.value = "";
+  if (llmStatusEl) llmStatusEl.textContent = "設定をクリアしました。オフラインモードで動作します。";
+});
+
+llmCloseBtnEl?.addEventListener("click", () => {
+  if (taxiSettingsModalEl) taxiSettingsModalEl.hidden = true;
+});
+
+taxiSettingsModalEl?.addEventListener("click", (e) => {
+  if (e.target === taxiSettingsModalEl) taxiSettingsModalEl.hidden = true;
+});
 
 // ---------------------------------------------------------------------------
 // Ship flight safety: Enterprise and Klingon passes are cinematic, but they
