@@ -22,7 +22,7 @@ if (TAXI_ALLOWED && taxiAnalyticsButton) {
   taxiAnalyticsButton.removeAttribute("hidden");
 }
 
-const APP_VERSION = "v2026.09.29.25";
+const APP_VERSION = "v2026.09.29.26";
 const DEBUG_TOP_VIEW = new URLSearchParams(window.location.search).has("topDebug");
 const DEBUG_TOP_VIEW_DISTANCE = Number(new URLSearchParams(window.location.search).get("topDebugDist"));
 const DEBUG_BLACK_HOLE_VIEW = new URLSearchParams(window.location.search).has("blackHoleDebug");
@@ -8142,6 +8142,9 @@ const taxiPanelData = [
 // Creates deterministic sample data for taxi analytics
 // ---------------------------------------------------------------------------
 const TAXI_DATASET_SEED = 42;
+// v26: the sample period is pinned (it used to end on the viewer's "today") so the local fallback
+// equals the snapshot loaded into Cloudflare D1 (scripts/import-trips.mjs --sample).
+const TAXI_DATASET_END_DATE = "2026-09-29";
 const TAXI_MONTHS = 6;
 const TAXI_VEHICLES = ["車両A", "車両B", "車両C", "車両D", "車両E", "車両F", "車両G", "車両H"];
 const TAXI_DRIVERS = ["田中", "鈴木", "佐藤", "山田", "高橋", "伊藤", "渡辺", "中村"];
@@ -8214,7 +8217,8 @@ function generateTaxiDataset() {
   // Another separate RNG for the 丁目 choice
   const addrRand = taxiSeededRandom(TAXI_DATASET_SEED + 4000);
   const trips = [];
-  const today = new Date();
+  const [endY, endM, endD] = TAXI_DATASET_END_DATE.split("-").map(Number);
+  const today = new Date(endY, endM - 1, endD);
   const startDate = new Date(today);
   startDate.setMonth(startDate.getMonth() - TAXI_MONTHS);
   
@@ -8360,6 +8364,40 @@ function weightedHourRandom(rand, isWeekend) {
 const taxiTrips = generateTaxiDataset();
 console.log(`Generated ${taxiTrips.length} synthetic taxi trips for analytics`);
 
+// v26: the 4 fixed dashboard panels show values computed from the data (latest day's sales and
+// trips, peak hour, utilisation) instead of fixed demo numbers. Local first; D1 replaces them.
+function taxiFixedPanelValuesLocal() {
+  let latest = "";
+  for (const t of taxiTrips) if (t.date > latest) latest = t.date;
+  let dayFare = 0, dayTrips = 0, occ = 0, emp = 0;
+  const byHour = new Array(24).fill(0);
+  for (const t of taxiTrips) {
+    if (t.date === latest) { dayFare += t.fare; dayTrips++; }
+    byHour[t.hour]++;
+    occ += t.occupiedMinutes;
+    emp += t.emptyMinutes;
+  }
+  let peakHour = null;
+  for (let h = 0; h < 24; h++) if (byHour[h] > 0 && (peakHour === null || byHour[h] > byHour[peakHour])) peakHour = h;
+  return { latestDate: latest, dayFare, dayTrips, peakHour, utilizationRate: occ + emp ? occ / (occ + emp) * 100 : null };
+}
+
+function taxiApplyFixedPanelValues(v) {
+  if (!v || !v.latestDate) return false;
+  const [, m, d] = String(v.latestDate).split("-").map(Number);
+  const md = `${m}/${d}`;
+  taxiPanelData[0].value = `¥${Number(v.dayFare || 0).toLocaleString()}`;
+  taxiPanelData[0].unit = `${md} 合計（税抜）`;
+  taxiPanelData[1].value = `${Number(v.dayTrips || 0).toLocaleString()}`;
+  taxiPanelData[1].unit = `件 / ${md}`;
+  taxiPanelData[2].value = v.peakHour === null || v.peakHour === undefined ? "-" : `${v.peakHour}-${v.peakHour + 1}時`;
+  taxiPanelData[2].unit = "最多乗車時間（全期間）";
+  taxiPanelData[3].value = Number.isFinite(v.utilizationRate) ? `${Math.round(v.utilizationRate)}%` : "-";
+  taxiPanelData[3].unit = "全車両平均（全期間）";
+  return true;
+}
+taxiApplyFixedPanelValues(taxiFixedPanelValuesLocal());
+
 // ---------------------------------------------------------------------------
 // Analysis Spec Schema & Query Engine
 // ---------------------------------------------------------------------------
@@ -8454,9 +8492,9 @@ function queryTaxiData(spec) {
   if (dimDef.sort) {
     result.sort((a, b) => dimDef.sort(a.key, b.key));
   } else if (spec.sort === "desc") {
-    result.sort((a, b) => b.value - a.value);
+    result.sort((a, b) => taxiSortKey(b.value) - taxiSortKey(a.value));
   } else if (spec.sort === "asc") {
-    result.sort((a, b) => a.value - b.value);
+    result.sort((a, b) => taxiSortKey(a.value) - taxiSortKey(b.value));
   }
   
   if (spec.limit && spec.limit > 0) {
@@ -8469,6 +8507,11 @@ function queryTaxiData(spec) {
     total,
     totalFormatted: metricDef.format(total),
   };
+}
+
+// v26: sort key that ignores float summation noise (JS vs SQLite add floats differently)
+function taxiSortKey(v) {
+  return v === null || v === undefined || !Number.isFinite(v) ? v : Math.round(v * 1e6) / 1e6;
 }
 
 function aggregateMetric(rows, metric, metricDef) {
@@ -8947,8 +8990,9 @@ function runTaxiFreeQuery(args = {}) {
     if (!TAXI_ADDITIVE_METRICS.includes(metric)) delete result.groupStats.sum;
 
     const sort = args.sort || (groupBy === "date" || groupBy === "hour" || groupBy === "month" || groupBy === "weekday" ? "key" : "desc");
-    if (sort === "desc") entries.sort((a, b) => (b.value ?? -Infinity) - (a.value ?? -Infinity));
-    else if (sort === "asc") entries.sort((a, b) => (a.value ?? Infinity) - (b.value ?? Infinity));
+    // v26: compare values rounded to 1e-6 so float-noise "ties" keep the domain order (same in JS and D1)
+    if (sort === "desc") entries.sort((a, b) => (taxiSortKey(b.value) ?? -Infinity) - (taxiSortKey(a.value) ?? -Infinity));
+    else if (sort === "asc") entries.sort((a, b) => (taxiSortKey(a.value) ?? Infinity) - (taxiSortKey(b.value) ?? Infinity));
     else if (dim.sort) entries.sort((a, b) => dim.sort(a.rawKey, b.rawKey));
     else entries.sort((a, b) => (a.rawKey < b.rawKey ? -1 : a.rawKey > b.rawKey ? 1 : 0));
 
@@ -9144,7 +9188,7 @@ function createDynamicPanel(spec) {
     return { success: false, error: validation.errors.join(", ") };
   }
   
-  const queryResult = queryTaxiData(spec);
+  const queryResult = taxiTakePrefetched(taxiPanelDataKey(spec)) || queryTaxiData(spec);
   if (queryResult.error) {
     return { success: false, error: queryResult.error };
   }
@@ -9287,6 +9331,26 @@ for (let i = 0; i < taxiPanelData.length; i++) {
   taxiAnalyticsGroup.add(panelMesh);
   taxiAnalyticsPanels.push(panelMesh);
 }
+
+function taxiRedrawFixedPanels() {
+  taxiAnalyticsPanels.forEach((mesh, i) => {
+    const d = taxiPanelData[i];
+    if (!d || !mesh?.material) return;
+    const old = mesh.material.map;
+    mesh.material.map = makeTaxiAnalyticsPanelTexture(d.title, d.value, d.unit, d.chart);
+    mesh.material.needsUpdate = true;
+    old?.dispose?.();
+  });
+}
+
+// v26: fixed panels + dataset info from D1 (local values stay when D1 is not reachable)
+async function taxiRefreshFromD1() {
+  const meta = await taxiD1Query("meta", {});
+  if (meta) taxiD1Meta = meta;
+  const fixed = meta ? await taxiD1Query("fixed", {}) : null;
+  if (fixed && taxiApplyFixedPanelValues(fixed)) taxiRedrawFixedPanels();
+}
+setTimeout(() => { taxiRefreshFromD1().catch((e) => console.warn("[taxi-d1] refresh failed", e)); }, 0);
 
 // v20: the old room title ("分析用の部屋 - タクシー業務ダッシュボード") was removed; it peeked out behind the 2x fixed panels.
 
@@ -9891,6 +9955,117 @@ function taxiDetectMishearings(text) {
   return found;
 }
 
+// ---------------------------------------------------------------------------
+// v26: Cloudflare D1 data source (POST /api/query on our Worker, same taxi cookie).
+// query_data, created panels and the fixed panels are computed in D1; the local JS
+// aggregation (runTaxiFreeQuery / queryTaxiData over taxiTrips) stays as the fallback
+// (Pages without a D1 binding -> 503, offline, errors). Results are prefetched
+// asynchronously and handed to the unchanged synchronous code paths.
+// ---------------------------------------------------------------------------
+const TAXI_QUERY_PATH = "/api/query";
+const TAXI_D1_TIMEOUT_MS = 15000;
+let taxiD1State = "unknown"; // "unknown" | "ok" | "unavailable" (no binding / no endpoint: stop asking)
+let taxiD1Meta = null; // { trips, dataRange, note, ... } from D1
+let taxiLastDataSource = "local";
+let taxiQuestionDataNote = "";
+let taxiD1UnavailableReason = "";
+const taxiPrefetched = new Map();
+
+function taxiD1Enabled() {
+  return typeof window !== "undefined" && window.__TAXI_ALLOWED__ === true && taxiD1State !== "unavailable" && typeof fetch === "function";
+}
+
+function taxiNoteLocalData(reason) {
+  taxiLastDataSource = "local";
+  taxiQuestionDataNote = `データ: 端末内のサンプルで集計（${reason}）`;
+  console.warn("[taxi-d1] using local data:", reason);
+}
+
+// Returns the D1 result, or null when the local fallback should be used. Aborts (deadline / クリア) propagate.
+async function taxiD1Query(op, payload, signal = null) {
+  if (!taxiD1Enabled()) return null;
+  if (signal?.aborted) throw taxiAbortError(signal);
+  const link = taxiLinkedAbort(signal, TAXI_D1_TIMEOUT_MS);
+  const sig = link.controller ? link.controller.signal : null;
+  try {
+    const res = await taxiRaceAbort(fetch(TAXI_QUERY_PATH, {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ op, ...payload }),
+      ...(sig ? { signal: sig } : {}),
+    }), sig);
+    if ([404, 405, 501, 503].includes(res.status)) {
+      taxiD1State = "unavailable";
+      taxiD1UnavailableReason = res.status === 503 ? "D1未接続" : `D1エンドポイントなし（${res.status}）`;
+      taxiNoteLocalData(taxiD1UnavailableReason);
+      return null;
+    }
+    if (!res.ok) {
+      taxiNoteLocalData(`D1エラー ${res.status}`);
+      return null;
+    }
+    const data = await taxiRaceAbort(res.json(), sig);
+    if (!data || data.ok !== true || !data.result) {
+      taxiNoteLocalData("D1応答が不正");
+      return null;
+    }
+    taxiD1State = "ok";
+    taxiLastDataSource = "d1";
+    return data.result;
+  } catch (e) {
+    if (signal?.aborted) throw taxiAbortError(signal);
+    taxiNoteLocalData(link.timedOut ? "D1タイムアウト" : "D1通信エラー");
+    return null;
+  } finally {
+    link.cleanup();
+  }
+}
+
+function taxiPanelDataKey(spec) {
+  return ["p", spec.metric || "", spec.groupBy || "", spec.sort || "", Number(spec.limit) > 0 ? Number(spec.limit) : ""].join("|");
+}
+function taxiQueryDataKey(args) {
+  return "q|" + JSON.stringify(args || {});
+}
+function taxiTakePrefetched(key) {
+  if (!taxiPrefetched.has(key)) return null;
+  const v = taxiPrefetched.get(key);
+  taxiPrefetched.delete(key);
+  return v;
+}
+
+// data requested while D1 is known to be unavailable (e.g. Pages): keep the small note visible
+function taxiNoteIfD1Unavailable() {
+  if (taxiD1State === "unavailable" && typeof window !== "undefined" && window.__TAXI_ALLOWED__ === true) taxiNoteLocalData(taxiD1UnavailableReason || "D1未接続");
+}
+
+async function taxiPrefetchPanel(spec, signal = null) {
+  if (!taxiD1Enabled()) { taxiNoteIfD1Unavailable(); return; }
+  if (!spec || typeof spec !== "object" || !spec.metric || (spec.filters && Object.keys(spec.filters).length)) return;
+  if (!validateAnalysisSpec(spec).valid) return;
+  const r = await taxiD1Query("panel", { spec: { metric: spec.metric, groupBy: spec.groupBy || "", sort: spec.sort || "", limit: Number(spec.limit) > 0 ? Number(spec.limit) : 0 } }, signal);
+  if (r && !r.error && Array.isArray(r.data)) taxiPrefetched.set(taxiPanelDataKey(spec), r);
+}
+
+async function taxiPrefetchToolData(funcName, args, signal = null) {
+  if (funcName !== "query_data" && funcName !== "create_panel") return;
+  if (!taxiD1Enabled()) { taxiNoteIfD1Unavailable(); return; }
+  if (!args || typeof args !== "object") return;
+  if (funcName === "query_data") {
+    const r = await taxiD1Query("query_data", { args }, signal);
+    if (r) taxiPrefetched.set(taxiQueryDataKey(args), r);
+  } else if (funcName === "create_panel") {
+    await taxiPrefetchPanel(args, signal);
+  }
+}
+
+// offline / local-fallback panel requests (keyword parser) also read D1 when possible
+async function taxiPrefetchForMessage(userMessage, signal = null) {
+  const intent = extractAnalysisIntent(userMessage);
+  if (intent.type === "create_panel") await taxiPrefetchPanel(intent.spec, signal);
+}
+
 // v25: what the LLM sees of a grouped query_data result for a non-money metric (e.g. 乗車回数 by hour):
 // no fareSummary (~1 KB of 売上 figures nobody asked for) and no groups[].trips when it equals value.
 // Cuts an hourly tripCount result from ~2.3 KB to ~0.9 KB; 7 weekday×hour queries no longer build 30 KB+ prompts.
@@ -9911,7 +10086,7 @@ function taxiCompactToolJson(obj) {
 
 function executeTaxiToolCall(funcName, args, state) {
   if (funcName === "query_data") {
-    return runTaxiFreeQuery(args);
+    return taxiTakePrefetched(taxiQueryDataKey(args)) || runTaxiFreeQuery(args);
   }
   if (funcName === "calc_fare") {
     const km = Number(args.distanceKm);
@@ -10254,11 +10429,12 @@ async function taxiTranscribeAudioBase64(wavBase64, config, signal = null) {
 }
 
 async function callLlmBackend(userMessage, config, signal = null) {
-  const dataRange = taxiTrips.length ? `${taxiTrips[0].date}〜${taxiTrips[taxiTrips.length - 1].date}` : "-";
+  const dataRange = taxiD1Meta?.dataRange?.from ? `${taxiD1Meta.dataRange.from}〜${taxiD1Meta.dataRange.to}` : (taxiTrips.length ? `${taxiTrips[0].date}〜${taxiTrips[taxiTrips.length - 1].date}` : "-");
+  const tripTotal = Number.isFinite(taxiD1Meta?.trips) ? taxiD1Meta.trips : taxiTrips.length;
   const datasetSummary = `
 サンプルデータセット情報（合成データ）:
 - 期間: 過去${TAXI_MONTHS}ヶ月（${dataRange}、今日=${taxiLocalDateString(new Date())}）
-- 総トリップ数: ${taxiTrips.length.toLocaleString()}件
+- 総トリップ数: ${tripTotal.toLocaleString()}件
 - 運賃の前提: 運賃（税抜）＝距離(km)×${TAXI_FARE_PER_KM}円（初乗り・割増なし）。税込額＝税抜に消費税${TAXI_TAX_RATE * 100}%を加えた額（1乗車ごとに円未満四捨五入）。例: 10km → 6,000円（税込6,600円）。fare/売上は税抜、fareWithTax は税込。
 - 迎車（配車での迎え）: 約25%の乗車が迎車。迎車料金${TAXI_DISPATCH_FEE}円は非課税で税込額の後に加算。収入(totalFare)＝税込運賃＋迎車料金。例: 10km・迎車あり → 6,000円＋消費税600円＋迎車料金400円＝7,000円。query_data の dispatch で迎車あり/なしを絞り込める。
 - 音声認識では「迎車（げいしゃ）」が「芸者」と誤認識されやすい。「芸者」「げいしゃ」「ゲイシャ」は迎車として扱い、「もしかして迎車のことですか？」と確認してから迎車として答える。
@@ -10337,6 +10513,9 @@ ${taxiPanelData.map((p, i) => `${i}: ${p.title} - ${p.value} (${p.unit})`).join(
         for (const toolCall of toolCalls) {
           const funcName = toolCall.function?.name;
           let result;
+          let parsedArgs = null;
+          try { parsedArgs = JSON.parse(toolCall.function?.arguments || "{}") || {}; } catch (e) { parsedArgs = null; }
+          if (parsedArgs) await taxiPrefetchToolData(funcName, parsedArgs, signal); // v26: D1
           try {
             const args = JSON.parse(toolCall.function?.arguments || "{}") || {};
             result = executeTaxiToolCall(funcName, args, state);
@@ -10384,9 +10563,11 @@ ${taxiPanelData.map((p, i) => `${i}: ${p.title} - ${p.value} (${p.unit})`).join(
         continue;
       }
       if (!text) text = state.toolNotes.length ? state.toolNotes.join("\n") : "応答を取得できませんでした。";
+      if (!state.panelCreated && !state.panelsFull && taxiReplyClaimsPanel(text)) await taxiPrefetchForMessage(userMessage, signal);
       text = taxiEnsureClaimedPanel(text, userMessage, state);
       return { text, focusPanel, panelCreated: state.panelCreated };
     }
+    if (!state.panelCreated && !state.panelsFull) await taxiPrefetchForMessage(userMessage, signal);
     const lastText = taxiEnsureClaimedPanel(state.toolNotes.join("\n") || "処理を完了しました。", userMessage, state);
     return { text: lastText, focusPanel: state.focusPanel, panelCreated: state.panelCreated };
   } catch (error) {
@@ -10466,22 +10647,31 @@ async function processTaxiConversation(userMessage) {
   const questionAbort = typeof AbortController === "function" ? new AbortController() : null;
   if (questionAbort) taxiActiveAborts.add(questionAbort);
   const deadlineTimer = questionAbort ? setTimeout(() => taxiAbortController(questionAbort, "deadline"), TAXI_QUESTION_DEADLINE_MS) : null;
+  taxiQuestionDataNote = "";
+  taxiPrefetched.clear();
   startTaxiThinking();
   try {
     if (llmConfig) {
       response = await callLlmBackend(userMessage, llmConfig, questionAbort ? questionAbort.signal : null);
       if (response.fallback) {
+        await taxiPrefetchForMessage(userMessage, questionAbort ? questionAbort.signal : null);
         const offlineResponse = generateOfflineResponse(userMessage);
         response.text += "\n\n" + offlineResponse.text;
         response.focusPanel = offlineResponse.focusPanel;
       }
     } else {
+      await taxiPrefetchForMessage(userMessage, questionAbort ? questionAbort.signal : null);
       response = generateOfflineResponse(userMessage);
     }
   } catch (e) {
+    if (e?.kind === "cancelled") response = { text: "", focusPanel: -1, cancelled: true };
+    else if (e?.kind === "deadline") response = { text: TAXI_DEADLINE_MESSAGE, focusPanel: -1, deadline: true };
+    else {
     console.error("[taxi-ai] conversation failed", e);
     response = { text: `エラーが発生しました: ${e?.message || e}`, focusPanel: -1 };
+    }
   } finally {
+    taxiPrefetched.clear();
     if (deadlineTimer) clearTimeout(deadlineTimer);
     if (questionAbort) taxiActiveAborts.delete(questionAbort);
     stopTaxiThinking();
@@ -10489,7 +10679,7 @@ async function processTaxiConversation(userMessage) {
   
   if (chatEpoch !== taxiChatEpoch || response?.cancelled) return; // chat was cleared while waiting
   taxiConversationHistory.push({ role: "assistant", content: response.text });
-  if (!taxiIsListening && !taxiVoiceBusy) taxiVoiceStatusText = "";
+  if (!taxiIsListening && !taxiVoiceBusy) taxiVoiceStatusText = taxiQuestionDataNote ? `（${taxiQuestionDataNote}）` : ""; // v26: small note when D1 was not used
   updateTaxiChatPanel();
   
   if (response.focusPanel >= 0 && response.focusPanel < taxiAnalyticsPanels.length) {

@@ -361,6 +361,34 @@ npx wrangler dev
 ### 設定ファイル
 
 - `wrangler.jsonc` - Wrangler設定（Worker名、アセットディレクトリ、compatibility_date）
-- `worker/index.js` - Workerスクリプト（認証、HTMLRewriter）
+- `worker/index.js` - Workerスクリプト（認証、HTMLRewriter、LLM/STT中継、D1集計 `/api/query`）
+- `migrations/`, `scripts/import-trips.mjs` - タクシー分析データ（D1）のスキーマと取り込み
 - `.assetsignore` - 静的アセットから除外するファイル（Workerソース、設定ファイル等）
 - `.dev.vars` - ローカル開発用シークレット（gitignore済み、自分で作成）
+
+### タクシー分析データ（Cloudflare D1）
+
+v26 から、タクシー分析の集計（AIの `query_data`、作成パネル、固定パネル）は Cloudflare D1 データベース
+`taxi-analytics`（バインディング `DB`）で行います。Worker の `POST /api/query`（taxi_auth Cookie 必須、無い場合 401）が
+パラメータ化SQLで集計します。D1 が使えない環境（Pages など、`503 db-unavailable`）や通信エラー時は、
+アプリ内の JavaScript 集計（サンプルデータ）に自動で切り替わり、ステータス行に小さな注記が出ます。
+
+- スキーマ: `migrations/0001_taxi_schema.sql`（`trips` = 正規化済み乗車記録、`vocab` = 有効な車両/ドライバー/エリア/町名と読み、`meta` = 注記・運賃ルール等）
+- 取り込み: `scripts/import-trips.mjs`（アプリの `taxiTripFromRecord()` をそのまま使って派生項目を計算し、trips / vocab / meta を**置き換え**ます）
+
+```bash
+export CLOUDFLARE_API_TOKEN=...   # D1 Edit 権限つき
+export CLOUDFLARE_ACCOUNT_ID=...
+# 初回のみ: スキーマ作成
+npx wrangler d1 migrations apply taxi-analytics --remote
+# サンプルデータ（アプリと同一の 26,712 件）
+node scripts/import-trips.mjs --sample --apply
+# 実データ: 生レコードの JSON 配列（taxiTripFromRecord の入力形式）
+node scripts/import-trips.mjs --input records.json [--vocab vocab.json] --note "実データによる集計結果" --dataset "2026年4〜9月 PDF" --apply
+```
+
+`records.json` の1件: `{ id, date "YYYY-MM-DD", time "HH:MM", vehicle, driver, pickupArea, pickupTown, pickupAddress,
+dropoffArea, dropoffTown, dropoffAddress, distance, dispatch, occupiedMinutes, emptyMinutes, fare?, dropoffTime?, dropoffDate? }`。
+`--vocab` を省略すると有効値はレコードから（出現順で）作られます。読み（ひらがな）を付けたい場合は
+`[{ "kind": "town", "value": "調布市布田", "reading": "ふだ", "parent": "調布駅周辺" }, ...]` の形式で渡します。
+`--apply` を付けない場合は SQL ファイル（既定 `/tmp/taxi-import.sql`）の生成のみです。

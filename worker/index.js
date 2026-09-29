@@ -373,6 +373,9 @@ export default {
     if (pathname === STT_PATH) {
       return handleSttRequest(request, env, taxiAllowed);
     }
+    if (pathname === QUERY_PATH) {
+      return handleQueryRequest(request, env, taxiAllowed);
+    }
 
     // Block direct access to taxi room assets if not authenticated
     if (isTaxiRoomPath(pathname) && !taxiAllowed) {
@@ -402,3 +405,554 @@ export default {
     return rewriter.transform(response);
   },
 };
+
+// ===========================================================================
+// v26: taxi analytics on Cloudflare D1 (POST /api/query, gated by the taxi cookie)
+// The trips table holds taxiTripFromRecord() output (see migrations/ and
+// scripts/import-trips.mjs); vocab holds the valid vehicles / drivers / areas /
+// towns (+ readings) used for validation and suggestions. Swapping in real data =
+// re-running the import with the real records; this code reads everything from D1.
+// All SQL is fixed text with ? placeholders; user values are only ever bound
+// (lists as one JSON array through json_each). Mirrors runTaxiFreeQuery /
+// queryTaxiData in public/quest-mr/app.js exactly (verified by the equivalence test).
+// ===========================================================================
+const QUERY_PATH = "/api/query";
+const QUERY_MAX_BODY_BYTES = 32 * 1024;
+const TQ_WEEKDAYS = ["日", "月", "火", "水", "木", "金", "土"];
+const TQ_WEEKDAY_ALIASES = { sun: "日", mon: "月", tue: "火", wed: "水", thu: "木", fri: "金", sat: "土" };
+const TQ_HOMOPHONES = { 札: "ふだ" };
+const TQ_TERM_SUFFIX_RE = /(区|駅|周辺|エリア|地区|さん|氏|運転手|ドライバー|号車)$/u;
+const TQ_MAX_GROUPS = 31;
+const TQ_DEFAULT_GROUPS = 10;
+const TQ_FULL_DOMAIN_MAX = 24;
+const TQ_ADDITIVE = ["tripCount", "fare", "fareWithTax", "totalFare", "dispatchFee", "distance", "occupiedTime", "emptyTime"];
+const TQ_METRICS = {
+  fare: { label: "売上", unit: "円", format: v => `¥${v.toLocaleString()}` },
+  fareWithTax: { label: "売上(税込)", unit: "円", format: v => `¥${v.toLocaleString()}` },
+  totalFare: { label: "収入(税込+迎車)", unit: "円", format: v => `¥${v.toLocaleString()}` },
+  dispatchFee: { label: "迎車料金", unit: "円", format: v => `¥${v.toLocaleString()}` },
+  tripCount: { label: "乗車回数", unit: "件", format: v => `${v.toLocaleString()}件` },
+  distance: { label: "走行距離", unit: "km", format: v => `${v.toFixed(1)}km` },
+  avgFare: { label: "平均運賃", unit: "円", format: v => `¥${Math.round(v).toLocaleString()}` },
+  avgDistance: { label: "平均距離", unit: "km", format: v => `${v.toFixed(1)}km` },
+  occupiedTime: { label: "実車時間", unit: "分", format: v => `${Math.round(v).toLocaleString()}分` },
+  emptyTime: { label: "空車時間", unit: "分", format: v => `${Math.round(v).toLocaleString()}分` },
+  utilizationRate: { label: "稼働率", unit: "%", format: v => `${v.toFixed(1)}%` },
+};
+// dimension -> fixed column name (identifiers never come from the request)
+const TQ_DIMENSIONS = {
+  month: { label: "月別", col: "month", format: v => `${v}月` },
+  weekday: { label: "曜日別", col: "weekday", sort: (a, b) => TQ_WEEKDAYS.indexOf(a) - TQ_WEEKDAYS.indexOf(b) },
+  hour: { label: "時間帯別", col: "hour", format: v => `${v}時` },
+  vehicle: { label: "車両別", col: "vehicle" },
+  driver: { label: "ドライバー別", col: "driver" },
+  pickupArea: { label: "乗車地別", col: "pickup_area" },
+  dropoffArea: { label: "降車地別", col: "dropoff_area" },
+  pickupTown: { label: "乗車地町名別", col: "pickup_town" },
+  dropoffTown: { label: "降車地町名別", col: "dropoff_town" },
+  date: { label: "日別", col: "date" },
+};
+// per-trip field -> column (+ result field name kept as in the app)
+const TQ_PER_TRIP = { fare: "fare", fareWithTax: "fareWithTax", totalFare: "totalFare", avgFare: "fare", distance: "distance", avgDistance: "distance", occupiedTime: "occupiedMinutes", emptyTime: "emptyMinutes" };
+const TQ_FIELD_COL = { fare: "fare", fareWithTax: "fare_with_tax", totalFare: "total_fare", distance: "distance", occupiedMinutes: "occupied_minutes", emptyMinutes: "empty_minutes" };
+const TQ_AGG_SELECT = "COUNT(*) AS n, SUM(fare) AS fare, SUM(fare_with_tax) AS fwt, SUM(total_fare) AS tf, SUM(dispatch_fee) AS df, SUM(distance) AS dist, SUM(occupied_minutes) AS occ, SUM(empty_minutes) AS emp";
+const TQ_DEFAULT_NOTE = "サンプル（合成）データによる集計結果";
+
+function tqMetricFromAgg(a, metric) {
+  const n = a ? Number(a.n) || 0 : 0;
+  if (!n) return TQ_ADDITIVE.includes(metric) ? 0 : null;
+  switch (metric) {
+    case "tripCount": return n;
+    case "fare": return a.fare || 0;
+    case "fareWithTax": return a.fwt || 0;
+    case "totalFare": return a.tf || 0;
+    case "dispatchFee": return a.df || 0;
+    case "distance": return a.dist || 0;
+    case "avgFare": return (a.fare || 0) / n;
+    case "avgDistance": return (a.dist || 0) / n;
+    case "occupiedTime": return a.occ || 0;
+    case "emptyTime": return a.emp || 0;
+    case "utilizationRate": return (a.occ || 0) / ((a.occ || 0) + (a.emp || 0)) * 100;
+    default: return 0;
+  }
+}
+// queryTaxiData's aggregateMetric: 0 for no rows (not null)
+function tqPanelMetric(a, metric) {
+  const n = a ? Number(a.n) || 0 : 0;
+  if (!n) return 0;
+  return tqMetricFromAgg(a, metric);
+}
+function tqSortKey(v) {
+  return v === null || v === undefined || !Number.isFinite(v) ? v : Math.round(v * 1e6) / 1e6;
+}
+function tqRound(v, digits = 1) {
+  if (v === null || v === undefined || !Number.isFinite(v)) return null;
+  const f = Math.pow(10, digits);
+  return Math.round(v * f) / f;
+}
+function tqNormText(s) {
+  return String(s ?? "").normalize("NFKC").trim().toLowerCase()
+    .replace(/[\u30a1-\u30f6]/g, ch => String.fromCharCode(ch.charCodeAt(0) - 0x60)).replace(/\s+/g, "");
+}
+function tqEditDistance(a, b) {
+  const m = a.length, n = b.length;
+  const dp = Array.from({ length: m + 1 }, (_, i) => [i, ...new Array(n).fill(0)]);
+  for (let j = 0; j <= n; j++) dp[0][j] = j;
+  for (let i = 1; i <= m; i++) for (let j = 1; j <= n; j++) dp[i][j] = Math.min(dp[i - 1][j] + 1, dp[i][j - 1] + 1, dp[i - 1][j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+  return dp[m][n];
+}
+const tqTownPart = name => String(name).replace(/^.+?[区市]/u, "");
+const tqStripChome = name => String(name).replace(/[一二三四五六七八九十]+丁目$/u, "");
+function tqStatsOver(entries) {
+  const vals = entries.filter(e => e.value !== null && Number.isFinite(e.value));
+  if (!vals.length) return null;
+  let max = vals[0], min = vals[0], sum = 0;
+  for (const e of vals) { sum += e.value; if (e.value > max.value) max = e; if (e.value < min.value) min = e; }
+  return { groupCount: vals.length, sum: tqRound(sum, 1), average: tqRound(sum / vals.length, 1), max: { key: max.key, value: tqRound(max.value, 1) }, min: { key: min.key, value: tqRound(min.value, 1) } };
+}
+function tqNumberOrNull(v) {
+  if (v === undefined || v === null || v === "") return null;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : NaN;
+}
+
+// Vocabulary (valid values + readings) loaded from D1
+function tqBuildVocab(rows) {
+  const V = { vehicles: [], drivers: [], areas: [], towns: [], areaTowns: {}, readings: {} };
+  for (const r of rows) {
+    if (r.kind === "vehicle") V.vehicles.push(r.value);
+    else if (r.kind === "driver") V.drivers.push(r.value);
+    else if (r.kind === "area") V.areas.push(r.value);
+    else if (r.kind === "town") { V.towns.push(r.value); (V.areaTowns[r.parent] = V.areaTowns[r.parent] || []).push(r.value); }
+    if (r.reading && !(r.value in V.readings)) V.readings[r.value] = r.reading;
+  }
+  V.municipalities = [...new Set(V.towns.map(t => (/^.+?[区市]/u.exec(t) || [""])[0]).filter(Boolean))];
+  V.readingOf = name => V.readings[name] || V.readings[tqStripChome(name)] || null;
+  return V;
+}
+function tqStrongMatch(V, value, validValues) {
+  const v = tqNormText(value).replace(TQ_TERM_SUFFIX_RE, "");
+  if (!v) return null;
+  const hv = TQ_HOMOPHONES[v] || v;
+  const hits = validValues.filter(c => v === tqNormText(c) || v === tqNormText(tqTownPart(c)) || hv === V.readingOf(c));
+  return hits.length === 1 ? hits[0] : null;
+}
+function tqSuggest(V, value, validValues, max = 3) {
+  const v0 = tqNormText(value).replace(TQ_TERM_SUFFIX_RE, "");
+  const v = TQ_HOMOPHONES[v0] || v0;
+  const scored = validValues.map(cand => {
+    const forms = [tqNormText(cand), tqNormText(tqTownPart(cand)), tqNormText(tqStripChome(tqTownPart(cand))), V.readingOf(cand)].filter(Boolean);
+    let best = Infinity;
+    for (const f of forms) {
+      let d = tqEditDistance(v, f) / Math.max(v.length, f.length, 1);
+      if (v && (f.includes(v) || v.includes(f))) d = Math.min(d, 0.1);
+      best = Math.min(best, d);
+    }
+    return { cand, d: best };
+  });
+  scored.sort((a, b) => a.d - b.d || a.cand.length - b.cand.length);
+  if (scored.length > max && scored[0].d === scored[max].d && scored[0].d > 0.1) return [];
+  return scored.filter(s => s.d <= 0.67).slice(0, max).map(s => s.cand);
+}
+function tqCanonical(V, kind, raw) {
+  const s = String(raw ?? "").normalize("NFKC").trim();
+  if (kind === "weekday") {
+    const w = s.replace(/曜日?$/u, "");
+    if (TQ_WEEKDAYS.includes(w)) return w;
+    return TQ_WEEKDAY_ALIASES[w.toLowerCase().slice(0, 3)] || null;
+  }
+  if (kind === "vehicle") {
+    const m = /^(?:車両)?\s*([A-Za-z])(?:号車)?$/u.exec(s);
+    const c = m ? `車両${m[1].toUpperCase()}` : s;
+    return V.vehicles.includes(c) ? c : null;
+  }
+  if (kind === "driver") {
+    const c = s.replace(/(さん|氏)$/u, "");
+    return V.drivers.includes(c) ? c : null;
+  }
+  if (kind === "area") return V.areas.includes(s) ? s : null;
+  if (kind === "town") {
+    if (V.towns.includes(s)) return s;
+    const hits = V.towns.filter(t => tqTownPart(t) === s || tqTownPart(t) === tqTownPart(s) && t.startsWith(s.slice(0, s.length - tqTownPart(s).length)));
+    return hits.length === 1 ? hits[0] : null;
+  }
+  return null;
+}
+function tqFilterValues(V, kind, input, fieldName, validValues, errors, applied) {
+  if (input === undefined || input === null || input === "") return null;
+  const list = Array.isArray(input) ? input : [input];
+  if (list.length === 0) return null;
+  const out = [];
+  for (const raw of list) {
+    const c = tqCanonical(V, kind, raw);
+    const strong = c ? null : tqStrongMatch(V, raw, validValues);
+    if (c) out.push(c);
+    else if (strong) {
+      out.push(strong);
+      (applied.corrections = applied.corrections || []).push({ from: raw, to: strong, message: `「${raw}」はデータに無い表記のため「${strong}」として集計した。回答では必ず「もしかして${strong}のことですか？」と確認を添えること` });
+    } else {
+      errors.push({
+        field: fieldName, value: raw, message: `「${raw}」はデータに存在しない値です`,
+        ...(kind === "area" || kind === "town" ? { serviceArea: `データは営業エリア（${V.municipalities.join("・")}）のみ。エリア外の地名なら該当0件` } : {}),
+        suggestions: tqSuggest(V, raw, validValues), validValues,
+      });
+    }
+  }
+  applied[fieldName] = out;
+  return out.length ? new Set(out) : null;
+}
+
+// WHERE builder: fixed SQL fragments, values bound. Lists go in as ONE JSON parameter.
+function tqWhere(f, calendarOnly = false) {
+  const parts = [], params = [];
+  const inList = (col, set) => { parts.push(`${col} IN (SELECT value FROM json_each(?))`); params.push(JSON.stringify([...set])); };
+  const range = (col, r) => {
+    if (r.from < r.to) { parts.push(`(${col} >= ? AND ${col} < ?)`); } else { parts.push(`(${col} >= ? OR ${col} < ?)`); }
+    params.push(r.from, r.to);
+  };
+  if (f.dateFrom) { parts.push("date >= ?"); params.push(f.dateFrom); }
+  if (f.dateTo) { parts.push("date <= ?"); params.push(f.dateTo); }
+  if (f.weekdaySet) inList("weekday", f.weekdaySet);
+  if (!calendarOnly) {
+    if (f.timeRange) range("minute_of_day", f.timeRange);
+    else if (f.hourSet) inList("hour", f.hourSet);
+    if (f.vehicleSet) inList("vehicle", f.vehicleSet);
+    if (f.driverSet) inList("driver", f.driverSet);
+    if (f.pickupSet) inList("pickup_area", f.pickupSet);
+    if (f.dropoffSet) inList("dropoff_area", f.dropoffSet);
+    if (f.dispatchFilter !== null && f.dispatchFilter !== undefined) { parts.push("dispatch = ?"); params.push(f.dispatchFilter ? 1 : 0); }
+    if (f.pickupTownSet) inList("pickup_town", f.pickupTownSet);
+    if (f.dropoffRange) range("dropoff_minute_of_day", f.dropoffRange);
+    if (f.pickupKeywords && f.pickupKeywords.length) { parts.push("EXISTS (SELECT 1 FROM json_each(?) AS k WHERE instr(pickup_address_norm, k.value) > 0)"); params.push(JSON.stringify(f.pickupKeywords)); }
+    if (f.dropoffKeywords && f.dropoffKeywords.length) { parts.push("EXISTS (SELECT 1 FROM json_each(?) AS k WHERE instr(dropoff_address_norm, k.value) > 0)"); params.push(JSON.stringify(f.dropoffKeywords)); }
+    if (f.dropoffTownSet) inList("dropoff_town", f.dropoffTownSet);
+    const r = f.ranges || {};
+    if (r.distanceMin !== undefined) { parts.push("distance >= ?"); params.push(r.distanceMin); }
+    if (r.distanceMax !== undefined) { parts.push("distance <= ?"); params.push(r.distanceMax); }
+    if (r.fareMin !== undefined) { parts.push("fare >= ?"); params.push(r.fareMin); }
+    if (r.fareMax !== undefined) { parts.push("fare <= ?"); params.push(r.fareMax); }
+  }
+  return { sql: parts.length ? ` WHERE ${parts.join(" AND ")}` : "", params };
+}
+
+async function tqLoadBase(db, extra = []) {
+  const res = await db.batch([
+    db.prepare("SELECT kind, value, ord, reading, parent FROM vocab ORDER BY ord"),
+    db.prepare("SELECT MIN(date) AS dfrom, MAX(date) AS dto, COUNT(*) AS n FROM trips"),
+    db.prepare("SELECT key, value FROM meta"),
+    ...extra,
+  ]);
+  const meta = Object.fromEntries((res[2].results || []).map(r => [r.key, r.value]));
+  const r1 = (res[1].results || [])[0] || {};
+  return { V: tqBuildVocab(res[0].results || []), dataRange: { from: r1.dfrom, to: r1.dto }, tripCount: Number(r1.n) || 0, meta, extra: res.slice(3) };
+}
+
+async function tqRunFreeQuery(db, args = {}) {
+  const metric = args.metric || "tripCount";
+  const errors = [];
+  if (!TQ_METRICS[metric]) errors.push({ field: "metric", value: metric, message: `無効なメトリック: ${metric}`, validValues: Object.keys(TQ_METRICS) });
+  const groupBy = args.groupBy || "";
+  if (groupBy && !TQ_DIMENSIONS[groupBy]) errors.push({ field: "groupBy", value: groupBy, message: `無効な集計軸: ${groupBy}`, validValues: Object.keys(TQ_DIMENSIONS) });
+
+  // keywords are known before validation: fetch the address lists together with the vocab
+  const keywordList = v => (v === undefined || v === null || v === "" ? null : (Array.isArray(v) ? v : [v]).map(k => String(k).normalize("NFKC").trim()).filter(Boolean));
+  const pickupKeywords = keywordList(args.pickupKeyword);
+  const dropoffKeywords = keywordList(args.dropoffKeyword);
+  const needAddr = (pickupKeywords && pickupKeywords.length) || (dropoffKeywords && dropoffKeywords.length);
+  const extra = needAddr ? [
+    db.prepare("SELECT pickup_address AS a FROM trips WHERE pickup_address <> '' GROUP BY pickup_address ORDER BY MIN(id)"),
+    db.prepare("SELECT dropoff_address AS a FROM trips WHERE dropoff_address <> '' GROUP BY dropoff_address ORDER BY MIN(id)"),
+  ] : [];
+  const base = await tqLoadBase(db, extra);
+  const { V, dataRange, meta } = base;
+
+  const applied = {};
+  const dateRe = /^\d{4}-\d{2}-\d{2}$/;
+  const dateFrom = args.dateFrom ? String(args.dateFrom) : null;
+  const dateTo = args.dateTo ? String(args.dateTo) : null;
+  for (const [k, v] of [["dateFrom", dateFrom], ["dateTo", dateTo]]) {
+    if (v && !dateRe.test(v)) errors.push({ field: k, value: v, message: "日付は YYYY-MM-DD 形式で指定してください", validRange: dataRange });
+  }
+  if (dateFrom) applied.dateFrom = dateFrom;
+  if (dateTo) applied.dateTo = dateTo;
+
+  const hourFrom = tqNumberOrNull(args.hourFrom);
+  const hourTo = tqNumberOrNull(args.hourTo);
+  if (hourFrom !== null && !(Number.isInteger(hourFrom) && hourFrom >= 0 && hourFrom <= 23)) errors.push({ field: "hourFrom", value: args.hourFrom, message: "hourFrom は 0〜23 の整数です（開始時刻・含む）" });
+  if (hourTo !== null && !(Number.isInteger(hourTo) && hourTo >= 1 && hourTo <= 24)) errors.push({ field: "hourTo", value: args.hourTo, message: "hourTo は 1〜24 の整数です（終了時刻・含まない）" });
+  let hourSet = null;
+  if ((hourFrom !== null || hourTo !== null) && !errors.some(e => e.field.startsWith("hour"))) {
+    const hf = hourFrom ?? 0;
+    const ht = hourTo ?? 24;
+    hourSet = new Set();
+    if (hf < ht) { for (let h = hf; h < ht; h++) hourSet.add(h); } else { for (let h = hf; h < 24; h++) hourSet.add(h); for (let h = 0; h < ht; h++) hourSet.add(h); }
+    applied.hours = `${hf}:00〜${ht}:00（${ht}時ちょうどは含まない。乗車開始hour=${[...hourSet].join(",")}）`;
+  }
+  const parseHm = (v, allow24) => {
+    const m = /^(\d{1,2}):(\d{2})$/.exec(String(v).normalize("NFKC").trim());
+    if (!m) return null;
+    const h = +m[1], mi = +m[2];
+    if (mi > 59 || h > 24 || (h === 24 && (mi !== 0 || !allow24))) return null;
+    return h * 60 + mi;
+  };
+  const fmtHm = m => `${String(Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`;
+  let timeRange = null;
+  const hasTimeFrom = args.timeFrom !== undefined && args.timeFrom !== null && args.timeFrom !== "";
+  const hasTimeTo = args.timeTo !== undefined && args.timeTo !== null && args.timeTo !== "";
+  if (hasTimeFrom || hasTimeTo) {
+    const tf = hasTimeFrom ? parseHm(args.timeFrom, false) : 0;
+    const tt = hasTimeTo ? parseHm(args.timeTo, true) : 1440;
+    if (tf === null) errors.push({ field: "timeFrom", value: args.timeFrom, message: "timeFrom は \"HH:MM\"（00:00〜23:59、含む）で指定してください" });
+    if (tt === null) errors.push({ field: "timeTo", value: args.timeTo, message: "timeTo は \"HH:MM\"（00:01〜24:00、含まない）で指定してください" });
+    if (tf !== null && tt !== null) {
+      timeRange = { from: tf, to: tt };
+      applied.time = `${fmtHm(tf)}〜${fmtHm(tt)}（${fmtHm(tt)}ちょうどは含まない${tf >= tt ? "、深夜をまたぐ" : ""}）`;
+      if (hourSet) { applied.hoursIgnored = "timeFrom/timeTo を優先したため hourFrom/hourTo は無視"; delete applied.hours; }
+      hourSet = new Set();
+      const span = tf < tt ? tt - tf : 1440 - tf + tt;
+      for (let k = 0; k < span; k++) hourSet.add(Math.floor(((tf + k) % 1440) / 60));
+    }
+  }
+  let dropoffRange = null;
+  const hasDf = args.dropoffTimeFrom !== undefined && args.dropoffTimeFrom !== null && args.dropoffTimeFrom !== "";
+  const hasDt = args.dropoffTimeTo !== undefined && args.dropoffTimeTo !== null && args.dropoffTimeTo !== "";
+  if (hasDf || hasDt) {
+    const df = hasDf ? parseHm(args.dropoffTimeFrom, false) : 0;
+    const dt = hasDt ? parseHm(args.dropoffTimeTo, true) : 1440;
+    if (df === null) errors.push({ field: "dropoffTimeFrom", value: args.dropoffTimeFrom, message: "dropoffTimeFrom は \"HH:MM\"（含む）で指定してください" });
+    if (dt === null) errors.push({ field: "dropoffTimeTo", value: args.dropoffTimeTo, message: "dropoffTimeTo は \"HH:MM\"（含まない、\"24:00\"可）で指定してください" });
+    if (df !== null && dt !== null) {
+      dropoffRange = { from: df, to: dt };
+      applied.dropoffTime = `降車 ${fmtHm(df)}〜${fmtHm(dt)}（${fmtHm(dt)}ちょうどは含まない${df >= dt ? "、深夜をまたぐ" : ""}）`;
+    }
+  }
+
+  // keyword validation (verbatim NFKC substring) against the address lists
+  if (needAddr) {
+    const lists = { pickupAddress: (base.extra[0].results || []).map(r => r.a), dropoffAddress: (base.extra[1].results || []).map(r => r.a) };
+    const countStmts = [];
+    const pending = [];
+    for (const [kws, field, label] of [[pickupKeywords, "pickupAddress", "pickupKeyword"], [dropoffKeywords, "dropoffAddress", "dropoffKeyword"]]) {
+      if (!kws || !kws.length) continue;
+      applied[label] = kws;
+      const addresses = lists[field];
+      const otherCol = field === "pickupAddress" ? "dropoff_address_norm" : "pickup_address_norm";
+      for (const kw of kws) {
+        if (!addresses.some(a => a.normalize("NFKC").includes(kw))) {
+          pending.push({ kw, field, label, addresses });
+          countStmts.push(db.prepare(`SELECT COUNT(*) AS n FROM trips WHERE instr(${otherCol}, ?) > 0`).bind(kw));
+        }
+      }
+    }
+    const counts = countStmts.length ? await db.batch(countStmts) : [];
+    pending.forEach((p, i) => {
+      const otherTrips = Number(((counts[i] && counts[i].results) || [])[0]?.n) || 0;
+      const otherField = p.field === "pickupAddress" ? "dropoffAddress" : "pickupAddress";
+      errors.push({
+        ...(otherTrips ? { foundInOtherSide: { field: otherField === "dropoffAddress" ? "降車地住所" : "乗車地住所", trips: otherTrips } } : {}),
+        field: p.label, value: p.kw,
+        message: `「${p.kw}」を含む住所はデータにありません（0件）。データは営業エリア（${V.municipalities.join("・")}）のみ`,
+        suggestions: tqSuggest(V, p.kw, p.addresses, 5),
+        knownAddressesSample: p.addresses.slice(0, 30),
+      });
+    });
+  }
+
+  const weekdaySet = tqFilterValues(V, "weekday", args.weekdays, "weekdays", TQ_WEEKDAYS, errors, applied);
+  const vehicleSet = tqFilterValues(V, "vehicle", args.vehicles, "vehicles", V.vehicles, errors, applied);
+  const driverSet = tqFilterValues(V, "driver", args.drivers, "drivers", V.drivers, errors, applied);
+  const pickupSet = tqFilterValues(V, "area", args.pickupAreas, "pickupAreas", V.areas, errors, applied);
+  const dropoffSet = tqFilterValues(V, "area", args.dropoffAreas, "dropoffAreas", V.areas, errors, applied);
+  const pickupTownSet = tqFilterValues(V, "town", args.pickupTowns, "pickupTowns", V.towns, errors, applied);
+  const dropoffTownSet = tqFilterValues(V, "town", args.dropoffTowns, "dropoffTowns", V.towns, errors, applied);
+
+  let dispatchFilter = null;
+  if (args.dispatch !== undefined && args.dispatch !== null && args.dispatch !== "") {
+    const dv = String(args.dispatch).normalize("NFKC").trim().toLowerCase();
+    if (["true", "1", "yes", "はい", "あり", "有"].includes(dv)) dispatchFilter = true;
+    else if (["false", "0", "no", "いいえ", "なし", "無"].includes(dv)) dispatchFilter = false;
+    else errors.push({ field: "dispatch", value: args.dispatch, message: "dispatch は true(迎車あり) / false(迎車なし) で指定してください" });
+    if (dispatchFilter !== null) applied.dispatch = dispatchFilter ? "迎車ありのみ" : "迎車なしのみ";
+  }
+  const ranges = {};
+  for (const k of ["distanceMin", "distanceMax", "fareMin", "fareMax"]) {
+    const n = tqNumberOrNull(args[k]);
+    if (Number.isNaN(n)) errors.push({ field: k, value: args[k], message: `${k} は数値で指定してください` });
+    else if (n !== null) { ranges[k] = n; applied[k] = n; }
+  }
+  if (errors.length) {
+    return { error: "指定された条件に無効な値があります。suggestions の候補をユーザーに「もしかして〇〇のことですか？」と確認してください。", invalid: errors, dataRange };
+  }
+
+  const f = { dateFrom, dateTo, weekdaySet, timeRange, hourSet, vehicleSet, driverSet, pickupSet, dropoffSet, dispatchFilter, pickupTownSet, dropoffRange, pickupKeywords, dropoffKeywords, dropoffTownSet, ranges };
+  const cal = tqWhere(f, true);
+  const all = tqWhere(f, false);
+  const tripField = TQ_PER_TRIP[metric];
+  const tripCol = tripField ? TQ_FIELD_COL[tripField] : null;
+  const briefCols = "date, time, dropoff_time, vehicle, driver, pickup_area, dropoff_area";
+  const dim = groupBy ? TQ_DIMENSIONS[groupBy] : null;
+  const stmts = [
+    db.prepare(`SELECT DISTINCT date FROM trips${cal.sql} ORDER BY date`).bind(...cal.params),
+    db.prepare(`SELECT ${TQ_AGG_SELECT}, MAX(fare) AS fare_max, MIN(fare) AS fare_min, MAX(fare_with_tax) AS fwt_max, MIN(fare_with_tax) AS fwt_min, MAX(total_fare) AS tf_max, MIN(total_fare) AS tf_min FROM trips${all.sql}`).bind(...all.params),
+    db.prepare(`SELECT date, ${TQ_AGG_SELECT} FROM trips${all.sql} GROUP BY date`).bind(...all.params),
+    db.prepare(`SELECT dispatch, ${TQ_AGG_SELECT} FROM trips${all.sql} GROUP BY dispatch`).bind(...all.params),
+  ];
+  if (tripCol) {
+    stmts.push(db.prepare(`SELECT ${tripCol} AS v, ${briefCols} FROM trips${all.sql} ORDER BY ${tripCol} DESC, id ASC LIMIT 1`).bind(...all.params));
+    stmts.push(db.prepare(`SELECT ${tripCol} AS v, ${briefCols} FROM trips${all.sql} ORDER BY ${tripCol} ASC, id ASC LIMIT 1`).bind(...all.params));
+  }
+  let groupIdx = -1, monthIdx = -1;
+  if (dim) {
+    groupIdx = stmts.length;
+    stmts.push(db.prepare(`SELECT ${dim.col} AS k, ${TQ_AGG_SELECT} FROM trips${all.sql} GROUP BY ${dim.col} ORDER BY MIN(id)`).bind(...all.params));
+    if (groupBy === "month") { monthIdx = stmts.length; stmts.push(db.prepare(`SELECT month FROM trips${cal.sql} GROUP BY month ORDER BY MIN(id)`).bind(...cal.params)); }
+  }
+  const res = await db.batch(stmts);
+  const calendarDays = (res[0].results || []).map(r => r.date);
+  const agg = (res[1].results || [])[0] || { n: 0 };
+  const n = Number(agg.n) || 0;
+  const def = TQ_METRICS[metric];
+  const overall = tqMetricFromAgg(agg, metric);
+  const result = {
+    metric, metricLabel: def.label, unit: def.unit, filters: applied, dataRange,
+    matchedTrips: n, daysInPeriod: calendarDays.length,
+    value: tqRound(overall, 1), valueFormatted: overall === null ? "データなし" : def.format(overall),
+  };
+  if (tripCol && n) {
+    const brief = r => ({ value: r.v, date: r.date, time: r.time, dropoffTime: r.dropoff_time, vehicle: r.vehicle, driver: r.driver, pickupArea: r.pickup_area, dropoffArea: r.dropoff_area });
+    const sumField = { fare: agg.fare, fareWithTax: agg.fwt, totalFare: agg.tf, distance: agg.dist, occupiedMinutes: agg.occ, emptyMinutes: agg.emp }[tripField] || 0;
+    result.perTrip = { field: tripField, average: tqRound(sumField / n, 1), max: brief(res[4].results[0]), min: brief(res[5].results[0]) };
+  }
+  const byDay = new Map((res[2].results || []).map(r => [r.date, r]));
+  if (TQ_ADDITIVE.includes(metric) && groupBy !== "date" && calendarDays.length) {
+    const s = tqStatsOver(calendarDays.map(d => ({ key: d, value: tqMetricFromAgg(byDay.get(d), metric) })));
+    if (s) result.perDay = { days: s.groupCount, average: s.average, max: s.max, min: s.min };
+  }
+  if (n) {
+    const dayStats = col => {
+      const e = tqStatsOver(calendarDays.map(d => ({ key: d, value: (byDay.get(d) && byDay.get(d)[col]) || 0 })));
+      return e ? { avg: e.average, max: e.max, min: e.min } : null;
+    };
+    const block = (col, maxK, minK) => ({ total: agg[col] || 0, perTripAvg: tqRound((agg[col] || 0) / n, 1), perTripMax: agg[maxK], perTripMin: agg[minK], perDay: dayStats(col) });
+    const disp = { with: null, without: null };
+    for (const r of res[3].results || []) { if (Number(r.dispatch)) disp.with = r; else disp.without = r; }
+    const dBlock = r => ({ trips: r ? Number(r.n) : 0, fare: r ? r.fare || 0 : 0, fareWithTax: r ? r.fwt || 0 : 0, dispatchFee: r ? r.df || 0 : 0, totalFare: r ? r.tf || 0 : 0 });
+    result.fareSummary = {
+      rule: meta.fareRule || "税抜=距離×600円, 税込=税抜+消費税10%, 収入=税込+迎車料金400円(迎車時のみ・非課税)",
+      taxExcluded: block("fare", "fare_max", "fare_min"),
+      taxIncluded: block("fwt", "fwt_max", "fwt_min"),
+      totalIncome: block("tf", "tf_max", "tf_min"),
+      dispatchFeeTotal: dBlock(disp.with).dispatchFee + dBlock(disp.without).dispatchFee,
+      byDispatch: { 迎車あり: dBlock(disp.with), 迎車なし: dBlock(disp.without) },
+    };
+  }
+  if (dim) {
+    let domain;
+    if (groupBy === "date") domain = calendarDays;
+    else if (groupBy === "month") domain = (res[monthIdx].results || []).map(r => r.month);
+    else if (groupBy === "hour") domain = hourSet ? [...hourSet] : Array.from({ length: 24 }, (_, h) => h);
+    else if (groupBy === "weekday") domain = weekdaySet ? TQ_WEEKDAYS.filter(w => weekdaySet.has(w)) : [...TQ_WEEKDAYS];
+    else if (groupBy === "vehicle") domain = vehicleSet ? [...vehicleSet] : [...V.vehicles];
+    else if (groupBy === "driver") domain = driverSet ? [...driverSet] : [...V.drivers];
+    else if (groupBy === "pickupArea") domain = pickupSet ? [...pickupSet] : [...V.areas];
+    else if (groupBy === "dropoffArea") domain = dropoffSet ? [...dropoffSet] : [...V.areas];
+    else if (groupBy === "pickupTown") domain = pickupTownSet ? [...pickupTownSet] : (pickupSet ? [...pickupSet].flatMap(a => V.areaTowns[a] || []) : [...V.towns]);
+    else if (groupBy === "dropoffTown") domain = dropoffTownSet ? [...dropoffTownSet] : (dropoffSet ? [...dropoffSet].flatMap(a => V.areaTowns[a] || []) : [...V.towns]);
+    const buckets = new Map(domain.map(k => [k, null]));
+    for (const r of res[groupIdx].results || []) buckets.set(r.k, r);
+    const labelOf = k => (dim.format ? dim.format(k) : String(k));
+    const entries = [...buckets.entries()].map(([k, a]) => ({ key: labelOf(k), rawKey: k, value: tqMetricFromAgg(a, metric), trips: a ? Number(a.n) : 0 }));
+    result.groupStats = { groupBy, groupLabel: dim.label, ...tqStatsOver(entries) };
+    if (!TQ_ADDITIVE.includes(metric)) delete result.groupStats.sum;
+    const sort = args.sort || (groupBy === "date" || groupBy === "hour" || groupBy === "month" || groupBy === "weekday" ? "key" : "desc");
+    // v26: compare values rounded to 1e-6 so float-noise "ties" keep the domain order (same in JS and D1)
+    if (sort === "desc") entries.sort((a, b) => (tqSortKey(b.value) ?? -Infinity) - (tqSortKey(a.value) ?? -Infinity));
+    else if (sort === "asc") entries.sort((a, b) => (tqSortKey(a.value) ?? Infinity) - (tqSortKey(b.value) ?? Infinity));
+    else if (dim.sort) entries.sort((a, b) => dim.sort(a.rawKey, b.rawKey));
+    else entries.sort((a, b) => (a.rawKey < b.rawKey ? -1 : a.rawKey > b.rawKey ? 1 : 0));
+    const defaultLimit = entries.length <= TQ_FULL_DOMAIN_MAX ? entries.length : TQ_DEFAULT_GROUPS;
+    const limit = Math.max(1, Math.min(TQ_MAX_GROUPS, parseInt(args.limit, 10) || defaultLimit));
+    result.groups = entries.slice(0, limit).map(e => ({ key: e.key, value: tqRound(e.value, 1), trips: e.trips }));
+    if (entries.length > limit) result.groupsTruncated = `${entries.length}グループ中 ${limit}件のみ表示（sort=${sort}）`;
+  }
+  result.note = meta.note || TQ_DEFAULT_NOTE;
+  return result;
+}
+
+// queryTaxiData (panel data: bar / line / table / kpi). No free filters here.
+async function tqPanelData(db, spec = {}) {
+  const errs = [];
+  if (!spec.metric || !TQ_METRICS[spec.metric]) errs.push(`無効なメトリック: ${spec.metric}`);
+  if (spec.groupBy && !TQ_DIMENSIONS[spec.groupBy]) errs.push(`無効なグループ化: ${spec.groupBy}`);
+  if (spec.chartType && !["bar", "line", "table", "kpi"].includes(spec.chartType)) errs.push(`無効なチャートタイプ: ${spec.chartType}`);
+  if (errs.length) return { error: errs.join(", "), data: [] };
+  const def = TQ_METRICS[spec.metric];
+  if (!spec.groupBy) {
+    const a = await db.prepare(`SELECT ${TQ_AGG_SELECT} FROM trips`).first();
+    const value = tqPanelMetric(a, spec.metric);
+    return { data: [{ label: def.label, value, formatted: def.format(value) }], total: value, totalFormatted: def.format(value) };
+  }
+  const dim = TQ_DIMENSIONS[spec.groupBy];
+  const { results } = await db.prepare(`SELECT ${dim.col} AS k, ${TQ_AGG_SELECT} FROM trips GROUP BY ${dim.col} ORDER BY MIN(id)`).all();
+  let result = (results || []).map(r => {
+    const value = tqPanelMetric(r, spec.metric);
+    return { key: r.k, label: dim.format ? dim.format(r.k) : String(r.k), value, formatted: def.format(value), count: Number(r.n) };
+  });
+  if (dim.sort) result.sort((a, b) => dim.sort(a.key, b.key));
+  else if (spec.sort === "desc") result.sort((a, b) => tqSortKey(b.value) - tqSortKey(a.value));
+  else if (spec.sort === "asc") result.sort((a, b) => tqSortKey(a.value) - tqSortKey(b.value));
+  if (spec.limit && spec.limit > 0) result = result.slice(0, spec.limit);
+  const total = result.reduce((s, r) => s + r.value, 0);
+  return { data: result, total, totalFormatted: def.format(total) };
+}
+
+// Fixed dashboard panels: latest day's sales / trips, peak hour, utilisation
+async function tqFixedPanels(db) {
+  const latest = await db.prepare("SELECT MAX(date) AS d FROM trips").first("d");
+  const res = await db.batch([
+    db.prepare("SELECT COUNT(*) AS n, SUM(fare) AS fare FROM trips WHERE date = ?").bind(latest),
+    db.prepare("SELECT hour, COUNT(*) AS n FROM trips GROUP BY hour ORDER BY n DESC, hour ASC LIMIT 1"),
+    db.prepare("SELECT SUM(occupied_minutes) AS occ, SUM(empty_minutes) AS emp FROM trips"),
+  ]);
+  const day = res[0].results[0] || {}, peak = res[1].results[0] || {}, u = res[2].results[0] || {};
+  return { latestDate: latest, dayFare: day.fare || 0, dayTrips: Number(day.n) || 0, peakHour: peak.hour ?? null, utilizationRate: (u.occ || 0) + (u.emp || 0) ? (u.occ || 0) / ((u.occ || 0) + (u.emp || 0)) * 100 : null };
+}
+
+async function handleQueryRequest(request, env, taxiAllowed) {
+  if (request.method !== "POST") return new Response("Method Not Allowed", { status: 405, headers: { Allow: "POST" } });
+  if (!taxiAllowed) return jsonResponse(401, { error: { message: "Unauthorized" } });
+  const db = env.DB;
+  if (!db || typeof db.prepare !== "function") return jsonResponse(503, { error: { message: "D1 database is not bound here", kind: "db-unavailable" } });
+  const len = Number(request.headers.get("Content-Length") || 0);
+  if (len > QUERY_MAX_BODY_BYTES) return jsonResponse(413, { error: { message: "Request too large" } });
+  let body;
+  try {
+    const text = await request.text();
+    if (text.length > QUERY_MAX_BODY_BYTES) return jsonResponse(413, { error: { message: "Request too large" } });
+    body = JSON.parse(text || "{}");
+  } catch (e) {
+    return jsonResponse(400, { error: { message: "Invalid JSON" } });
+  }
+  const op = body && body.op;
+  const t0 = Date.now();
+  try {
+    let result;
+    if (op === "query_data") result = await tqRunFreeQuery(db, body.args && typeof body.args === "object" ? body.args : {});
+    else if (op === "panel") {
+      const spec = body.spec && typeof body.spec === "object" ? body.spec : {};
+      if (spec.filters && Object.keys(spec.filters).length) return jsonResponse(400, { error: { message: "panel filters are not supported", kind: "unsupported" } });
+      result = await tqPanelData(db, spec);
+    } else if (op === "fixed") result = await tqFixedPanels(db);
+    else if (op === "meta") {
+      const base = await tqLoadBase(db);
+      result = { trips: base.tripCount, dataRange: base.dataRange, note: base.meta.note || TQ_DEFAULT_NOTE, dataset: base.meta.dataset || "", vehicles: base.V.vehicles.length, drivers: base.V.drivers.length, areas: base.V.areas.length, towns: base.V.towns.length };
+    } else return jsonResponse(400, { error: { message: "Unknown op (query_data | panel | fixed | meta)" } });
+    return new Response(JSON.stringify({ ok: true, op, ms: Date.now() - t0, result }), {
+      status: 200,
+      headers: { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" },
+    });
+  } catch (e) {
+    console.error(JSON.stringify({ event: "taxi-query-error", op, message: String(e?.message || e).slice(0, 300) }));
+    return jsonResponse(500, { error: { message: "Query failed", kind: "db-error" } });
+  }
+}

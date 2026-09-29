@@ -17,5 +17,15 @@
   // v23: Workers AI (Whisper speech-to-text for /api/stt)
   "ai": {
     "binding": "AI"
-  }
+  },
+
+  // v26: taxi analytics data (trips / vocab / meta). Schema: migrations/, data: scripts/import-trips.mjs
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "taxi-analytics",
+      "database_id": "3af31fba-c33d-4ebd-b251-b4bdf62f8b5b",
+      "migrations_dir": "migrations"
+    }
+  ]
 }
