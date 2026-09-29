@@ -12,5 +12,10 @@
     "directory": "./public",
     "binding": "ASSETS",
     "run_worker_first": true
+  },
+
+  // v23: Workers AI (Whisper speech-to-text for /api/stt)
+  "ai": {
+    "binding": "AI"
   }
 }

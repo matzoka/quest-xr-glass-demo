@@ -238,6 +238,65 @@ async function handleLlmRelay(request, env, taxiAllowed, selfHost) {
 }
 
 /**
+ * v23: speech-to-text with Cloudflare Workers AI Whisper: POST /api/stt
+ * - Requires the taxi cookie (401 otherwise), body JSON { audio: "<base64 WAV>" }
+ * - Needs the Workers AI binding "AI" (wrangler.jsonc "ai"); without it (e.g. Pages
+ *   _worker.js with no binding) answers 503 { error.kind: "stt-unavailable" } so the
+ *   client falls back to the mimo (OpenCode) path.
+ */
+const STT_PATH = "/api/stt";
+const STT_MODEL = "@cf/openai/whisper-large-v3-turbo";
+const STT_MAX_BODY_BYTES = 2 * 1024 * 1024; // 30 s of 16 kHz mono WAV = 960,044 B -> ~1.28 MB base64
+const STT_BEAM_SIZE = 10;
+const STT_BEAM_SIZE_MAX = 20;
+const STT_INITIAL_PROMPT =
+  "タクシー売上分析の音声質問です。日次売上、乗車回数、ピーク時間帯、車両稼働率、月別売上、曜日別、車両別、" +
+  "パネルを作成して、パネルを消して、クリア。迎車。調布、調布駅周辺、国領、仙川、つつじヶ丘・柴崎、深大寺、西調布・飛田給、三鷹、府中。";
+
+async function handleSttRequest(request, env, taxiAllowed) {
+  if (request.method !== "POST") {
+    return new Response("Method Not Allowed", { status: 405, headers: { Allow: "POST" } });
+  }
+  if (!taxiAllowed) return jsonResponse(401, { error: { message: "Unauthorized" } });
+  if (!env || !env.AI || typeof env.AI.run !== "function") {
+    return jsonResponse(503, { error: { message: "Whisper (Workers AI) is not configured on this deployment", kind: "stt-unavailable" } });
+  }
+  const declared = parseInt(request.headers.get("Content-Length") || "0", 10);
+  if (declared > STT_MAX_BODY_BYTES) return jsonResponse(413, { error: { message: "Payload too large" } });
+  const raw = await request.arrayBuffer();
+  if (raw.byteLength > STT_MAX_BODY_BYTES) return jsonResponse(413, { error: { message: "Payload too large" } });
+  let input;
+  try {
+    input = JSON.parse(new TextDecoder().decode(raw));
+  } catch (e) {
+    return jsonResponse(400, { error: { message: "Invalid JSON" } });
+  }
+  const audio = typeof input?.audio === "string" ? input.audio.replace(/^data:[^,]*,/, "") : "";
+  if (!audio || !/^[A-Za-z0-9+/=]+$/.test(audio)) return jsonResponse(400, { error: { message: "audio must be a base64 string" } });
+  const beam = Math.max(1, Math.min(STT_BEAM_SIZE_MAX, parseInt(input.beam_size, 10) || STT_BEAM_SIZE));
+  const t0 = Date.now();
+  let result;
+  try {
+    result = await env.AI.run(STT_MODEL, {
+      audio,
+      task: "transcribe",
+      language: "ja",
+      initial_prompt: STT_INITIAL_PROMPT,
+      beam_size: beam,
+      vad_filter: true,
+      condition_on_previous_text: false,
+    });
+  } catch (e) {
+    return jsonResponse(502, { error: { message: `Whisper failed: ${String(e?.message || e).slice(0, 300)}`, kind: "stt-error" } });
+  }
+  const text = String(result?.text ?? result?.transcription_info?.text ?? "").trim();
+  return new Response(JSON.stringify({ text, model: STT_MODEL, beam_size: beam, ms: Date.now() - t0 }), {
+    status: 200,
+    headers: { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" },
+  });
+}
+
+/**
  * Main request handler
  */
 export default {
@@ -299,6 +358,9 @@ export default {
     // Same-origin LLM relay (requires taxi cookie)
     if (pathname === LLM_RELAY_PATH) {
       return handleLlmRelay(request, env, taxiAllowed, url.hostname.toLowerCase());
+    }
+    if (pathname === STT_PATH) {
+      return handleSttRequest(request, env, taxiAllowed);
     }
 
     // Block direct access to taxi room assets if not authenticated

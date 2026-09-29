@@ -22,7 +22,7 @@ if (TAXI_ALLOWED && taxiAnalyticsButton) {
   taxiAnalyticsButton.removeAttribute("hidden");
 }
 
-const APP_VERSION = "v2026.09.29.22";
+const APP_VERSION = "v2026.09.29.23";
 const DEBUG_TOP_VIEW = new URLSearchParams(window.location.search).has("topDebug");
 const DEBUG_TOP_VIEW_DISTANCE = Number(new URLSearchParams(window.location.search).get("topDebugDist"));
 const DEBUG_BLACK_HOLE_VIEW = new URLSearchParams(window.location.search).has("blackHoleDebug");
@@ -10073,6 +10073,62 @@ function taxiCleanTranscript(text) {
   return t;
 }
 
+// v23: speech-to-text engine. "whisper" = Cloudflare Workers AI Whisper via the Worker's /api/stt
+// (default); "mimo" = the OpenCode chat/completions input_audio path below (sttModel field).
+const TAXI_STT_PATH = "/api/stt";
+const TAXI_STT_ENGINE_DEFAULT = "whisper";
+const TAXI_WHISPER_TIMEOUT_MS = 45000;
+
+function taxiSttEngine(config) {
+  return config && config.sttEngine === "mimo" ? "mimo" : TAXI_STT_ENGINE_DEFAULT;
+}
+
+async function taxiWhisperTranscribe(wavBase64) {
+  const controller = typeof AbortController === "function" ? new AbortController() : null;
+  const timer = controller ? setTimeout(() => controller.abort(), TAXI_WHISPER_TIMEOUT_MS) : null;
+  let res;
+  try {
+    res = await fetch(TAXI_STT_PATH, {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ audio: wavBase64 }),
+      ...(controller ? { signal: controller.signal } : {}),
+    });
+  } catch (e) {
+    throw new TaxiLlmError(e && e.name === "AbortError" ? "Whisperの応答がタイムアウトしました" : "Whisperに接続できませんでした", { kind: "stt-network" });
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+  let data = null;
+  try { data = await res.json(); } catch (e) { data = null; }
+  if (!res.ok) {
+    const kind = data?.error?.kind || (res.status === 401 ? "unauthorized" : "stt-http");
+    const msg = kind === "stt-unavailable" ? "この環境ではWhisperが使えません" : `Whisperエラー（${res.status}）`;
+    throw new TaxiLlmError(msg, { kind, status: res.status });
+  }
+  // Whisper tends to end Japanese utterances with "、"
+  return taxiCleanTranscript(data?.text).replace(/[、,，\s]+$/, "");
+}
+
+// Returns { text, engine, note }. Whisper errors / empty results fall back to mimo for this utterance.
+async function taxiTranscribeWithEngine(wavBase64, config) {
+  if (taxiSttEngine(config) === "whisper") {
+    try {
+      const text = await taxiWhisperTranscribe(wavBase64);
+      if (text) return { text, engine: "whisper", note: "" };
+      console.warn("[taxi-voice] whisper returned empty text, falling back to mimo");
+    } catch (e) {
+      console.warn("[taxi-voice] whisper failed, falling back to mimo", e);
+      const text = await taxiTranscribeAudioBase64(wavBase64, config);
+      return { text, engine: "mimo", note: `（Whisperが使えなかったため、mimoで認識しました：${e?.message || "エラー"}）` };
+    }
+    const text = await taxiTranscribeAudioBase64(wavBase64, config);
+    return { text, engine: "mimo", note: text ? "（Whisperで聞き取れなかったため、mimoで認識しました）" : "" };
+  }
+  return { text: await taxiTranscribeAudioBase64(wavBase64, config), engine: "mimo", note: "" };
+}
+
 async function taxiTranscribeAudioBase64(wavBase64, config) {
   for (let attempt = 0; attempt < 2; attempt++) {
     const data = await taxiLlmRelayFetch(config, {
@@ -10547,10 +10603,11 @@ async function taxiTranscribeAndAsk(wavBase64) {
   }
   taxiVoiceBusy = true;
   updateTaxiMicButton();
-  setTaxiVoiceStatus("文字起こし中…（AI）");
+  setTaxiVoiceStatus(taxiSttEngine(config) === "whisper" ? "文字起こし中…（Whisper）" : "文字起こし中…（mimo）");
   let text = "";
+  let note = "";
   try {
-    text = await taxiTranscribeAudioBase64(wavBase64, config);
+    ({ text, note } = await taxiTranscribeWithEngine(wavBase64, config));
   } catch (e) {
     taxiVoiceBusy = false;
     updateTaxiMicButton();
@@ -10563,7 +10620,7 @@ async function taxiTranscribeAndAsk(wavBase64) {
     setTaxiVoiceStatus("聞き取れませんでした。もう一度お試しください。");
     return;
   }
-  setTaxiVoiceStatus(`認識: 「${text}」`);
+  setTaxiVoiceStatus(`認識: 「${text}」${note}`);
   processTaxiConversation(text);
 }
 
@@ -11082,6 +11139,7 @@ const llmEndpointEl = document.getElementById("llmEndpoint");
 const llmApiKeyEl = document.getElementById("llmApiKey");
 const llmModelEl = document.getElementById("llmModel");
 const llmSttModelEl = document.getElementById("llmSttModel");
+const llmSttEngineEl = document.getElementById("llmSttEngine");
 const llmApiKeyToggleEl = document.getElementById("llmApiKeyToggle");
 const llmApiKeyHintEl = document.getElementById("llmApiKeyHint");
 
@@ -11210,6 +11268,7 @@ taxiSettingsBtnEl?.addEventListener("click", () => {
       if (llmModelEl) llmModelEl.value = config.model || "";
       if (llmSttModelEl) llmSttModelEl.value = config.sttModel || "";
     }
+    if (llmSttEngineEl) llmSttEngineEl.value = taxiSttEngine(config);
     updateTaxiApiKeyHint(storedRawKey);
   }
 });
@@ -11219,6 +11278,7 @@ llmSaveBtnEl?.addEventListener("click", () => {
   const apiKey = taxiSanitizeApiKey(llmApiKeyEl?.value);
   const model = llmModelEl?.value.trim();
   const sttModel = llmSttModelEl?.value.trim() || "";
+  const sttEngine = llmSttEngineEl?.value === "mimo" ? "mimo" : "whisper";
   if (llmApiKeyEl) llmApiKeyEl.value = apiKey;
   updateTaxiApiKeyHint();
   
@@ -11228,7 +11288,7 @@ llmSaveBtnEl?.addEventListener("click", () => {
   }
   
   try {
-    localStorage.setItem(TAXI_CONVERSATION_STORAGE_KEY, JSON.stringify({ endpoint, apiKey, model, sttModel }));
+    localStorage.setItem(TAXI_CONVERSATION_STORAGE_KEY, JSON.stringify({ endpoint, apiKey, model, sttModel, sttEngine }));
     if (llmStatusEl) llmStatusEl.textContent = "設定を保存しました。LLMモードで動作します。";
     if (!(window.SpeechRecognition || window.webkitSpeechRecognition)) {
       // No Web Speech (Quest Browser): voice input records audio -> ask for the mic now, outside VR.
@@ -11250,6 +11310,7 @@ llmClearBtnEl?.addEventListener("click", () => {
   if (llmApiKeyEl) llmApiKeyEl.value = "";
   if (llmModelEl) llmModelEl.value = "";
   if (llmSttModelEl) llmSttModelEl.value = "";
+  if (llmSttEngineEl) llmSttEngineEl.value = TAXI_STT_ENGINE_DEFAULT;
   updateTaxiApiKeyHint();
   if (llmStatusEl) llmStatusEl.textContent = "設定をクリアしました。オフラインモードで動作します。";
 });
