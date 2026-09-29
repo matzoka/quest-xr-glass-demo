@@ -22,7 +22,7 @@ if (TAXI_ALLOWED && taxiAnalyticsButton) {
   taxiAnalyticsButton.removeAttribute("hidden");
 }
 
-const APP_VERSION = "v2026.09.29.11";
+const APP_VERSION = "v2026.09.29.12";
 const DEBUG_TOP_VIEW = new URLSearchParams(window.location.search).has("topDebug");
 const DEBUG_TOP_VIEW_DISTANCE = Number(new URLSearchParams(window.location.search).get("topDebugDist"));
 const DEBUG_BLACK_HOLE_VIEW = new URLSearchParams(window.location.search).has("blackHoleDebug");
@@ -8616,7 +8616,6 @@ let taxiFocusedPanelIndex = -1;
 let taxiFocusAnimationT = 0;
 let taxiSpeechRecognition = null;
 let taxiIsListening = false;
-let taxiSpeechSynthesisEnabled = true;
 
 const taxiPanelKeywords = {
   0: ["売上", "売り上げ", "収益", "金額", "日次", "revenue", "sales", "daily"],
@@ -9120,28 +9119,6 @@ async function processTaxiConversation(userMessage) {
   if (response.focusPanel >= 0 && response.focusPanel < taxiAnalyticsPanels.length) {
     setTaxiFocusedPanel(response.focusPanel);
   }
-  
-  if (taxiSpeechSynthesisEnabled && "speechSynthesis" in window) {
-    speakTaxiResponse(response.text);
-  }
-}
-
-function speakTaxiResponse(text) {
-  if (!("speechSynthesis" in window)) return;
-  
-  window.speechSynthesis.cancel();
-  
-  const utterance = new SpeechSynthesisUtterance(text);
-  utterance.lang = "ja-JP";
-  utterance.rate = 1.0;
-  utterance.pitch = 1.0;
-  utterance.volume = 0.8;
-  
-  const voices = window.speechSynthesis.getVoices();
-  const japaneseVoice = voices.find(v => v.lang.startsWith("ja"));
-  if (japaneseVoice) utterance.voice = japaneseVoice;
-  
-  window.speechSynthesis.speak(utterance);
 }
 
 function initTaxiSpeechRecognition() {
