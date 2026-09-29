@@ -22,7 +22,7 @@ if (TAXI_ALLOWED && taxiAnalyticsButton) {
   taxiAnalyticsButton.removeAttribute("hidden");
 }
 
-const APP_VERSION = "v2026.09.29.24";
+const APP_VERSION = "v2026.09.29.25";
 const DEBUG_TOP_VIEW = new URLSearchParams(window.location.search).has("topDebug");
 const DEBUG_TOP_VIEW_DISTANCE = Number(new URLSearchParams(window.location.search).get("topDebugDist"));
 const DEBUG_BLACK_HOLE_VIEW = new URLSearchParams(window.location.search).has("blackHoleDebug");
@@ -8502,6 +8502,7 @@ function aggregateMetric(rows, metric, metricDef) {
 // ---------------------------------------------------------------------------
 const TAXI_QUERY_MAX_GROUPS = 31;
 const TAXI_QUERY_DEFAULT_GROUPS = 10;
+const TAXI_QUERY_FULL_DOMAIN_MAX = 24;
 const TAXI_ADDITIVE_METRICS = ["tripCount", "fare", "fareWithTax", "totalFare", "dispatchFee", "distance", "occupiedTime", "emptyTime"];
 const TAXI_PER_TRIP_FIELDS = { fare: "fare", fareWithTax: "fareWithTax", totalFare: "totalFare", avgFare: "fare", distance: "distance", avgDistance: "distance", occupiedTime: "occupiedMinutes", emptyTime: "emptyMinutes" };
 const TAXI_READINGS = {
@@ -8951,7 +8952,10 @@ function runTaxiFreeQuery(args = {}) {
     else if (dim.sort) entries.sort((a, b) => dim.sort(a.rawKey, b.rawKey));
     else entries.sort((a, b) => (a.rawKey < b.rawKey ? -1 : a.rawKey > b.rawKey ? 1 : 0));
 
-    const limit = Math.max(1, Math.min(TAXI_QUERY_MAX_GROUPS, parseInt(args.limit, 10) || TAXI_QUERY_DEFAULT_GROUPS));
+    // v25: small closed domains (hour 24, weekday 7, month, vehicles, drivers, areas) are returned whole by
+    // default; a 10-group cut made the model re-query hour/weekday data (extra rounds, 50 KB prompts).
+    const defaultLimit = entries.length <= TAXI_QUERY_FULL_DOMAIN_MAX ? entries.length : TAXI_QUERY_DEFAULT_GROUPS;
+    const limit = Math.max(1, Math.min(TAXI_QUERY_MAX_GROUPS, parseInt(args.limit, 10) || defaultLimit));
     result.groups = entries.slice(0, limit).map(e => ({ key: e.key, value: taxiRound(e.value, 1), trips: e.trips }));
     if (entries.length > limit) result.groupsTruncated = `${entries.length}グループ中 ${limit}件のみ表示（sort=${sort}）`;
   }
@@ -9709,7 +9713,7 @@ const LLM_TOOLS = [
     type: "function",
     function: {
       name: "query_data",
-      description: "サンプルのタクシー乗車データを自由な条件で集計し、統計値(JSON)を返す。数値を答える前に必ずこれを呼ぶこと。返り値: value=条件全体の集計値, matchedTrips=該当乗車数, perDay=1日あたりの平均/最大日/最小日(加算系メトリック), perTrip=1乗車あたりの平均/最大/最小(売上・距離・時間), groupBy指定時は groupStats(グループ間の平均/最大/最小) と groups(上位N件)。fareSummary には常に税抜(taxExcluded)・税込(taxIncluded)・収入=税込+迎車料金(totalIncome)それぞれの合計/1乗車平均・最高・最低/1日あたり平均・最高日・最低日と、迎車あり/なし別(byDispatch)の件数・金額が入る。未知の値を指定すると error と suggestions(近い候補) と validValues が返る。",
+      description: "サンプルのタクシー乗車データを自由な条件で集計し、統計値(JSON)を返す。数値を答える前に必ずこれを呼ぶこと。返り値: value=条件全体の集計値, matchedTrips=該当乗車数, perDay=1日あたりの平均/最大日/最小日(加算系メトリック), perTrip=1乗車あたりの平均/最大/最小(売上・距離・時間), groupBy指定時は groupStats(グループ間の平均/最大/最小) と groups(24グループ以下=時間帯・曜日・月などは全件、日付など多い場合は上位10件。limitで変更可)。売上以外のメトリックのgroupBy結果では fareSummary は省略される。fareSummary には常に税抜(taxExcluded)・税込(taxIncluded)・収入=税込+迎車料金(totalIncome)それぞれの合計/1乗車平均・最高・最低/1日あたり平均・最高日・最低日と、迎車あり/なし別(byDispatch)の件数・金額が入る。未知の値を指定すると error と suggestions(近い候補) と validValues が返る。",
       parameters: {
         type: "object",
         properties: {
@@ -9869,6 +9873,7 @@ function taxiEnsureClaimedPanel(text, userMessage, state) {
 }
 const TAXI_LLM_MAX_TOKENS = 1600;
 const TAXI_LLM_RETRY_MAX_TOKENS = 3200;
+const TAXI_LLM_CUT_SHORT_CHARS = 60; // v25: finish=length with less than this = no real answer yet
 
 // Known speech-recognition mishearings, detected in the user's own words (the model tends to
 // silently convert them, so the client adds the もしかして confirmation deterministically)
@@ -9884,6 +9889,18 @@ function taxiDetectMishearings(text) {
     if (hit) found.push({ heard: hit[0], meant: m.meant, reading: m.reading });
   }
   return found;
+}
+
+// v25: what the LLM sees of a grouped query_data result for a non-money metric (e.g. 乗車回数 by hour):
+// no fareSummary (~1 KB of 売上 figures nobody asked for) and no groups[].trips when it equals value.
+// Cuts an hourly tripCount result from ~2.3 KB to ~0.9 KB; 7 weekday×hour queries no longer build 30 KB+ prompts.
+const TAXI_MONEY_METRICS = new Set(["fare", "fareWithTax", "totalFare", "dispatchFee", "avgFare"]);
+function taxiCompactQueryResultForLlm(obj) {
+  if (!obj || typeof obj !== "object" || !Array.isArray(obj.groups) || !obj.metric || TAXI_MONEY_METRICS.has(obj.metric)) return obj;
+  const out = { ...obj };
+  if (out.fareSummary) { delete out.fareSummary; out.fareSummaryOmitted = "売上が必要なら metric=fare で query_data を呼ぶ"; }
+  out.groups = obj.groups.map((g) => (g && g.trips === g.value ? (({ trips, ...rest }) => rest)(g) : g));
+  return out;
 }
 
 function taxiCompactToolJson(obj) {
@@ -9945,7 +9962,7 @@ function executeTaxiToolCall(funcName, args, state) {
 // LLM relay fetch with readable (Japanese) errors, API-key sanitising, and
 // speech-to-text through the same relay (Quest Browser has no Web Speech API).
 // ---------------------------------------------------------------------------
-const TAXI_LLM_CLIENT_TIMEOUT_MS = 75000;
+const TAXI_LLM_CLIENT_TIMEOUT_MS = 88000; // v25: per request incl. body; above the relay's 85 s (clear 504), below the 90 s question deadline
 const TAXI_STT_MODEL_DEFAULT = "mimo-v2.5"; // OpenCode Go: accepts input_audio (wav) in chat/completions
 const TAXI_STT_MAX_TOKENS = 1200;
 const TAXI_STT_PROMPT = `タクシー業務分析アシスタントへの日本語の音声質問です。聞こえたとおりに日本語で文字起こしし、文字起こし結果の1文だけを出力してください（説明・引用符なし）。
@@ -10002,45 +10019,110 @@ function taxiDescribeLlmHttpError(status, bodyText, relayHeader) {
   return { kind: "http", message: withDetail(`LLMの呼び出しに失敗しました（${status}）`) };
 }
 
-async function taxiLlmRelayFetch(config, payload) {
+// v25: one AbortController per chat question (deadline / クリア) is linked into every fetch;
+// the per-request timeout now stays armed until the response body has been read.
+const TAXI_QUESTION_DEADLINE_MS = 90000;
+const TAXI_DEADLINE_MESSAGE = "時間がかかりすぎたため中断しました（90秒）。もう一度お試しください";
+const taxiActiveAborts = new Set(); // in-flight chat questions and transcriptions (aborted by クリア)
+
+function taxiAbortError(signal) {
+  const kind = signal && signal.taxiKind === "deadline" ? "deadline" : "cancelled";
+  return new TaxiLlmError(kind === "deadline" ? TAXI_DEADLINE_MESSAGE : "中断しました", { kind });
+}
+
+function taxiAbortController(ctl, kind) {
+  if (!ctl || ctl.signal.aborted) return;
+  ctl.signal.taxiKind = kind;
+  ctl.abort();
+}
+
+// AbortController that fires on the outer signal or after timeoutMs.
+function taxiLinkedAbort(signal, timeoutMs) {
+  const controller = typeof AbortController === "function" ? new AbortController() : null;
+  const state = { controller, timedOut: false };
+  const onOuter = () => controller && controller.abort();
+  const timer = controller && timeoutMs ? setTimeout(() => { state.timedOut = true; controller.abort(); }, timeoutMs) : null;
+  if (signal && typeof signal.addEventListener === "function") signal.addEventListener("abort", onOuter, { once: true });
+  state.cleanup = () => {
+    if (timer) clearTimeout(timer);
+    if (signal && typeof signal.removeEventListener === "function") signal.removeEventListener("abort", onOuter);
+  };
+  return state;
+}
+
+// Rejects with an AbortError as soon as `signal` aborts, even if `promise` itself never settles
+// (fetch() and body reads normally reject on abort; this also covers stalled streams / odd runtimes).
+async function taxiRaceAbort(promise, signal) {
+  if (!signal) return promise;
+  if (signal.aborted) { promise.catch(() => {}); throw new DOMException("aborted", "AbortError"); }
+  let onAbort;
+  const aborted = new Promise((_, reject) => {
+    onAbort = () => reject(new DOMException("aborted", "AbortError"));
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
+  promise.catch(() => {});
+  try {
+    return await Promise.race([promise, aborted]);
+  } finally {
+    signal.removeEventListener("abort", onAbort);
+  }
+}
+
+async function taxiReadBodyTextRaw(response) {
+  if (typeof response.text === "function") return response.text();
+  let data; // test doubles without text()
+  try { data = await response.json(); } catch (e) { return "\u0000not-json"; }
+  return JSON.stringify(data);
+}
+
+async function taxiLlmRelayFetch(config, payload, signal = null) {
   const apiKey = taxiSanitizeApiKey(config.apiKey);
   if (!apiKey) throw new TaxiLlmError("APIキーが未設定です（設定の⚙でキーを入力してください）", { kind: "no-key" });
   if (/[^\x21-\x7e]/.test(apiKey)) throw new TaxiLlmError("APIキーに使えない文字（全角文字など）が含まれています（設定の⚙でキーを貼り直してください）", { kind: "api-key" });
-  const controller = typeof AbortController === "function" ? new AbortController() : null;
-  const timer = controller ? setTimeout(() => controller.abort(), TAXI_LLM_CLIENT_TIMEOUT_MS) : null;
-  let response;
+  if (signal?.aborted) throw taxiAbortError(signal);
+  const link = taxiLinkedAbort(signal, TAXI_LLM_CLIENT_TIMEOUT_MS);
+  const timeoutError = () => new TaxiLlmError(`LLMの応答がタイムアウトしました（${Math.round(TAXI_LLM_CLIENT_TIMEOUT_MS / 1000)}秒）。もう一度お試しください`, { kind: "timeout" });
   try {
-    response = await fetch(TAXI_LLM_RELAY_PATH, {
-      method: "POST",
-      credentials: "same-origin",
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": `Bearer ${apiKey}`,
-        "X-LLM-Endpoint": String(config.endpoint || "").trim(),
-        "X-Opencode-Session": taxiLlmSessionId,
-      },
-      body: JSON.stringify(payload),
-      ...(controller ? { signal: controller.signal } : {}),
-    });
-  } catch (e) {
-    if (e && e.name === "AbortError") {
-      throw new TaxiLlmError(`LLMの応答がタイムアウトしました（${Math.round(TAXI_LLM_CLIENT_TIMEOUT_MS / 1000)}秒）。もう一度お試しください`, { kind: "timeout" });
+    let response;
+    try {
+      response = await taxiRaceAbort(fetch(TAXI_LLM_RELAY_PATH, {
+        method: "POST",
+        credentials: "same-origin",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${apiKey}`,
+          "X-LLM-Endpoint": String(config.endpoint || "").trim(),
+          "X-Opencode-Session": taxiLlmSessionId,
+        },
+        body: JSON.stringify(payload),
+        ...(link.controller ? { signal: link.controller.signal } : {}),
+      }), link.controller ? link.controller.signal : null);
+    } catch (e) {
+      if (signal?.aborted) throw taxiAbortError(signal);
+      if (link.timedOut || (e && e.name === "AbortError")) throw timeoutError();
+      throw new TaxiLlmError("LLMに接続できませんでした（ネットワークエラー）。通信状態を確認してください", { kind: "network" });
     }
-    throw new TaxiLlmError("LLMに接続できませんでした（ネットワークエラー）。通信状態を確認してください", { kind: "network" });
+    let bodyText = "";
+    try {
+      bodyText = await taxiRaceAbort(taxiReadBodyTextRaw(response), link.controller ? link.controller.signal : null);
+    } catch (e) {
+      if (signal?.aborted) throw taxiAbortError(signal);
+      if (link.timedOut) throw timeoutError();
+      if (response.ok) throw new TaxiLlmError("LLMの応答の受信中に接続が切れました。もう一度お試しください", { kind: "network" });
+      bodyText = "";
+    }
+    if (!response.ok) {
+      const relayHeader = response.headers && typeof response.headers.get === "function" ? response.headers.get("X-Taxi-Relay-Error") : null;
+      const d = taxiDescribeLlmHttpError(response.status, bodyText, relayHeader);
+      throw new TaxiLlmError(d.message, { kind: d.kind, status: response.status });
+    }
+    try {
+      return JSON.parse(bodyText);
+    } catch (e) {
+      throw new TaxiLlmError("LLMの応答を読み取れませんでした（JSONではありません）。エンドポイントURLを確認してください", { kind: "bad-json" });
+    }
   } finally {
-    if (timer) clearTimeout(timer);
-  }
-  if (!response.ok) {
-    let text = "";
-    try { text = await response.text(); } catch (e) { text = ""; }
-    const relayHeader = response.headers && typeof response.headers.get === "function" ? response.headers.get("X-Taxi-Relay-Error") : null;
-    const d = taxiDescribeLlmHttpError(response.status, text, relayHeader);
-    throw new TaxiLlmError(d.message, { kind: d.kind, status: response.status });
-  }
-  try {
-    return await response.json();
-  } catch (e) {
-    throw new TaxiLlmError("LLMの応答を読み取れませんでした（JSONではありません）。エンドポイントURLを確認してください", { kind: "bad-json" });
+    link.cleanup();
   }
 }
 
@@ -10097,25 +10179,32 @@ function taxiSttEngine(config) {
   return config && config.sttEngine === "mimo" ? "mimo" : TAXI_STT_ENGINE_DEFAULT;
 }
 
-async function taxiWhisperTranscribe(wavBase64) {
-  const controller = typeof AbortController === "function" ? new AbortController() : null;
-  const timer = controller ? setTimeout(() => controller.abort(), TAXI_WHISPER_TIMEOUT_MS) : null;
+async function taxiWhisperTranscribe(wavBase64, signal = null) {
+  if (signal?.aborted) throw taxiAbortError(signal);
+  const link = taxiLinkedAbort(signal, TAXI_WHISPER_TIMEOUT_MS);
   let res;
-  try {
-    res = await fetch(TAXI_STT_PATH, {
-      method: "POST",
-      credentials: "same-origin",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ audio: wavBase64 }),
-      ...(controller ? { signal: controller.signal } : {}),
-    });
-  } catch (e) {
-    throw new TaxiLlmError(e && e.name === "AbortError" ? "Whisperの応答がタイムアウトしました" : "Whisperに接続できませんでした", { kind: "stt-network" });
-  } finally {
-    if (timer) clearTimeout(timer);
-  }
   let data = null;
-  try { data = await res.json(); } catch (e) { data = null; }
+  try {
+    try {
+      res = await taxiRaceAbort(fetch(TAXI_STT_PATH, {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ audio: wavBase64 }),
+        ...(link.controller ? { signal: link.controller.signal } : {}),
+      }), link.controller ? link.controller.signal : null);
+    } catch (e) {
+      if (signal?.aborted) throw taxiAbortError(signal);
+      throw new TaxiLlmError(e && e.name === "AbortError" ? "Whisperの応答がタイムアウトしました" : "Whisperに接続できませんでした", { kind: "stt-network" });
+    }
+    try { data = await taxiRaceAbort(res.json(), link.controller ? link.controller.signal : null); } catch (e) {
+      if (signal?.aborted) throw taxiAbortError(signal);
+      if (link.timedOut) throw new TaxiLlmError("Whisperの応答がタイムアウトしました", { kind: "stt-network" });
+      data = null;
+    }
+  } finally {
+    link.cleanup();
+  }
   if (!res.ok) {
     const kind = data?.error?.kind || (res.status === 401 ? "unauthorized" : "stt-http");
     const msg = kind === "stt-unavailable" ? "この環境ではWhisperが使えません" : `Whisperエラー（${res.status}）`;
@@ -10126,24 +10215,25 @@ async function taxiWhisperTranscribe(wavBase64) {
 }
 
 // Returns { text, engine, note }. Whisper errors / empty results fall back to mimo for this utterance.
-async function taxiTranscribeWithEngine(wavBase64, config) {
+async function taxiTranscribeWithEngine(wavBase64, config, signal = null) {
   if (taxiSttEngine(config) === "whisper") {
     try {
-      const text = await taxiWhisperTranscribe(wavBase64);
+      const text = await taxiWhisperTranscribe(wavBase64, signal);
       if (text) return { text, engine: "whisper", note: "" };
       console.warn("[taxi-voice] whisper returned empty text, falling back to mimo");
     } catch (e) {
+      if (signal?.aborted) throw taxiAbortError(signal); // クリア: no mimo fallback
       console.warn("[taxi-voice] whisper failed, falling back to mimo", e);
-      const text = await taxiTranscribeAudioBase64(wavBase64, config);
+      const text = await taxiTranscribeAudioBase64(wavBase64, config, signal);
       return { text, engine: "mimo", note: `（Whisperが使えなかったため、mimoで認識しました：${e?.message || "エラー"}）` };
     }
-    const text = await taxiTranscribeAudioBase64(wavBase64, config);
+    const text = await taxiTranscribeAudioBase64(wavBase64, config, signal);
     return { text, engine: "mimo", note: text ? "（Whisperで聞き取れなかったため、mimoで認識しました）" : "" };
   }
-  return { text: await taxiTranscribeAudioBase64(wavBase64, config), engine: "mimo", note: "" };
+  return { text: await taxiTranscribeAudioBase64(wavBase64, config, signal), engine: "mimo", note: "" };
 }
 
-async function taxiTranscribeAudioBase64(wavBase64, config) {
+async function taxiTranscribeAudioBase64(wavBase64, config, signal = null) {
   for (let attempt = 0; attempt < 2; attempt++) {
     const data = await taxiLlmRelayFetch(config, {
       model: String(config.sttModel || "").trim() || TAXI_STT_MODEL_DEFAULT,
@@ -10156,14 +10246,14 @@ async function taxiTranscribeAudioBase64(wavBase64, config) {
       }],
       max_tokens: attempt === 0 ? TAXI_STT_MAX_TOKENS : TAXI_STT_MAX_TOKENS * 2,
       temperature: 0,
-    });
+    }, signal);
     const text = taxiCleanTranscript(data?.choices?.[0]?.message?.content);
     if (text) return text;
   }
   return "";
 }
 
-async function callLlmBackend(userMessage, config) {
+async function callLlmBackend(userMessage, config, signal = null) {
   const dataRange = taxiTrips.length ? `${taxiTrips[0].date}〜${taxiTrips[taxiTrips.length - 1].date}` : "-";
   const datasetSummary = `
 サンプルデータセット情報（合成データ）:
@@ -10225,6 +10315,7 @@ ${taxiPanelData.map((p, i) => `${i}: ${p.title} - ${p.value} (${p.unit})`).join(
 
   try {
     for (let round = 0; round < TAXI_LLM_MAX_ROUNDS; round++) {
+      if (signal?.aborted) throw taxiAbortError(signal);
       const finalRound = round === TAXI_LLM_MAX_ROUNDS - 1;
       const data = await taxiLlmRelayFetch(config, {
         model: config.model || "gpt-4o-mini",
@@ -10233,7 +10324,7 @@ ${taxiPanelData.map((p, i) => `${i}: ${p.title} - ${p.value} (${p.unit})`).join(
         tool_choice: finalRound ? "none" : "auto",
         max_tokens: state.emptyRetries > 0 ? TAXI_LLM_RETRY_MAX_TOKENS : TAXI_LLM_MAX_TOKENS,
         temperature: 0.3,
-      });
+      }, signal);
       const choice = data.choices?.[0];
       if (!choice) {
         return { text: "応答を取得できませんでした。", focusPanel: -1, fallback: true };
@@ -10257,15 +10348,19 @@ ${taxiPanelData.map((p, i) => `${i}: ${p.title} - ${p.value} (${p.unit})`).join(
             result.confirmationNeeded = mishearings.map(h => `ユーザーは「${h.heard}」と言っている → 「${h.meant}」として扱い、回答冒頭で「もしかして${h.meant}のことですか？」と確認すること`);
           }
           console.log("[taxi-ai] tool", funcName, toolCall.function?.arguments, result);
-          messages.push({ role: "tool", tool_call_id: toolCall.id, content: taxiCompactToolJson(result) });
+          messages.push({ role: "tool", tool_call_id: toolCall.id, content: taxiCompactToolJson(funcName === "query_data" ? taxiCompactQueryResultForLlm(result) : result) });
         }
         continue;
       }
 
       let text = (msg.content || "").trim();
-      // Reasoning models sometimes return an empty message (token budget spent on thinking): retry once with a larger budget
-      if (!text && !finalRound && state.emptyRetries < 1) {
+      // Reasoning models sometimes return an empty message (token budget spent on thinking): retry once with a larger budget.
+      // v25: also when the budget ran out a few characters into the answer (seen live: finish=length, content 「曜日×」).
+      const cutShort = choice?.finish_reason === "length" && text.length < TAXI_LLM_CUT_SHORT_CHARS;
+      if ((!text || cutShort) && !finalRound && state.emptyRetries < 1) {
         state.emptyRetries++;
+        // v25: live, hy3 spent the whole budget thinking about a 7×24 cross table; ask for a short answer instead
+        messages.push({ role: "user", content: "（自動チェック）回答が空か途中で切れていました。これ以上ツールは呼ばず、集計済みの結果から、表や全数値の列挙はせずに主な傾向（最大・最小・特徴）だけを2〜4文で今すぐ答えてください。" });
         continue;
       }
       let focusPanel = state.focusPanel;
@@ -10295,6 +10390,10 @@ ${taxiPanelData.map((p, i) => `${i}: ${p.title} - ${p.value} (${p.unit})`).join(
     const lastText = taxiEnsureClaimedPanel(state.toolNotes.join("\n") || "処理を完了しました。", userMessage, state);
     return { text: lastText, focusPanel: state.focusPanel, panelCreated: state.panelCreated };
   } catch (error) {
+    // v25: 90 s question deadline -> short message, no offline text; クリア -> silent
+    if (error?.kind === "deadline") return { text: TAXI_DEADLINE_MESSAGE, focusPanel: state.focusPanel, panelCreated: state.panelCreated, deadline: true };
+    if (error?.kind === "cancelled") return { text: "", focusPanel: -1, cancelled: true };
+    if (error?.kind === "timeout") return { text: error.message, focusPanel: state.focusPanel, panelCreated: state.panelCreated, timedOut: true };
     console.error("LLM API error:", error);
     const detail = error instanceof TaxiLlmError ? error.message : `${error?.message || error}`;
     return { text: `LLMエラー: ${detail}\n（オフラインモードで応答します）`, focusPanel: -1, fallback: true, errorKind: error?.kind || "unknown" };
@@ -10310,6 +10409,12 @@ let taxiThinkingStep = 0;
 let taxiThinkingEl = null;
 const TAXI_THINKING_FRAMES = ["・", "・・", "・・・"];
 const TAXI_THINKING_INTERVAL_MS = 400;
+let taxiThinkingStartedAt = 0;
+// v25: 「・・・ 12秒」 (elapsed seconds since the question was sent)
+function taxiThinkingLabel() {
+  const sec = Math.max(0, Math.floor((Date.now() - taxiThinkingStartedAt) / 1000));
+  return `${TAXI_THINKING_FRAMES[taxiThinkingStep]} ${sec}秒`;
+}
 
 function renderTaxiThinking() {
   if (taxiChatPanelMesh) makeTaxiChatPanelTexture(taxiConversationHistory);
@@ -10325,13 +10430,14 @@ function startTaxiThinking() {
   taxiThinkingCount += 1;
   if (taxiThinkingCount > 1) return;
   taxiThinkingStep = 0;
-  taxiThinkingText = TAXI_THINKING_FRAMES[0];
+  taxiThinkingStartedAt = Date.now();
+  taxiThinkingText = taxiThinkingLabel();
   taxiChatScrollPx = 0; // auto-scroll to the indicator
   update2DTaxiChatMessages();
   renderTaxiThinking();
   taxiThinkingTimer = setInterval(() => {
     taxiThinkingStep = (taxiThinkingStep + 1) % TAXI_THINKING_FRAMES.length;
-    taxiThinkingText = TAXI_THINKING_FRAMES[taxiThinkingStep];
+    taxiThinkingText = taxiThinkingLabel();
     renderTaxiThinking();
   }, TAXI_THINKING_INTERVAL_MS);
 }
@@ -10357,10 +10463,13 @@ async function processTaxiConversation(userMessage) {
   let response;
   const llmConfig = getTaxiLlmConfig();
   
+  const questionAbort = typeof AbortController === "function" ? new AbortController() : null;
+  if (questionAbort) taxiActiveAborts.add(questionAbort);
+  const deadlineTimer = questionAbort ? setTimeout(() => taxiAbortController(questionAbort, "deadline"), TAXI_QUESTION_DEADLINE_MS) : null;
   startTaxiThinking();
   try {
     if (llmConfig) {
-      response = await callLlmBackend(userMessage, llmConfig);
+      response = await callLlmBackend(userMessage, llmConfig, questionAbort ? questionAbort.signal : null);
       if (response.fallback) {
         const offlineResponse = generateOfflineResponse(userMessage);
         response.text += "\n\n" + offlineResponse.text;
@@ -10373,10 +10482,12 @@ async function processTaxiConversation(userMessage) {
     console.error("[taxi-ai] conversation failed", e);
     response = { text: `エラーが発生しました: ${e?.message || e}`, focusPanel: -1 };
   } finally {
+    if (deadlineTimer) clearTimeout(deadlineTimer);
+    if (questionAbort) taxiActiveAborts.delete(questionAbort);
     stopTaxiThinking();
   }
   
-  if (chatEpoch !== taxiChatEpoch) return; // chat was cleared while waiting
+  if (chatEpoch !== taxiChatEpoch || response?.cancelled) return; // chat was cleared while waiting
   taxiConversationHistory.push({ role: "assistant", content: response.text });
   if (!taxiIsListening && !taxiVoiceBusy) taxiVoiceStatusText = "";
   updateTaxiChatPanel();
@@ -10620,13 +10731,17 @@ async function taxiTranscribeAndAsk(wavBase64) {
   setTaxiVoiceStatus(taxiSttEngine(config) === "whisper" ? "文字起こし中…（Whisper）" : "文字起こし中…（mimo）");
   let text = "";
   let note = "";
+  const sttAbort = typeof AbortController === "function" ? new AbortController() : null;
+  if (sttAbort) taxiActiveAborts.add(sttAbort);
   try {
-    ({ text, note } = await taxiTranscribeWithEngine(wavBase64, config));
+    ({ text, note } = await taxiTranscribeWithEngine(wavBase64, config, sttAbort ? sttAbort.signal : null));
   } catch (e) {
     taxiVoiceBusy = false;
     updateTaxiMicButton();
-    setTaxiVoiceStatus(`音声の文字起こしに失敗しました: ${e?.message || e}`);
+    if (e?.kind !== "cancelled") setTaxiVoiceStatus(`音声の文字起こしに失敗しました: ${e?.message || e}`);
     return;
+  } finally {
+    if (sttAbort) taxiActiveAborts.delete(sttAbort);
   }
   taxiVoiceBusy = false;
   updateTaxiMicButton();
@@ -11029,6 +11144,10 @@ const TAXI_CLEAR_CHAT_ACTION = "__taxi_clear_chat__";
 // to the LLM) AND removes all created panels (fixed panels stay); slots restart at 0.
 // "パネルを消して" (voice/text) still clears panels via the LLM clear_panels tool.
 function clearTaxiChatHistory() {
+  // v25: abort in-flight AI questions and transcriptions silently; cancel a running recording
+  for (const ctl of [...taxiActiveAborts]) taxiAbortController(ctl, "cancelled");
+  taxiActiveAborts.clear();
+  if (taxiRecorder) stopTaxiRecording("cancel");
   clearDynamicPanels();
   taxiChatEpoch += 1; // a reply still in flight will not be added to the cleared chat
   taxiConversationHistory.length = 0;
