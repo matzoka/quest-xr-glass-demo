@@ -261,7 +261,7 @@ const STT_MAX_BODY_BYTES = 2 * 1024 * 1024; // 30 s of 16 kHz mono WAV = 960,044
 const STT_BEAM_SIZE = 10;
 const STT_BEAM_SIZE_MAX = 20;
 const STT_INITIAL_PROMPT =
-  "タクシー売上分析の音声質問です。日次売上、乗車回数、ピーク時間帯、車両稼働率、月別売上、曜日別、車両別、" +
+  "タクシー売上分析の音声質問です。日次売上、乗車回数、ピーク時間帯、時間帯別、月別売上、曜日別、" +
   "パネルを作成して、パネルを消して、クリア。迎車。調布、調布駅周辺、国領、仙川、つつじヶ丘・柴崎、深大寺、西調布・飛田給、三鷹、府中。";
 
 async function handleSttRequest(request, env, taxiAllowed) {
@@ -409,8 +409,9 @@ export default {
 // ===========================================================================
 // v26: taxi analytics on Cloudflare D1 (POST /api/query, gated by the taxi cookie)
 // The trips table holds taxiTripFromRecord() output (see migrations/ and
-// scripts/import-trips.mjs); vocab holds the valid vehicles / drivers / areas /
-// towns (+ readings) used for validation and suggestions. Swapping in real data =
+// scripts/import-trips.mjs); vocab holds the valid areas / towns (+ readings) used
+// for validation and suggestions. v27: one car / one driver (the user's own sales),
+// so there is no vehicle / driver column, dimension or filter. Swapping in real data =
 // re-running the import with the real records; this code reads everything from D1.
 // All SQL is fixed text with ? placeholders; user values are only ever bound
 // (lists as one JSON array through json_each). Mirrors runTaxiFreeQuery /
@@ -421,31 +422,37 @@ const QUERY_MAX_BODY_BYTES = 32 * 1024;
 const TQ_WEEKDAYS = ["日", "月", "火", "水", "木", "金", "土"];
 const TQ_WEEKDAY_ALIASES = { sun: "日", mon: "月", tue: "火", wed: "水", thu: "木", fri: "金", sat: "土" };
 const TQ_HOMOPHONES = { 札: "ふだ" };
-const TQ_TERM_SUFFIX_RE = /(区|駅|周辺|エリア|地区|さん|氏|運転手|ドライバー|号車)$/u;
+const TQ_TERM_SUFFIX_RE = /(区|駅|周辺|エリア|地区)$/u;
+const TQ_NO_VEHICLE_DRIVER_KEYS = ["vehicle", "driver"];
+const TQ_NO_VEHICLE_DRIVER_MESSAGE = "このデータはご本人の1台・1名分の売上記録のため、車両別・ドライバー別の集計や絞り込みはできません（車両・ドライバーの項目はありません）";
 const TQ_MAX_GROUPS = 31;
 const TQ_DEFAULT_GROUPS = 10;
 const TQ_FULL_DOMAIN_MAX = 24;
 const TQ_ADDITIVE = ["tripCount", "fare", "fareWithTax", "totalFare", "dispatchFee", "distance", "occupiedTime", "emptyTime"];
+// v27: 1-decimal display that ignores float noise from summation order (2.3499999999999996 and 2.35 both -> "2.4"),
+// so the browser (JS sums) and D1 (SQL sums) always show the same text
+function tqFixed1(v) {
+  return (Math.round(Math.round(Number(v) * 1e6) / 1e5) / 10).toFixed(1);
+}
+
 const TQ_METRICS = {
   fare: { label: "売上", unit: "円", format: v => `¥${v.toLocaleString()}` },
   fareWithTax: { label: "売上(税込)", unit: "円", format: v => `¥${v.toLocaleString()}` },
   totalFare: { label: "収入(税込+迎車)", unit: "円", format: v => `¥${v.toLocaleString()}` },
   dispatchFee: { label: "迎車料金", unit: "円", format: v => `¥${v.toLocaleString()}` },
   tripCount: { label: "乗車回数", unit: "件", format: v => `${v.toLocaleString()}件` },
-  distance: { label: "走行距離", unit: "km", format: v => `${v.toFixed(1)}km` },
+  distance: { label: "走行距離", unit: "km", format: v => `${tqFixed1(v)}km` },
   avgFare: { label: "平均運賃", unit: "円", format: v => `¥${Math.round(v).toLocaleString()}` },
-  avgDistance: { label: "平均距離", unit: "km", format: v => `${v.toFixed(1)}km` },
+  avgDistance: { label: "平均距離", unit: "km", format: v => `${tqFixed1(v)}km` },
   occupiedTime: { label: "実車時間", unit: "分", format: v => `${Math.round(v).toLocaleString()}分` },
   emptyTime: { label: "空車時間", unit: "分", format: v => `${Math.round(v).toLocaleString()}分` },
-  utilizationRate: { label: "稼働率", unit: "%", format: v => `${v.toFixed(1)}%` },
+  utilizationRate: { label: "稼働率", unit: "%", format: v => `${tqFixed1(v)}%` },
 };
 // dimension -> fixed column name (identifiers never come from the request)
 const TQ_DIMENSIONS = {
   month: { label: "月別", col: "month", format: v => `${v}月` },
   weekday: { label: "曜日別", col: "weekday", sort: (a, b) => TQ_WEEKDAYS.indexOf(a) - TQ_WEEKDAYS.indexOf(b) },
-  hour: { label: "時間帯別", col: "hour", format: v => `${v}時` },
-  vehicle: { label: "車両別", col: "vehicle" },
-  driver: { label: "ドライバー別", col: "driver" },
+  hour: { label: "時間帯別", col: "hour", format: v => `${v}時`, sort: (a, b) => ((a + 19) % 24) - ((b + 19) % 24) }, // v27: shift order 5..23, 0..4
   pickupArea: { label: "乗車地別", col: "pickup_area" },
   dropoffArea: { label: "降車地別", col: "dropoff_area" },
   pickupTown: { label: "乗車地町名別", col: "pickup_town" },
@@ -518,11 +525,9 @@ function tqNumberOrNull(v) {
 
 // Vocabulary (valid values + readings) loaded from D1
 function tqBuildVocab(rows) {
-  const V = { vehicles: [], drivers: [], areas: [], towns: [], areaTowns: {}, readings: {} };
+  const V = { areas: [], towns: [], areaTowns: {}, readings: {} };
   for (const r of rows) {
-    if (r.kind === "vehicle") V.vehicles.push(r.value);
-    else if (r.kind === "driver") V.drivers.push(r.value);
-    else if (r.kind === "area") V.areas.push(r.value);
+    if (r.kind === "area") V.areas.push(r.value);
     else if (r.kind === "town") { V.towns.push(r.value); (V.areaTowns[r.parent] = V.areaTowns[r.parent] || []).push(r.value); }
     if (r.reading && !(r.value in V.readings)) V.readings[r.value] = r.reading;
   }
@@ -560,15 +565,6 @@ function tqCanonical(V, kind, raw) {
     const w = s.replace(/曜日?$/u, "");
     if (TQ_WEEKDAYS.includes(w)) return w;
     return TQ_WEEKDAY_ALIASES[w.toLowerCase().slice(0, 3)] || null;
-  }
-  if (kind === "vehicle") {
-    const m = /^(?:車両)?\s*([A-Za-z])(?:号車)?$/u.exec(s);
-    const c = m ? `車両${m[1].toUpperCase()}` : s;
-    return V.vehicles.includes(c) ? c : null;
-  }
-  if (kind === "driver") {
-    const c = s.replace(/(さん|氏)$/u, "");
-    return V.drivers.includes(c) ? c : null;
   }
   if (kind === "area") return V.areas.includes(s) ? s : null;
   if (kind === "town") {
@@ -616,8 +612,6 @@ function tqWhere(f, calendarOnly = false) {
   if (!calendarOnly) {
     if (f.timeRange) range("minute_of_day", f.timeRange);
     else if (f.hourSet) inList("hour", f.hourSet);
-    if (f.vehicleSet) inList("vehicle", f.vehicleSet);
-    if (f.driverSet) inList("driver", f.driverSet);
     if (f.pickupSet) inList("pickup_area", f.pickupSet);
     if (f.dropoffSet) inList("dropoff_area", f.dropoffSet);
     if (f.dispatchFilter !== null && f.dispatchFilter !== undefined) { parts.push("dispatch = ?"); params.push(f.dispatchFilter ? 1 : 0); }
@@ -652,7 +646,7 @@ async function tqRunFreeQuery(db, args = {}) {
   const errors = [];
   if (!TQ_METRICS[metric]) errors.push({ field: "metric", value: metric, message: `無効なメトリック: ${metric}`, validValues: Object.keys(TQ_METRICS) });
   const groupBy = args.groupBy || "";
-  if (groupBy && !TQ_DIMENSIONS[groupBy]) errors.push({ field: "groupBy", value: groupBy, message: `無効な集計軸: ${groupBy}`, validValues: Object.keys(TQ_DIMENSIONS) });
+  if (groupBy && !TQ_DIMENSIONS[groupBy]) errors.push({ field: "groupBy", value: groupBy, message: TQ_NO_VEHICLE_DRIVER_KEYS.includes(groupBy) ? TQ_NO_VEHICLE_DRIVER_MESSAGE : `無効な集計軸: ${groupBy}`, validValues: Object.keys(TQ_DIMENSIONS) });
 
   // keywords are known before validation: fetch the address lists together with the vocab
   const keywordList = v => (v === undefined || v === null || v === "" ? null : (Array.isArray(v) ? v : [v]).map(k => String(k).normalize("NFKC").trim()).filter(Boolean));
@@ -759,8 +753,10 @@ async function tqRunFreeQuery(db, args = {}) {
   }
 
   const weekdaySet = tqFilterValues(V, "weekday", args.weekdays, "weekdays", TQ_WEEKDAYS, errors, applied);
-  const vehicleSet = tqFilterValues(V, "vehicle", args.vehicles, "vehicles", V.vehicles, errors, applied);
-  const driverSet = tqFilterValues(V, "driver", args.drivers, "drivers", V.drivers, errors, applied);
+  for (const k of ["vehicles", "drivers"]) {
+    const v = args[k];
+    if (v !== undefined && v !== null && v !== "" && !(Array.isArray(v) && v.length === 0)) errors.push({ field: k, value: v, message: TQ_NO_VEHICLE_DRIVER_MESSAGE });
+  }
   const pickupSet = tqFilterValues(V, "area", args.pickupAreas, "pickupAreas", V.areas, errors, applied);
   const dropoffSet = tqFilterValues(V, "area", args.dropoffAreas, "dropoffAreas", V.areas, errors, applied);
   const pickupTownSet = tqFilterValues(V, "town", args.pickupTowns, "pickupTowns", V.towns, errors, applied);
@@ -784,12 +780,12 @@ async function tqRunFreeQuery(db, args = {}) {
     return { error: "指定された条件に無効な値があります。suggestions の候補をユーザーに「もしかして〇〇のことですか？」と確認してください。", invalid: errors, dataRange };
   }
 
-  const f = { dateFrom, dateTo, weekdaySet, timeRange, hourSet, vehicleSet, driverSet, pickupSet, dropoffSet, dispatchFilter, pickupTownSet, dropoffRange, pickupKeywords, dropoffKeywords, dropoffTownSet, ranges };
+  const f = { dateFrom, dateTo, weekdaySet, timeRange, hourSet, pickupSet, dropoffSet, dispatchFilter, pickupTownSet, dropoffRange, pickupKeywords, dropoffKeywords, dropoffTownSet, ranges };
   const cal = tqWhere(f, true);
   const all = tqWhere(f, false);
   const tripField = TQ_PER_TRIP[metric];
   const tripCol = tripField ? TQ_FIELD_COL[tripField] : null;
-  const briefCols = "date, time, dropoff_time, vehicle, driver, pickup_area, dropoff_area";
+  const briefCols = "date, time, dropoff_time, pickup_area, dropoff_area";
   const dim = groupBy ? TQ_DIMENSIONS[groupBy] : null;
   const stmts = [
     db.prepare(`SELECT DISTINCT date FROM trips${cal.sql} ORDER BY date`).bind(...cal.params),
@@ -819,7 +815,7 @@ async function tqRunFreeQuery(db, args = {}) {
     value: tqRound(overall, 1), valueFormatted: overall === null ? "データなし" : def.format(overall),
   };
   if (tripCol && n) {
-    const brief = r => ({ value: r.v, date: r.date, time: r.time, dropoffTime: r.dropoff_time, vehicle: r.vehicle, driver: r.driver, pickupArea: r.pickup_area, dropoffArea: r.dropoff_area });
+    const brief = r => ({ value: r.v, date: r.date, time: r.time, dropoffTime: r.dropoff_time, pickupArea: r.pickup_area, dropoffArea: r.dropoff_area });
     const sumField = { fare: agg.fare, fareWithTax: agg.fwt, totalFare: agg.tf, distance: agg.dist, occupiedMinutes: agg.occ, emptyMinutes: agg.emp }[tripField] || 0;
     result.perTrip = { field: tripField, average: tqRound(sumField / n, 1), max: brief(res[4].results[0]), min: brief(res[5].results[0]) };
   }
@@ -852,8 +848,6 @@ async function tqRunFreeQuery(db, args = {}) {
     else if (groupBy === "month") domain = (res[monthIdx].results || []).map(r => r.month);
     else if (groupBy === "hour") domain = hourSet ? [...hourSet] : Array.from({ length: 24 }, (_, h) => h);
     else if (groupBy === "weekday") domain = weekdaySet ? TQ_WEEKDAYS.filter(w => weekdaySet.has(w)) : [...TQ_WEEKDAYS];
-    else if (groupBy === "vehicle") domain = vehicleSet ? [...vehicleSet] : [...V.vehicles];
-    else if (groupBy === "driver") domain = driverSet ? [...driverSet] : [...V.drivers];
     else if (groupBy === "pickupArea") domain = pickupSet ? [...pickupSet] : [...V.areas];
     else if (groupBy === "dropoffArea") domain = dropoffSet ? [...dropoffSet] : [...V.areas];
     else if (groupBy === "pickupTown") domain = pickupTownSet ? [...pickupTownSet] : (pickupSet ? [...pickupSet].flatMap(a => V.areaTowns[a] || []) : [...V.towns]);
@@ -906,22 +900,48 @@ async function tqPanelData(db, spec = {}) {
   return { data: result, total, totalFormatted: def.format(total) };
 }
 
-// Fixed dashboard panels: latest day's sales / trips, peak hour, utilisation
+// Fixed dashboard panels: latest day's sales / trips, peak hour (trips), 時間帯別 (v27: sales + trips per hour)
 async function tqFixedPanels(db) {
   const latest = await db.prepare("SELECT MAX(date) AS d FROM trips").first("d");
   const res = await db.batch([
     db.prepare("SELECT COUNT(*) AS n, SUM(fare) AS fare FROM trips WHERE date = ?").bind(latest),
-    db.prepare("SELECT hour, COUNT(*) AS n FROM trips GROUP BY hour ORDER BY n DESC, hour ASC LIMIT 1"),
-    db.prepare("SELECT SUM(occupied_minutes) AS occ, SUM(empty_minutes) AS emp FROM trips"),
+    db.prepare("SELECT hour, COUNT(*) AS n, SUM(fare) AS fare FROM trips GROUP BY hour ORDER BY hour"),
   ]);
-  const day = res[0].results[0] || {}, peak = res[1].results[0] || {}, u = res[2].results[0] || {};
-  return { latestDate: latest, dayFare: day.fare || 0, dayTrips: Number(day.n) || 0, peakHour: peak.hour ?? null, utilizationRate: (u.occ || 0) + (u.emp || 0) ? (u.occ || 0) / ((u.occ || 0) + (u.emp || 0)) * 100 : null };
+  const day = res[0].results[0] || {};
+  const hourlyTrips = new Array(24).fill(0), hourlyFare = new Array(24).fill(0);
+  for (const r of res[1].results || []) { const h = Number(r.hour); if (h >= 0 && h < 24) { hourlyTrips[h] = Number(r.n) || 0; hourlyFare[h] = r.fare || 0; } }
+  let peakHour = null;
+  for (let h = 0; h < 24; h++) if (hourlyTrips[h] > 0 && (peakHour === null || hourlyTrips[h] > hourlyTrips[peakHour])) peakHour = h;
+  return { latestDate: latest, dayFare: day.fare || 0, dayTrips: Number(day.n) || 0, peakHour, hourlyFare, hourlyTrips };
+}
+
+// v27: counts D1 rows read per request (free plan: 5,000,000 rows read / day); reported as rowsRead
+function tqMeteredDb(db, meter) {
+  const wrap = stmt => ({
+    __real: stmt,
+    bind: (...a) => wrap(stmt.bind(...a)),
+    all: async () => { const r = await stmt.all(); meter.rowsRead += Number(r?.meta?.rows_read) || 0; return r; },
+    first: async col => {
+      const r = await stmt.all();
+      meter.rowsRead += Number(r?.meta?.rows_read) || 0;
+      const row = (r?.results || [])[0];
+      return row === undefined ? null : col === undefined ? row : (row[col] ?? null);
+    },
+  });
+  return {
+    prepare: sql => wrap(db.prepare(sql)),
+    batch: async stmts => {
+      const res = await db.batch(stmts.map(st => st.__real || st));
+      for (const r of res || []) meter.rowsRead += Number(r?.meta?.rows_read) || 0;
+      return res;
+    },
+  };
 }
 
 async function handleQueryRequest(request, env, taxiAllowed) {
   if (request.method !== "POST") return new Response("Method Not Allowed", { status: 405, headers: { Allow: "POST" } });
   if (!taxiAllowed) return jsonResponse(401, { error: { message: "Unauthorized" } });
-  const db = env.DB;
+  let db = env.DB;
   if (!db || typeof db.prepare !== "function") return jsonResponse(503, { error: { message: "D1 database is not bound here", kind: "db-unavailable" } });
   const len = Number(request.headers.get("Content-Length") || 0);
   if (len > QUERY_MAX_BODY_BYTES) return jsonResponse(413, { error: { message: "Request too large" } });
@@ -935,6 +955,8 @@ async function handleQueryRequest(request, env, taxiAllowed) {
   }
   const op = body && body.op;
   const t0 = Date.now();
+  const meter = { rowsRead: 0 };
+  db = tqMeteredDb(db, meter);
   try {
     let result;
     if (op === "query_data") result = await tqRunFreeQuery(db, body.args && typeof body.args === "object" ? body.args : {});
@@ -945,9 +967,9 @@ async function handleQueryRequest(request, env, taxiAllowed) {
     } else if (op === "fixed") result = await tqFixedPanels(db);
     else if (op === "meta") {
       const base = await tqLoadBase(db);
-      result = { trips: base.tripCount, dataRange: base.dataRange, note: base.meta.note || TQ_DEFAULT_NOTE, dataset: base.meta.dataset || "", vehicles: base.V.vehicles.length, drivers: base.V.drivers.length, areas: base.V.areas.length, towns: base.V.towns.length };
+      result = { trips: base.tripCount, dataRange: base.dataRange, note: base.meta.note || TQ_DEFAULT_NOTE, dataset: base.meta.dataset || "", areas: base.V.areas.length, towns: base.V.towns.length };
     } else return jsonResponse(400, { error: { message: "Unknown op (query_data | panel | fixed | meta)" } });
-    return new Response(JSON.stringify({ ok: true, op, ms: Date.now() - t0, result }), {
+    return new Response(JSON.stringify({ ok: true, op, ms: Date.now() - t0, rowsRead: meter.rowsRead, result }), {
       status: 200,
       headers: { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" },
     });

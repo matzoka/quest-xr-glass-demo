@@ -22,7 +22,7 @@ if (TAXI_ALLOWED && taxiAnalyticsButton) {
   taxiAnalyticsButton.removeAttribute("hidden");
 }
 
-const APP_VERSION = "v2026.09.29.26";
+const APP_VERSION = "v2026.09.29.27";
 const DEBUG_TOP_VIEW = new URLSearchParams(window.location.search).has("topDebug");
 const DEBUG_TOP_VIEW_DISTANCE = Number(new URLSearchParams(window.location.search).get("topDebugDist"));
 const DEBUG_BLACK_HOLE_VIEW = new URLSearchParams(window.location.search).has("blackHoleDebug");
@@ -8006,7 +8006,7 @@ taxiAnalyticsLight2.position.set(
 );
 taxiAnalyticsGroup.add(taxiAnalyticsLight2);
 
-function makeTaxiAnalyticsPanelTexture(title, value, unit, chartType) {
+function makeTaxiAnalyticsPanelTexture(title, value, unit, chartType, hourly = null) {
   const c = document.createElement("canvas");
   // 2x resolution for the 2x panel; drawing uses the old 512x384 logical layout
   const W = 512;
@@ -8043,7 +8043,54 @@ function makeTaxiAnalyticsPanelTexture(title, value, unit, chartType) {
   ctx.fillStyle = "#a884ff";
   ctx.fillText(unit, W / 2, 195);
 
-  if (chartType === "bar") {
+  if (chartType === "hourly") {
+    // v27: 時間帯別 = sales per hour (bars) + trips per hour (line), hours that have data
+    const fare0 = hourly?.fare || new Array(24).fill(0);
+    const trips0 = hourly?.trips || new Array(24).fill(0);
+    // shift order 5..23, 0..4 (a shift runs 09:00 -> 04:50), trimmed to the hours that have data
+    const order = Array.from({ length: 24 }, (_, i) => (i + 5) % 24);
+    const has = order.map(h => fare0[h] > 0 || trips0[h] > 0);
+    let i0 = has.indexOf(true), i1 = has.lastIndexOf(true);
+    if (i0 < 0) { i0 = 0; i1 = 23; }
+    const hoursShown = order.slice(i0, i1 + 1);
+    const fare = hoursShown.map(h => fare0[h]), trips = hoursShown.map(h => trips0[h]);
+    const h0 = 0;
+    const n = hoursShown.length;
+    const left = 40, right = W - 24, baseY = 336, maxH = 100;
+    const slot = (right - left) / n;
+    const maxFare = Math.max(1, ...fare), maxTrips = Math.max(1, ...trips);
+    ctx.fillStyle = "rgba(168, 132, 255, 0.75)";
+    for (let i = 0; i < n; i++) {
+      const hh = (fare[h0 + i] / maxFare) * maxH;
+      ctx.fillRect(left + i * slot + slot * 0.15, baseY - hh, slot * 0.7, hh);
+    }
+    ctx.beginPath();
+    ctx.strokeStyle = "rgba(100, 200, 255, 0.95)";
+    ctx.lineWidth = 3;
+    for (let i = 0; i < n; i++) {
+      const x = left + i * slot + slot / 2;
+      const y = baseY - (trips[h0 + i] / maxTrips) * maxH;
+      if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+    }
+    ctx.stroke();
+    ctx.font = "15px Arial";
+    ctx.fillStyle = "#8866cc";
+    for (let i = 0; i < n; i++) {
+      if (hoursShown[i] % 3 === 0 || i === 0 || i === n - 1) ctx.fillText(`${hoursShown[i]}時`, left + i * slot + slot / 2, baseY + 18);
+    }
+    ctx.textAlign = "left";
+    ctx.fillStyle = "rgba(168, 132, 255, 0.95)";
+    ctx.fillRect(left, 214, 14, 14);
+    ctx.fillStyle = "#e4daff";
+    ctx.fillText("売上", left + 20, 227);
+    ctx.strokeStyle = "rgba(100, 200, 255, 0.95)";
+    ctx.beginPath();
+    ctx.moveTo(left + 70, 221);
+    ctx.lineTo(left + 92, 221);
+    ctx.stroke();
+    ctx.fillText("乗車回数", left + 98, 227);
+    ctx.textAlign = "center";
+  } else if (chartType === "bar") {
     const bars = [0.6, 0.8, 0.45, 0.9, 0.7, 0.55, 0.85];
     const barW = 48;
     const barGap = 12;
@@ -8134,7 +8181,8 @@ const taxiPanelData = [
   { title: "日次売上", value: "¥847,200", unit: "本日合計", chart: "bar" },
   { title: "乗車回数", value: "156", unit: "件 / 本日", chart: "line" },
   { title: "ピーク時間帯", value: "18-21時", unit: "最多乗車時間", chart: "line" },
-  { title: "車両稼働率", value: "78%", unit: "全車両平均", chart: "gauge" },
+  // v27: was 車両稼働率 (8 vehicles); the data is one car, so this slot shows sales and trips by hour
+  { title: "時間帯別", value: "-", unit: "売上・乗車回数（全期間）", chart: "hourly", hourly: null },
 ];
 
 // ---------------------------------------------------------------------------
@@ -8146,8 +8194,8 @@ const TAXI_DATASET_SEED = 42;
 // equals the snapshot loaded into Cloudflare D1 (scripts/import-trips.mjs --sample).
 const TAXI_DATASET_END_DATE = "2026-09-29";
 const TAXI_MONTHS = 6;
-const TAXI_VEHICLES = ["車両A", "車両B", "車両C", "車両D", "車両E", "車両F", "車両G", "車両H"];
-const TAXI_DRIVERS = ["田中", "鈴木", "佐藤", "山田", "高橋", "伊藤", "渡辺", "中村"];
+// v27: the data is the user's own sales (1 car, 1 driver = the user). There is no vehicle / driver
+// dimension; per working day about 35 trips and about 60,000円 (税抜), mostly short trips.
 // 営業エリア: 調布市を中心に三鷹市・府中市（8エリア。抽選インデックスは従来と同じ）
 const TAXI_AREAS = ["調布駅周辺", "国領", "仙川", "つつじヶ丘・柴崎", "深大寺", "西調布・飛田給", "三鷹", "府中"];
 const TAXI_WEEKDAYS = ["日", "月", "火", "水", "木", "金", "土"];
@@ -8206,69 +8254,175 @@ function taxiSeededRandom(seed) {
   };
 }
 
+// v27 sample generator: one car, one driver (the user), following the user's real routine:
+// - calendar: the published shift calendar (https://matzoka.github.io/shift-calendar/), a 12-day cycle
+//   TAXI_SHIFT_PATTERN anchored at 2026-06-03 = position 0 (出番), extended both ways modulo 12.
+//   Only 出番 days have trips (about 5 shifts per 12 days).
+// - each shift (出番): depart 09:00, return by 04:50 the next morning; pickups 09:00..04:40. Trips after
+//   midnight belong to the shift day: date (and dropoffDate) = 営業日 (the 出番 day), time = clock time
+//   (00:00-04:59 = the next morning). One mandatory 2-hour stop (meal / break) at a random time, no trips.
+// - trips per shift: about 35 (20..45, longer tail towards slow shifts); about 1.5% are 早上がり (10-19
+//   trips, back in the evening). Late-night surge 22時-1時.
+// - distance from the area pair (same area 0.7-2.5 km, neighbouring areas a few km, rare long trips
+//   9-18 km, late-night trips somewhat longer); rainy shifts (about 7%) have more and slightly longer trips,
+//   rare busy shifts (about 4%) more and much longer trips (the rare 100,000円+ shifts).
+//   Fare rule unchanged (距離×600円).
+// - the next pickup is often in the area of the previous dropoff; 空車時間 = gap since the previous dropoff
+//   (the 2-hour stop is not counted).
+const TAXI_SHIFT_PATTERN = ["出番", "明休", "出番", "明休", "出番", "明休", "公休", "出番", "明休", "出番", "明休", "公休"];
+const TAXI_SHIFT_ANCHOR = "2026-06-03"; // TAXI_SHIFT_PATTERN[0]
+const TAXI_SHIFT_START_MIN = 9 * 60; // 09:00 depart
+const TAXI_SHIFT_END_MIN = 24 * 60 + 4 * 60 + 50; // 04:50 next morning (return)
+const TAXI_SHIFT_LAST_PICKUP_MIN = 24 * 60 + 4 * 60 + 40; // 04:40
+const TAXI_SHIFT_BREAK_MIN = 120; // mandatory 2-hour stop
+const TAXI_AREA_XY = [[0, 0], [1.9, 0.2], [4.6, 2.4], [2.6, 1.6], [0.9, 2.3], [-2.6, -0.2], [2.7, 4.6], [-4.3, -1.6]]; // km, per TAXI_AREAS
+const TAXI_PICKUP_AREA_WEIGHTS = [0.30, 0.12, 0.12, 0.11, 0.07, 0.10, 0.09, 0.09];
+const TAXI_WEEKDAY_TRIP_FACTOR = [0.92, 0.97, 0.98, 0.99, 1.01, 1.1, 1.04]; // 日..土 (weekday of the shift day)
+const TAXI_TRIPS_PER_DAY_MEAN = 36.3;
+const TAXI_TRIPS_PER_DAY_SD_LOW = 6.5; // longer tail towards slow shifts (normal minimum about 20)
+const TAXI_TRIPS_PER_DAY_SD_HIGH = 4.2;
+const TAXI_TRIPS_PER_DAY_MIN = 20;
+const TAXI_TRIPS_PER_DAY_MAX = 45;
+// demand per clock hour inside a shift (09..23, 0..4): daytime, evening peak, late-night surge
+const TAXI_HOUR_DEMAND = [2.0, 1.5, 0.9, 0.5, 0.25, 0, 0, 0, 0, 0.9, 0.9, 0.95, 1.0, 0.9, 0.85, 0.95, 1.05, 1.3, 1.5, 1.3, 1.15, 1.25, 1.6, 1.9];
+
+function taxiDaysBetween(a, b) {
+  const [y1, m1, d1] = String(a).split("-").map(Number), [y2, m2, d2] = String(b).split("-").map(Number);
+  return Math.round((Date.UTC(y2, m2 - 1, d2) - Date.UTC(y1, m1 - 1, d1)) / 86400000);
+}
+// 出番 / 明休 / 公休 for a date "YYYY-MM-DD" (same rule as the published shift calendar)
+function taxiShiftTypeOf(dateStr) {
+  const n = taxiDaysBetween(TAXI_SHIFT_ANCHOR, dateStr);
+  if (!Number.isFinite(n)) return null;
+  return TAXI_SHIFT_PATTERN[((n % 12) + 12) % 12];
+}
+
+function taxiPickWeighted(weights, r) {
+  let t = weights.reduce((a, b) => a + b, 0) * r;
+  for (let i = 0; i < weights.length; i++) {
+    t -= weights[i];
+    if (t <= 0) return i;
+  }
+  return weights.length - 1;
+}
+
+function taxiAreaDistance(a, b) {
+  return Math.hypot(TAXI_AREA_XY[a][0] - TAXI_AREA_XY[b][0], TAXI_AREA_XY[a][1] - TAXI_AREA_XY[b][1]);
+}
+
 function generateTaxiDataset() {
-  const rand = taxiSeededRandom(TAXI_DATASET_SEED);
-  // Separate RNG for minutes so the main rand() sequence (and every other field) is unchanged
-  const minuteRand = taxiSeededRandom(TAXI_DATASET_SEED + 1000);
-  // Another separate RNG for 迎車 (dispatch) flags
-  const dispatchRand = taxiSeededRandom(TAXI_DATASET_SEED + 2000);
-  // Another separate RNG for 町名 (pickupTown / dropoffTown)
-  const townRand = taxiSeededRandom(TAXI_DATASET_SEED + 3000);
-  // Another separate RNG for the 丁目 choice
-  const addrRand = taxiSeededRandom(TAXI_DATASET_SEED + 4000);
+  const rand = taxiSeededRandom(TAXI_DATASET_SEED); // shift level (break, trip count, weather)
+  const tripRand = taxiSeededRandom(TAXI_DATASET_SEED + 1000); // areas, distance
+  const dispatchRand = taxiSeededRandom(TAXI_DATASET_SEED + 2000); // 迎車 flags
+  const townRand = taxiSeededRandom(TAXI_DATASET_SEED + 3000); // 町名
+  const addrRand = taxiSeededRandom(TAXI_DATASET_SEED + 4000); // 丁目
+  const timeRand = taxiSeededRandom(TAXI_DATASET_SEED + 5000); // pickup times, trip minutes
   const trips = [];
   const [endY, endM, endD] = TAXI_DATASET_END_DATE.split("-").map(Number);
   const today = new Date(endY, endM - 1, endD);
   const startDate = new Date(today);
   startDate.setMonth(startDate.getMonth() - TAXI_MONTHS);
-  
+  const hm = m => `${String(Math.floor(m / 60) % 24).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`;
+
   let tripId = 1;
+  // the last shift may start on the end date only if it is a 出番; its early-morning trips then fall on
+  // the next calendar day, still stored under the shift day
   for (let d = new Date(startDate); d <= today; d.setDate(d.getDate() + 1)) {
+    const dateStr = taxiLocalDateString(d);
+    if (taxiShiftTypeOf(dateStr) !== "出番") continue;
     const dayOfWeek = d.getDay();
-    const weekday = TAXI_WEEKDAYS[dayOfWeek];
-    const isWeekend = dayOfWeek === 0 || dayOfWeek === 6;
-    const baseTripsPerDay = isWeekend ? 120 : 160;
-    const tripsToday = Math.floor(baseTripsPerDay * (0.8 + rand() * 0.4));
-    
-    for (let t = 0; t < tripsToday; t++) {
-      const hour = Math.floor(weightedHourRandom(rand, isWeekend));
-      const minute = Math.min(59, Math.floor(minuteRand() * 60));
-      const vehicle = TAXI_VEHICLES[Math.floor(rand() * TAXI_VEHICLES.length)];
-      const driver = TAXI_DRIVERS[Math.floor(rand() * TAXI_DRIVERS.length)];
-      const pickupArea = TAXI_AREAS[Math.floor(rand() * TAXI_AREAS.length)];
-      const dropoffArea = TAXI_AREAS[Math.floor(rand() * TAXI_AREAS.length)];
-      const distance = Math.round((1 + rand() * 15) * 10) / 10;
-      rand(); // former random fare multiplier: keep the RNG sequence so all other fields stay identical
+    const rBreak = rand(), rN1 = rand(), rN2 = rand(), rEarly = rand(), rRain = rand(), rEarlyN = rand(), rBusy = rand(), rEnd = rand();
+
+    const rainy = rRain < 0.07;
+    const busy = !rainy && rBusy < 0.04; // rare very busy shift (events / 雨の週末): more and longer trips
+    const earlyLeave = rEarly < 0.015;
+    const gauss = Math.sqrt(-2 * Math.log(Math.max(1e-9, rN1))) * Math.cos(2 * Math.PI * rN2);
+    let n = Math.round(TAXI_TRIPS_PER_DAY_MEAN * TAXI_WEEKDAY_TRIP_FACTOR[dayOfWeek] * (rainy ? 1.1 : busy ? 1.2 : 1) + gauss * (gauss < 0 ? TAXI_TRIPS_PER_DAY_SD_LOW : TAXI_TRIPS_PER_DAY_SD_HIGH));
+    n = Math.max(TAXI_TRIPS_PER_DAY_MIN, Math.min(TAXI_TRIPS_PER_DAY_MAX, n));
+    if (earlyLeave) n = 10 + Math.floor(rEarlyN * 10);
+
+    // shift window (minutes from 00:00 of the shift day; > 1440 = next morning)
+    const shiftStart = TAXI_SHIFT_START_MIN;
+    const lastPickup = earlyLeave ? 17 * 60 + Math.floor(rEnd * 300) : TAXI_SHIFT_LAST_PICKUP_MIN; // 早上がり: back 17:00-22:00
+    // the 2-hour stop at a random time inside the shift (from 10:00; it ends at least 2.5 h before the last pickup)
+    const breakStart = shiftStart + 60 + Math.floor(rBreak * Math.max(1, lastPickup - shiftStart - 60 - TAXI_SHIFT_BREAK_MIN - 150));
+    const breakEnd = breakStart + TAXI_SHIFT_BREAK_MIN;
+
+    // trips: areas and distances
+    const plan = [];
+    let area = taxiPickWeighted(TAXI_PICKUP_AREA_WEIGHTS, tripRand());
+    for (let i = 0; i < n; i++) {
+      const rMove = tripRand();
+      if (i > 0 && rMove > 0.5) area = taxiPickWeighted(TAXI_PICKUP_AREA_WEIGHTS, tripRand());
+      else tripRand();
+      const weights = TAXI_AREAS.map((_, j) => (j === area ? 2.2 : Math.exp(-taxiAreaDistance(area, j) / 2.2)));
+      const to = taxiPickWeighted(weights, tripRand());
+      const rDist = tripRand(), rLong = tripRand();
+      let km;
+      if (rLong < 0.02) km = 9 + rDist * 9;
+      else if (to === area) km = 0.7 + rDist * 1.6;
+      else km = Math.max(1.0, 1.35 * taxiAreaDistance(area, to) + (rDist - 0.5) * 1.6);
+      if (rainy) km *= 1.15;
+      else if (busy) km *= 1.45;
+      plan.push({ pickupArea: TAXI_AREAS[area], dropoffArea: TAXI_AREAS[to], km });
+      area = to;
+    }
+
+    // pickup times: demand-weighted inside the shift (outside the 2-hour stop), sorted, never overlapping
+    const slots = [];
+    for (let m = shiftStart; m <= lastPickup; m++) if (m < breakStart || m >= breakEnd) slots.push(m);
+    const cum = [];
+    let acc = 0;
+    for (const m of slots) cum.push(acc += TAXI_HOUR_DEMAND[Math.floor(m / 60) % 24]);
+    const raw = [];
+    for (let i = 0; i < n; i++) {
+      const target = timeRand() * acc;
+      let lo = 0, hi = cum.length - 1;
+      while (lo < hi) { const mid = (lo + hi) >> 1; if (cum[mid] < target) lo = mid + 1; else hi = mid; }
+      raw.push(slots[lo]);
+    }
+    raw.sort((a, b) => a - b);
+    let prevEnd = shiftStart;
+    for (let i = 0; i < n; i++) {
+      const p = plan[i];
+      let pickup = Math.max(raw[i], prevEnd + 1);
+      if (pickup >= breakStart && pickup < breakEnd) pickup = breakEnd;
+      if (prevEnd > breakStart && prevEnd <= breakEnd && pickup < breakEnd) pickup = breakEnd;
+      const lateNight = pickup >= 22 * 60;
+      const distance = Math.round(p.km * (lateNight ? 1.1 : 1) * 10) / 10; // late night: somewhat longer rides
+      const occupiedMinutes = Math.max(3, Math.round(2 + distance * (lateNight ? 2.2 : 2.6) + timeRand() * 4));
+      if (pickup > lastPickup) break; // never beyond 04:40 (return by 04:50)
+      if (pickup < breakEnd && pickup + occupiedMinutes > breakStart) {
+        // a ride would run into the stop: start the stop after it instead is not allowed -> skip to after the stop
+        pickup = breakEnd;
+        if (pickup > lastPickup) break;
+      }
+      if (pickup + occupiedMinutes > TAXI_SHIFT_END_MIN) break;
+      let emptyMinutes = pickup - prevEnd;
+      if (prevEnd <= breakStart && pickup >= breakEnd) emptyMinutes -= TAXI_SHIFT_BREAK_MIN;
+      emptyMinutes = Math.max(0, emptyMinutes);
       const dispatch = dispatchRand() < TAXI_DISPATCH_RATE;
-      const pickupTowns = TAXI_AREA_TOWNS[pickupArea];
-      const dropoffTowns = TAXI_AREA_TOWNS[dropoffArea];
+      const pickupTowns = TAXI_AREA_TOWNS[p.pickupArea];
+      const dropoffTowns = TAXI_AREA_TOWNS[p.dropoffArea];
       const pickupEntry = pickupTowns[Math.min(pickupTowns.length - 1, Math.floor(townRand() * pickupTowns.length))];
       const dropoffEntry = dropoffTowns[Math.min(dropoffTowns.length - 1, Math.floor(townRand() * dropoffTowns.length))];
-      const pickupTown = pickupEntry[0];
-      const dropoffTown = dropoffEntry[0];
-      const pickupAddress = taxiAddressFor(pickupEntry, addrRand());
-      const dropoffAddress = taxiAddressFor(dropoffEntry, addrRand());
-      const occupiedMinutes = Math.round(distance * 4 + rand() * 10);
-      const emptyMinutes = Math.round(rand() * 20 + 5);
-
-      // Raw record (same shape an imported real record would have), normalised below
       trips.push(taxiTripFromRecord({
         id: tripId++,
-        date: taxiLocalDateString(d),
-        time: `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`,
-        vehicle,
-        driver,
-        pickupArea,
-        pickupTown,
-        pickupAddress,
-        dropoffArea,
-        dropoffTown,
-        dropoffAddress,
+        date: dateStr, // 営業日 (shift day), also for 00:00-04:59 pickups
+        time: hm(pickup),
+        dropoffDate: dateStr, // 営業日 as well (dropoffTime is the clock time)
+        pickupArea: p.pickupArea,
+        pickupTown: pickupEntry[0],
+        pickupAddress: taxiAddressFor(pickupEntry, addrRand()),
+        dropoffArea: p.dropoffArea,
+        dropoffTown: dropoffEntry[0],
+        dropoffAddress: taxiAddressFor(dropoffEntry, addrRand()),
         distance,
         dispatch,
         occupiedMinutes,
         emptyMinutes,
       }));
+      prevEnd = pickup + occupiedMinutes;
     }
   }
   return trips;
@@ -8278,7 +8432,7 @@ function generateTaxiDataset() {
 // Trip normaliser: builds the analysis record (derived calendar fields, fares,
 // dropoff time) from a raw record. Real imported data (e.g. from a PDF) should be
 // passed through this same function so query_data works unchanged.
-// Raw fields: id, date "YYYY-MM-DD", time "HH:MM" (乗車時刻), vehicle, driver,
+// Raw fields: id, date "YYYY-MM-DD", time "HH:MM" (乗車時刻),
 // pickupArea, pickupTown, pickupAddress, dropoffArea, dropoffTown, dropoffAddress,
 // distance (km), dispatch (bool), occupiedMinutes, emptyMinutes,
 // optional fare (税抜) / dropoffTime / dropoffDate if the source provides them.
@@ -8328,8 +8482,6 @@ function taxiTripFromRecord(rec) {
     dropoffTime,
     dropoffHour: dh,
     dropoffMinute: dm,
-    vehicle: rec.vehicle,
-    driver: rec.driver,
     pickupArea: rec.pickupArea ?? "",
     pickupTown: rec.pickupTown ?? "",
     pickupAddress: rec.pickupAddress ?? rec.pickupTown ?? "",
@@ -8348,38 +8500,34 @@ function taxiTripFromRecord(rec) {
   };
 }
 
-function weightedHourRandom(rand, isWeekend) {
-  const weights = isWeekend
-    ? [0.5, 0.3, 0.2, 0.2, 0.3, 0.5, 0.8, 1.2, 1.5, 1.8, 2.0, 2.2, 2.5, 2.3, 2.0, 1.8, 1.5, 2.0, 2.5, 3.0, 2.8, 2.5, 2.0, 1.2]
-    : [0.3, 0.2, 0.1, 0.1, 0.2, 0.5, 1.0, 2.5, 3.0, 2.0, 1.5, 1.2, 1.5, 1.3, 1.2, 1.5, 2.0, 3.0, 3.5, 2.8, 2.2, 1.8, 1.2, 0.6];
-  const total = weights.reduce((a, b) => a + b, 0);
-  let r = rand() * total;
-  for (let h = 0; h < 24; h++) {
-    r -= weights[h];
-    if (r <= 0) return h;
-  }
-  return 12;
-}
-
 const taxiTrips = generateTaxiDataset();
 console.log(`Generated ${taxiTrips.length} synthetic taxi trips for analytics`);
 
-// v26: the 4 fixed dashboard panels show values computed from the data (latest day's sales and
-// trips, peak hour, utilisation) instead of fixed demo numbers. Local first; D1 replaces them.
+// v26: the 4 fixed dashboard panels show values computed from the data instead of fixed demo numbers.
+// v27: latest shift day (出番, incl. its 0-4時 trips) sales and trips, peak hour (trips), and 時間帯別 (sales + trips per hour, all
+// period; replaces 車両稼働率). Local first; D1 replaces them.
 function taxiFixedPanelValuesLocal() {
   let latest = "";
   for (const t of taxiTrips) if (t.date > latest) latest = t.date;
-  let dayFare = 0, dayTrips = 0, occ = 0, emp = 0;
-  const byHour = new Array(24).fill(0);
+  let dayFare = 0, dayTrips = 0;
+  const hourlyTrips = new Array(24).fill(0);
+  const hourlyFare = new Array(24).fill(0);
   for (const t of taxiTrips) {
     if (t.date === latest) { dayFare += t.fare; dayTrips++; }
-    byHour[t.hour]++;
-    occ += t.occupiedMinutes;
-    emp += t.emptyMinutes;
+    hourlyTrips[t.hour]++;
+    hourlyFare[t.hour] += t.fare;
   }
   let peakHour = null;
-  for (let h = 0; h < 24; h++) if (byHour[h] > 0 && (peakHour === null || byHour[h] > byHour[peakHour])) peakHour = h;
-  return { latestDate: latest, dayFare, dayTrips, peakHour, utilizationRate: occ + emp ? occ / (occ + emp) * 100 : null };
+  for (let h = 0; h < 24; h++) if (hourlyTrips[h] > 0 && (peakHour === null || hourlyTrips[h] > hourlyTrips[peakHour])) peakHour = h;
+  return { latestDate: latest, dayFare, dayTrips, peakHour, hourlyFare, hourlyTrips };
+}
+
+let taxiFixedValues = null; // last applied fixed-panel values (local or D1), used by the offline texts
+
+function taxiTopHour(arr) {
+  let best = null;
+  if (Array.isArray(arr)) for (let h = 0; h < 24; h++) if ((arr[h] || 0) > 0 && (best === null || arr[h] > arr[best])) best = h;
+  return best;
 }
 
 function taxiApplyFixedPanelValues(v) {
@@ -8387,13 +8535,17 @@ function taxiApplyFixedPanelValues(v) {
   const [, m, d] = String(v.latestDate).split("-").map(Number);
   const md = `${m}/${d}`;
   taxiPanelData[0].value = `¥${Number(v.dayFare || 0).toLocaleString()}`;
-  taxiPanelData[0].unit = `${md} 合計（税抜）`;
+  taxiPanelData[0].unit = `${md}出番 合計（税抜）`;
   taxiPanelData[1].value = `${Number(v.dayTrips || 0).toLocaleString()}`;
-  taxiPanelData[1].unit = `件 / ${md}`;
+  taxiPanelData[1].unit = `件 / ${md}出番`;
   taxiPanelData[2].value = v.peakHour === null || v.peakHour === undefined ? "-" : `${v.peakHour}-${v.peakHour + 1}時`;
   taxiPanelData[2].unit = "最多乗車時間（全期間）";
-  taxiPanelData[3].value = Number.isFinite(v.utilizationRate) ? `${Math.round(v.utilizationRate)}%` : "-";
-  taxiPanelData[3].unit = "全車両平均（全期間）";
+  const hourlyOk = Array.isArray(v.hourlyFare) && v.hourlyFare.length === 24 && Array.isArray(v.hourlyTrips) && v.hourlyTrips.length === 24;
+  const topFareHour = hourlyOk ? taxiTopHour(v.hourlyFare) : null;
+  taxiPanelData[3].hourly = hourlyOk ? { fare: v.hourlyFare.map(Number), trips: v.hourlyTrips.map(Number) } : null;
+  taxiPanelData[3].value = topFareHour === null ? "-" : `${topFareHour}時台`;
+  taxiPanelData[3].unit = topFareHour === null ? "売上・乗車回数（全期間）" : `売上最多 ¥${Number(v.hourlyFare[topFareHour]).toLocaleString()}（全期間）`;
+  taxiFixedValues = v;
   return true;
 }
 taxiApplyFixedPanelValues(taxiFixedPanelValuesLocal());
@@ -8401,26 +8553,31 @@ taxiApplyFixedPanelValues(taxiFixedPanelValuesLocal());
 // ---------------------------------------------------------------------------
 // Analysis Spec Schema & Query Engine
 // ---------------------------------------------------------------------------
+// v27: 1-decimal display that ignores float noise from summation order (2.3499999999999996 and 2.35 both -> "2.4"),
+// so the browser (JS sums) and D1 (SQL sums) always show the same text
+function taxiFixed1(v) {
+  return (Math.round(Math.round(Number(v) * 1e6) / 1e5) / 10).toFixed(1);
+}
+
 const TAXI_METRICS = {
   fare: { label: "売上", unit: "円", aggregate: "sum", format: v => `¥${v.toLocaleString()}` },
   fareWithTax: { label: "売上(税込)", unit: "円", aggregate: "sum", field: "fareWithTax", format: v => `¥${v.toLocaleString()}` },
   totalFare: { label: "収入(税込+迎車)", unit: "円", aggregate: "sum", field: "totalFare", format: v => `¥${v.toLocaleString()}` },
   dispatchFee: { label: "迎車料金", unit: "円", aggregate: "sum", field: "dispatchFee", format: v => `¥${v.toLocaleString()}` },
   tripCount: { label: "乗車回数", unit: "件", aggregate: "count", format: v => `${v.toLocaleString()}件` },
-  distance: { label: "走行距離", unit: "km", aggregate: "sum", format: v => `${v.toFixed(1)}km` },
+  distance: { label: "走行距離", unit: "km", aggregate: "sum", format: v => `${taxiFixed1(v)}km` },
   avgFare: { label: "平均運賃", unit: "円", aggregate: "avg", field: "fare", format: v => `¥${Math.round(v).toLocaleString()}` },
-  avgDistance: { label: "平均距離", unit: "km", aggregate: "avg", field: "distance", format: v => `${v.toFixed(1)}km` },
+  avgDistance: { label: "平均距離", unit: "km", aggregate: "avg", field: "distance", format: v => `${taxiFixed1(v)}km` },
   occupiedTime: { label: "実車時間", unit: "分", aggregate: "sum", field: "occupiedMinutes", format: v => `${Math.round(v).toLocaleString()}分` },
   emptyTime: { label: "空車時間", unit: "分", aggregate: "sum", field: "emptyMinutes", format: v => `${Math.round(v).toLocaleString()}分` },
-  utilizationRate: { label: "稼働率", unit: "%", aggregate: "custom", format: v => `${v.toFixed(1)}%` },
+  utilizationRate: { label: "稼働率", unit: "%", aggregate: "custom", format: v => `${taxiFixed1(v)}%` },
 };
 
 const TAXI_DIMENSIONS = {
   month: { label: "月別", field: "month", format: v => `${v}月` },
   weekday: { label: "曜日別", field: "weekday", sort: (a, b) => TAXI_WEEKDAYS.indexOf(a) - TAXI_WEEKDAYS.indexOf(b) },
-  hour: { label: "時間帯別", field: "hour", format: v => `${v}時` },
-  vehicle: { label: "車両別", field: "vehicle" },
-  driver: { label: "ドライバー別", field: "driver" },
+  // v27: shift order (a shift runs 09:00 -> 04:50 next morning): 5,6,..,23,0,..,4
+  hour: { label: "時間帯別", field: "hour", format: v => `${v}時`, sort: (a, b) => ((a + 19) % 24) - ((b + 19) % 24) },
   pickupArea: { label: "乗車地別", field: "pickupArea" },
   dropoffArea: { label: "降車地別", field: "dropoffArea" },
   pickupTown: { label: "乗車地町名別", field: "pickupTown" },
@@ -8551,9 +8708,10 @@ const TAXI_PER_TRIP_FIELDS = { fare: "fare", fareWithTax: "fareWithTax", totalFa
 const TAXI_READINGS = {
   調布駅周辺: "ちょうふえきしゅうへん", 国領: "こくりょう", 仙川: "せんがわ", "つつじヶ丘・柴崎": "つつじがおかしばさき",
   深大寺: "じんだいじ", "西調布・飛田給": "にしちょうふとびたきゅう", 三鷹: "みたか", 府中: "ふちゅう",
-  田中: "たなか", 鈴木: "すずき", 佐藤: "さとう", 山田: "やまだ",
-  高橋: "たかはし", 伊藤: "いとう", 渡辺: "わたなべ", 中村: "なかむら",
 };
+// v27: the data is one car / one driver (the user): no vehicle / driver aggregation or filter exists
+const TAXI_NO_VEHICLE_DRIVER_KEYS = ["vehicle", "driver"];
+const TAXI_NO_VEHICLE_DRIVER_MESSAGE = "このデータはご本人の1台・1名分の売上記録のため、車両別・ドライバー別の集計や絞り込みはできません（車両・ドライバーの項目はありません）";
 const TAXI_WEEKDAY_ALIASES = { sun: "日", mon: "月", tue: "火", wed: "水", thu: "木", fri: "金", sat: "土" };
 
 function taxiRound(v, digits = 1) {
@@ -8587,9 +8745,9 @@ function taxiEditDistance(a, b) {
   return dp[m][n];
 }
 
-const TAXI_TERM_SUFFIX_RE = /(区|駅|周辺|エリア|地区|さん|氏|運転手|ドライバー|号車)$/u;
+const TAXI_TERM_SUFFIX_RE = /(区|駅|周辺|エリア|地区)$/u;
 
-// Reading / suffix variant of exactly one valid value (e.g. "コクリョウ", "仙川駅", "スズキさん")
+// Reading / suffix variant of exactly one valid value (e.g. "コクリョウ", "仙川駅")
 function taxiStrongMatch(value, validValues) {
   const v = taxiNormText(value).replace(TAXI_TERM_SUFFIX_RE, "");
   if (!v) return null;
@@ -8613,7 +8771,7 @@ function taxiSuggest(value, validValues, max = 3) {
     return { cand, d: best };
   });
   scored.sort((a, b) => a.d - b.d || a.cand.length - b.cand.length);
-  // No clear candidate (e.g. "車両Z": every vehicle is equally far) -> let validValues speak
+  // No clear candidate (every value is equally far) -> let validValues speak
   if (scored.length > max && scored[0].d === scored[max].d && scored[0].d > 0.1) return [];
   return scored.filter(s => s.d <= 0.67).slice(0, max).map(s => s.cand);
 }
@@ -8626,15 +8784,6 @@ function taxiCanonicalValue(kind, raw) {
     if (TAXI_WEEKDAYS.includes(w)) return w;
     const alias = TAXI_WEEKDAY_ALIASES[w.toLowerCase().slice(0, 3)];
     return alias || null;
-  }
-  if (kind === "vehicle") {
-    const m = /^(?:車両)?\s*([A-Za-z])(?:号車)?$/u.exec(s);
-    const c = m ? `車両${m[1].toUpperCase()}` : s;
-    return TAXI_VEHICLES.includes(c) ? c : null;
-  }
-  if (kind === "driver") {
-    const c = s.replace(/(さん|氏)$/u, "");
-    return TAXI_DRIVERS.includes(c) ? c : null;
   }
   if (kind === "area") return TAXI_ALL_AREAS.includes(s) ? s : null;
   if (kind === "town") {
@@ -8715,7 +8864,7 @@ function runTaxiFreeQuery(args = {}) {
   }
   const groupBy = args.groupBy || "";
   if (groupBy && !TAXI_DIMENSIONS[groupBy]) {
-    errors.push({ field: "groupBy", value: groupBy, message: `無効な集計軸: ${groupBy}`, validValues: Object.keys(TAXI_DIMENSIONS) });
+    errors.push({ field: "groupBy", value: groupBy, message: TAXI_NO_VEHICLE_DRIVER_KEYS.includes(groupBy) ? TAXI_NO_VEHICLE_DRIVER_MESSAGE : `無効な集計軸: ${groupBy}`, validValues: Object.keys(TAXI_DIMENSIONS) });
   }
 
   const allDates = [...new Set(taxiTrips.map(t => t.date))].sort();
@@ -8836,8 +8985,11 @@ function runTaxiFreeQuery(args = {}) {
   const matchKw = (kws, addr) => !kws || !kws.length || kws.some(k => String(addr || "").normalize("NFKC").includes(k));
 
   const weekdaySet = taxiFilterValues("weekday", args.weekdays, "weekdays", TAXI_WEEKDAYS, errors, applied);
-  const vehicleSet = taxiFilterValues("vehicle", args.vehicles, "vehicles", TAXI_VEHICLES, errors, applied);
-  const driverSet = taxiFilterValues("driver", args.drivers, "drivers", TAXI_DRIVERS, errors, applied);
+  // v27: 1 car / 1 driver: a vehicle / driver condition is answered as "not available" (never ignored)
+  for (const k of ["vehicles", "drivers"]) {
+    const v = args[k];
+    if (v !== undefined && v !== null && v !== "" && !(Array.isArray(v) && v.length === 0)) errors.push({ field: k, value: v, message: TAXI_NO_VEHICLE_DRIVER_MESSAGE });
+  }
   const pickupSet = taxiFilterValues("area", args.pickupAreas, "pickupAreas", TAXI_ALL_AREAS, errors, applied);
   const dropoffSet = taxiFilterValues("area", args.dropoffAreas, "dropoffAreas", TAXI_ALL_AREAS, errors, applied);
   const pickupTownSet = taxiFilterValues("town", args.pickupTowns, "pickupTowns", TAXI_TOWNS, errors, applied);
@@ -8876,8 +9028,6 @@ function runTaxiFreeQuery(args = {}) {
   const rows = taxiTrips.filter(t =>
     inCalendar(t) &&
     (timeRange ? inTimeRange(t) : (!hourSet || hourSet.has(t.hour))) &&
-    (!vehicleSet || vehicleSet.has(t.vehicle)) &&
-    (!driverSet || driverSet.has(t.driver)) &&
     (!pickupSet || pickupSet.has(t.pickupArea)) &&
     (!dropoffSet || dropoffSet.has(t.dropoffArea)) &&
     (dispatchFilter === null || t.dispatch === dispatchFilter) &&
@@ -8915,7 +9065,7 @@ function runTaxiFreeQuery(args = {}) {
       if (t[tripField] > max[tripField]) max = t;
       if (t[tripField] < min[tripField]) min = t;
     }
-    const brief = t => ({ value: t[tripField], date: t.date, time: t.time, dropoffTime: t.dropoffTime, vehicle: t.vehicle, driver: t.driver, pickupArea: t.pickupArea, dropoffArea: t.dropoffArea });
+    const brief = t => ({ value: t[tripField], date: t.date, time: t.time, dropoffTime: t.dropoffTime, pickupArea: t.pickupArea, dropoffArea: t.dropoffArea });
     result.perTrip = { field: tripField, average: taxiRound(sum / rows.length, 1), max: brief(max), min: brief(min) };
   }
 
@@ -8970,8 +9120,6 @@ function runTaxiFreeQuery(args = {}) {
     else if (groupBy === "month") domain = [...new Set(taxiTrips.filter(inCalendar).map(t => t.month))];
     else if (groupBy === "hour") domain = hourSet ? [...hourSet] : Array.from({ length: 24 }, (_, h) => h);
     else if (groupBy === "weekday") domain = weekdaySet ? TAXI_WEEKDAYS.filter(w => weekdaySet.has(w)) : [...TAXI_WEEKDAYS];
-    else if (groupBy === "vehicle") domain = vehicleSet ? [...vehicleSet] : [...TAXI_VEHICLES];
-    else if (groupBy === "driver") domain = driverSet ? [...driverSet] : [...TAXI_DRIVERS];
     else if (groupBy === "pickupArea") domain = pickupSet ? [...pickupSet] : [...TAXI_AREAS];
     else if (groupBy === "dropoffArea") domain = dropoffSet ? [...dropoffSet] : [...TAXI_ALL_AREAS];
     else if (groupBy === "pickupTown") domain = pickupTownSet ? [...pickupTownSet] : (pickupSet ? [...pickupSet].flatMap(a => TAXI_AREA_TOWNS[a].map(x => x[0])) : [...TAXI_TOWNS]);
@@ -8996,7 +9144,7 @@ function runTaxiFreeQuery(args = {}) {
     else if (dim.sort) entries.sort((a, b) => dim.sort(a.rawKey, b.rawKey));
     else entries.sort((a, b) => (a.rawKey < b.rawKey ? -1 : a.rawKey > b.rawKey ? 1 : 0));
 
-    // v25: small closed domains (hour 24, weekday 7, month, vehicles, drivers, areas) are returned whole by
+    // v25: small closed domains (hour 24, weekday 7, month, areas) are returned whole by
     // default; a 10-group cut made the model re-query hour/weekday data (extra rounds, 50 KB prompts).
     const defaultLimit = entries.length <= TAXI_QUERY_FULL_DOMAIN_MAX ? entries.length : TAXI_QUERY_DEFAULT_GROUPS;
     const limit = Math.max(1, Math.min(TAXI_QUERY_MAX_GROUPS, parseInt(args.limit, 10) || defaultLimit));
@@ -9302,10 +9450,10 @@ function listAvailableAnalyses() {
     examples: [
       "月別の売上推移を出して",
       "曜日別の乗車回数を見せて",
-      "車両ごとの稼働率比較",
       "時間帯別の売上をグラフで",
-      "ドライバー別の走行距離",
       "乗車地別の乗車回数トップ5",
+      "降車地別の売上を見せて",
+      "月別の走行距離を出して",
     ],
   };
 }
@@ -9321,7 +9469,7 @@ for (let i = 0; i < taxiPanelData.length; i++) {
   const panelMesh = new THREE.Mesh(
     new THREE.PlaneGeometry(TAXI_PANEL_WIDTH, TAXI_PANEL_HEIGHT),
     new THREE.MeshBasicMaterial({
-      map: makeTaxiAnalyticsPanelTexture(data.title, data.value, data.unit, data.chart),
+      map: makeTaxiAnalyticsPanelTexture(data.title, data.value, data.unit, data.chart, data.hourly),
       transparent: true,
       side: THREE.DoubleSide,
     })
@@ -9337,7 +9485,7 @@ function taxiRedrawFixedPanels() {
     const d = taxiPanelData[i];
     if (!d || !mesh?.material) return;
     const old = mesh.material.map;
-    mesh.material.map = makeTaxiAnalyticsPanelTexture(d.title, d.value, d.unit, d.chart);
+    mesh.material.map = makeTaxiAnalyticsPanelTexture(d.title, d.value, d.unit, d.chart, d.hourly);
     mesh.material.needsUpdate = true;
     old?.dispose?.();
   });
@@ -9508,34 +9656,80 @@ const taxiPanelKeywords = {
   0: ["売上", "売り上げ", "収益", "金額", "日次", "revenue", "sales", "daily"],
   1: ["乗車", "回数", "件数", "トリップ", "trips", "rides", "count"],
   2: ["ピーク", "時間", "時間帯", "いつ", "何時", "peak", "hours", "when", "busy"],
-  3: ["稼働", "稼働率", "効率", "車両", "utilization", "efficiency", "vehicle"],
+  // v27: was 稼働率/車両 (車両稼働率 panel); now the 時間帯別 panel (scores above slot 2 for 時間帯別/時間帯ごと)
+  3: ["時間帯別", "時間帯ごと", "時間ごと", "時間別", "時間帯", "時間", "hourly"],
 };
 
-const taxiPanelResponses = {
-  0: {
-    summary: "本日の日次売上は ¥847,200 です。週の中では水曜日が最も高く、土曜日がそれに続いています。",
-    detail: "売上データを詳しく見ると、月曜から日曜にかけて60%、80%、45%、90%、70%、55%、85%の相対的な売上パターンが見られます。週末と週の真ん中が好調です。"
-  },
-  1: {
-    summary: "本日の乗車回数は 156 件です。これは平均的な1日の数値です。",
-    detail: "時間帯別では、通勤時間（9時頃）と夕方（18時頃）にピークがあります。深夜3時頃が最も少なく、全体の約20%程度まで落ち込みます。"
-  },
-  2: {
-    summary: "ピーク時間帯は 18時から21時 です。夕方の通勤・外出需要が集中しています。",
-    detail: "詳細を見ると、6時に30%、9時に25%、12時に50%、15時に80%、18時に100%（ピーク）、21時に70%、24時に40%、3時に20%の需要分布があります。"
-  },
-  3: {
-    summary: "全車両の平均稼働率は 78% です。良好な稼働状況です。",
-    detail: "稼働状況の内訳は、走行中が35%、待機が25%、その他（休憩・充電等）が残りを占めています。80%以上を目指すと更なる効率化が可能です。"
-  },
-};
+// v27: offline texts use the fixed-panel values computed from the data (local or D1), not demo numbers
+// v27: offline answer for 「今日/昨日の売上・乗車回数」. Only 出番 days have trips (明休・公休 = 乗務なし).
+function taxiShiftDayReply(message, now = new Date()) {
+  const m = String(message || "");
+  const isToday = /今日|本日|きょう/.test(m), isYesterday = /昨日|昨夜|きのう|昨晩/.test(m);
+  if (isToday === isYesterday) return null;
+  if (!/売上|売り上げ|乗車|回数|何回|稼|営業|乗務|出番|運賃|件数/.test(m)) return null;
+  const d = new Date(now.getTime());
+  if (isYesterday) d.setDate(d.getDate() - 1);
+  const date = taxiLocalDateString(d);
+  const md = s => `${Number(s.slice(5, 7))}/${Number(s.slice(8, 10))}`;
+  const type = taxiShiftTypeOf(date);
+  const sumDay = ds => taxiTrips.reduce((a, t) => (t.date === ds ? { n: a.n + 1, fare: a.fare + (t.fare || 0), tax: a.tax + (t.fareWithTax || 0) } : a), { n: 0, fare: 0, tax: 0 });
+  const latest = taxiTrips.length ? taxiTrips[taxiTrips.length - 1].date : null;
+  const latestText = () => {
+    if (!latest) return "";
+    const s = sumDay(latest);
+    return `直近の出番は${md(latest)}で、売上は ${s.fare.toLocaleString()}円（消費税込みで${s.tax.toLocaleString()}円）、乗車 ${s.n} 回でした。`;
+  };
+  const label = isToday ? "今日" : "昨日";
+  if (type && type !== "出番") return `${label}（${md(date)}）は${type}のため、その日は乗務なし（明休/公休）です。${latestText()}※サンプルデータです`;
+  const s = sumDay(date);
+  if (!s.n) return `${label}（${md(date)}）の乗務データはまだありません。${latestText()}※サンプルデータです`;
+  return `${label}（${md(date)}・出番）の売上は ${s.fare.toLocaleString()}円（消費税込みで${s.tax.toLocaleString()}円）、乗車 ${s.n} 回でした（翌朝4時台までの乗車を含む）。※サンプルデータです`;
+}
+
+function taxiPanelResponse(idx) {
+  const v = taxiFixedValues || {};
+  const md = v.latestDate ? `${Number(v.latestDate.slice(5, 7))}/${Number(v.latestDate.slice(8, 10))}（出番）` : "直近の出番";
+  const yen = n => `¥${Math.round(Number(n) || 0).toLocaleString()}`;
+  const fare = v.hourlyFare || [], trips = v.hourlyTrips || [];
+  const ranked = arr => Array.from({ length: 24 }, (_, h) => h).filter(h => (arr[h] || 0) > 0).sort((a, b) => arr[b] - arr[a] || a - b);
+  if (idx === 0) {
+    const avg = v.dayTrips ? v.dayFare / v.dayTrips : 0;
+    return {
+      summary: `${md}の売上は ${yen(v.dayFare)}（税抜）です。`,
+      detail: `${md}の売上は ${yen(v.dayFare)}（税抜）、乗車 ${Number(v.dayTrips || 0).toLocaleString()} 件、1乗車あたり平均 ${yen(avg)} です。`,
+    };
+  }
+  if (idx === 1) {
+    return {
+      summary: `${md}の乗車回数は ${Number(v.dayTrips || 0).toLocaleString()} 件です。`,
+      detail: `${md}の乗車回数は ${Number(v.dayTrips || 0).toLocaleString()} 件、売上は ${yen(v.dayFare)}（税抜）です。`,
+    };
+  }
+  if (idx === 2) {
+    const h = v.peakHour;
+    if (h === null || h === undefined) return { summary: "ピーク時間帯のデータがありません。", detail: "ピーク時間帯のデータがありません。" };
+    const top = ranked(trips).slice(0, 3);
+    return {
+      summary: `ピーク時間帯（全期間で乗車が最も多い時間帯）は ${h}時台 です。`,
+      detail: `全期間の乗車回数が多い時間帯は ${top.map(x => `${x}時台（${Number(trips[x]).toLocaleString()}件）`).join("、")} です。`,
+    };
+  }
+  const topFare = ranked(fare).slice(0, 3), topTrips = ranked(trips);
+  if (!topFare.length) return { summary: "時間帯別のデータがありません。", detail: "時間帯別のデータがありません。" };
+  return {
+    summary: `時間帯別では、売上が最も多いのは ${topFare[0]}時台（${yen(fare[topFare[0]])}、税抜・全期間）、乗車回数が最も多いのは ${topTrips[0]}時台（${Number(trips[topTrips[0]]).toLocaleString()}件）です。`,
+    detail: `全期間の時間帯別売上（税抜）の上位は ${topFare.map(x => `${x}時台 ${yen(fare[x])}（${Number(trips[x]).toLocaleString()}件）`).join("、")} です。`,
+  };
+}
 
 const taxiGeneralResponses = {
   greeting: "こんにちは！タクシー業務分析アシスタントです。サンプルデータを使って分析のお手伝いをします。「売上は？」「ピーク時間は？」などと質問してください。",
-  unknown: "すみません、その質問はサンプルデータでは対応できません。「売上」「乗車回数」「ピーク時間」「稼働率」について質問してみてください。",
-  allPanels: "現在4つの分析パネルがあります：日次売上（¥847,200）、乗車回数（156件）、ピーク時間帯（18-21時）、車両稼働率（78%）。詳しく知りたい項目を教えてください。",
+  unknown: "すみません、その質問はサンプルデータでは対応できません。「売上」「乗車回数」「ピーク時間」「時間帯別」について質問してみてください。",
   sampleDataNote: "※ これらはすべてサンプルデータです。実際のデータ連携には別途設定が必要です。",
 };
+// v27: 1 car / 1 driver: vehicle / driver analyses do not exist (offline answer)
+const TAXI_NO_VEHICLE_DRIVER_REPLY = "このデータはご本人の1台・1名分の売上記録なので、車両別・ドライバー別の分析はありません。代わりに「時間帯別の売上」「曜日別の乗車回数」「月別の売上推移」「乗車地別の売上」などを出せます。";
+const TAXI_VEHICLE_DRIVER_RE = /車両|号車|ドライバー|運転手|乗務員|vehicle|driver/iu;
 
 // LLM requests go through the same-origin Worker relay (/api/llm), which
 // forwards to the settings endpoint (many providers send no CORS headers).
@@ -9619,8 +9813,6 @@ const DIMENSION_KEYWORDS = {
   month: ["月別", "月ごと", "月毎", "各月", "monthly"],
   weekday: ["曜日", "曜日別", "曜日ごと", "weekly"],
   hour: ["時間帯", "時間別", "時間ごと", "hourly", "時"],
-  vehicle: ["車両", "車両別", "車ごと", "vehicle"],
-  driver: ["ドライバー", "運転手", "driver"],
   pickupArea: ["乗車エリア", "乗車地", "ピックアップ"],
   dropoffArea: ["降車エリア", "降車地", "ドロップオフ"],
 };
@@ -9719,11 +9911,15 @@ function generateOfflineResponse(userMessage) {
   
   if (lowerMsg.includes("こんにちは") || lowerMsg.includes("はじめ") || lowerMsg.includes("hello")) {
     return { 
-      text: "こんにちは！タクシー業務分析アシスタントです。「月別の売上推移を出して」「車両ごとの稼働率を見せて」などと話しかけてください。「どの一覧表を出せますか？」で利用可能な分析を確認できます。", 
+      text: "こんにちは！タクシー業務分析アシスタントです。「月別の売上推移を出して」「時間帯別の売上を見せて」などと話しかけてください。「どの一覧表を出せますか？」で利用可能な分析を確認できます。", 
       focusPanel: -1 
     };
   }
   
+  if (TAXI_VEHICLE_DRIVER_RE.test(userMessage)) return { text: TAXI_NO_VEHICLE_DRIVER_REPLY, focusPanel: -1 };
+  const shiftDayReply = taxiShiftDayReply(userMessage);
+  if (shiftDayReply) return { text: shiftDayReply, focusPanel: -1 };
+
   const intent = extractAnalysisIntent(userMessage);
   
   if (intent.type === "list_capabilities") {
@@ -9757,14 +9953,14 @@ function generateOfflineResponse(userMessage) {
   
   if (intent.type === "ambiguous") {
     return {
-      text: "どのような分析をご希望ですか？\n\n例えば：\n・「月別の売上推移を出して」\n・「曜日別の乗車回数を見せて」\n・「車両ごとの稼働率比較」\n\n「どの一覧表を出せますか？」で全ての選択肢を確認できます。",
+      text: "どのような分析をご希望ですか？\n\n例えば：\n・「月別の売上推移を出して」\n・「曜日別の乗車回数を見せて」\n・「時間帯別の売上と乗車回数を見せて」\n\n「どの一覧表を出せますか？」で全ての選択肢を確認できます。",
       focusPanel: -1,
     };
   }
   
   const panelIdx = matchTaxiPanelIntent(userMessage);
   if (panelIdx >= 0) {
-    const response = taxiPanelResponses[panelIdx];
+    const response = taxiPanelResponse(panelIdx);
     const wantsDetail = lowerMsg.includes("詳") || lowerMsg.includes("もっと");
     return { text: wantsDetail ? response.detail : response.summary, focusPanel: panelIdx };
   }
@@ -9793,9 +9989,7 @@ const LLM_TOOLS = [
           timeFrom: { type: "string", description: "分単位の開始時刻 \"HH:MM\"（含む）。例:「15時半から17時まで」→ timeFrom=\"15:30\", timeTo=\"17:00\"。分の指定があるときは hourFrom/hourTo ではなくこちらを使う（両方あれば time が優先）" },
           timeTo: { type: "string", description: "分単位の終了時刻 \"HH:MM\"（含まない、\"24:00\"可）。timeFrom>timeTo なら深夜をまたぐ" },
           weekdays: { type: "array", items: { type: "string", enum: TAXI_WEEKDAYS }, description: "曜日（日,月,火,水,木,金,土）。例: 日曜日→[\"日\"], 週末→[\"土\",\"日\"]" },
-          vehicles: { type: "array", items: { type: "string" }, description: `車両: ${TAXI_VEHICLES.join(",")}。車両・ドライバー・乗車地・降車地・町名はユーザーが言った表記をそのまま渡す（読み替えはツール側で行い、corrections や suggestions を返す）` },
-          drivers: { type: "array", items: { type: "string" }, description: `ドライバー: ${TAXI_DRIVERS.join(",")}` },
-          pickupAreas: { type: "array", items: { type: "string" }, description: `乗車地（pickupArea）: ${TAXI_AREAS.join(",")}` },
+          pickupAreas: { type: "array", items: { type: "string" }, description: `乗車地（pickupArea）: ${TAXI_AREAS.join(",")}。乗車地・降車地・町名はユーザーが言った表記をそのまま渡す（読み替えはツール側で行い、corrections や suggestions を返す）` },
           dropoffAreas: { type: "array", items: { type: "string" }, description: `降車地（dropoffArea）: ${TAXI_AREAS.join(",")}` },
           pickupTowns: { type: "array", items: { type: "string" }, description: "乗車地の町名（市＋町名、丁目なし。市は省略可、例: \"布田\" → 調布市布田）。町名だけ言われて乗車/降車の指定がなければ乗車地として扱う。丁目まで指定されたら pickupKeyword を使う" },
           dropoffTowns: { type: "array", items: { type: "string" }, description: "降車地の町名（市＋町名、丁目なし。市は省略可）" },
@@ -9811,7 +10005,7 @@ const LLM_TOOLS = [
           groupBy: {
             type: "string",
             enum: Object.keys(TAXI_DIMENSIONS),
-            description: "集計軸（任意）: date=日別, month=月別, weekday=曜日別, hour=時間帯別, vehicle=車両別, driver=ドライバー別, pickupArea=乗車地別, dropoffArea=降車地別, pickupTown=乗車地町名別, dropoffTown=降車地町名別",
+            description: "集計軸（任意）: date=日別, month=月別, weekday=曜日別, hour=時間帯別, pickupArea=乗車地別, dropoffArea=降車地別, pickupTown=乗車地町名別, dropoffTown=降車地町名別（1台・1名分のデータのため車両別・ドライバー別は無い）",
           },
           sort: { type: "string", enum: ["desc", "asc", "key"], description: "groups の並び順（desc=値の大きい順, asc=小さい順, key=軸の順）" },
           limit: { type: "integer", description: `groups に返す件数（既定${TAXI_QUERY_DEFAULT_GROUPS}, 最大${TAXI_QUERY_MAX_GROUPS}）` },
@@ -9851,7 +10045,7 @@ const LLM_TOOLS = [
           groupBy: {
             type: "string",
             enum: [...Object.keys(TAXI_DIMENSIONS), ""],
-            description: "Dimension to group by: month (月別), weekday (曜日別), hour (時間帯別), vehicle (車両別), driver (ドライバー別), pickupArea (乗車地別), dropoffArea (降車地別). Empty string for total/KPI view.",
+            description: "Dimension to group by: month (月別), weekday (曜日別), hour (時間帯別), pickupArea (乗車地別), dropoffArea (降車地別), pickupTown (乗車地町名別), dropoffTown (降車地町名別), date (日別). Empty string for total/KPI view. There is no vehicle / driver dimension (one car, one driver).",
           },
           chartType: {
             type: "string",
@@ -9886,7 +10080,7 @@ const LLM_TOOLS = [
         properties: {
           panelIndex: {
             type: "number",
-            description: "Panel index: 0=日次売上, 1=乗車回数, 2=ピーク時間帯, 3=車両稼働率",
+            description: "Panel index: 0=日次売上（直近の出番）, 1=乗車回数（直近の出番）, 2=ピーク時間帯, 3=時間帯別（売上・乗車回数）",
           },
         },
         required: ["panelIndex"],
@@ -10141,7 +10335,7 @@ const TAXI_LLM_CLIENT_TIMEOUT_MS = 88000; // v25: per request incl. body; above 
 const TAXI_STT_MODEL_DEFAULT = "mimo-v2.5"; // OpenCode Go: accepts input_audio (wav) in chat/completions
 const TAXI_STT_MAX_TOKENS = 1200;
 const TAXI_STT_PROMPT = `タクシー業務分析アシスタントへの日本語の音声質問です。聞こえたとおりに日本語で文字起こしし、文字起こし結果の1文だけを出力してください（説明・引用符なし）。
-よく出る語: 迎車（げいしゃ）, 乗車, 降車, 乗車地, 降車地, 売上, 乗車回数, 運賃, 税込, 1号車〜, ドライバー, 月別, 曜日別, 車両別, 稼働率, 布田（ふだ）, 国領, 仙川, 調布, つつじヶ丘, 柴崎, 深大寺, 西調布, 飛田給, 三鷹, 府中, 下石原, 白糸台`;
+よく出る語: 迎車（げいしゃ）, 乗車, 降車, 乗車地, 降車地, 売上, 乗車回数, 運賃, 税込, 月別, 曜日別, 時間帯別, 稼働率, 布田（ふだ）, 国領, 仙川, 調布, つつじヶ丘, 柴崎, 深大寺, 西調布, 飛田給, 三鷹, 府中, 下石原, 白糸台`;
 
 // Pasted keys often carry spaces/newlines/zero-width chars or a "Bearer " prefix.
 function taxiSanitizeApiKey(raw) {
@@ -10429,24 +10623,28 @@ async function taxiTranscribeAudioBase64(wavBase64, config, signal = null) {
 }
 
 async function callLlmBackend(userMessage, config, signal = null) {
+  const taxiToday = taxiLocalDateString(new Date());
+  const taxiYesterday = (() => { const d = new Date(); d.setDate(d.getDate() - 1); return taxiLocalDateString(d); })();
   const dataRange = taxiD1Meta?.dataRange?.from ? `${taxiD1Meta.dataRange.from}〜${taxiD1Meta.dataRange.to}` : (taxiTrips.length ? `${taxiTrips[0].date}〜${taxiTrips[taxiTrips.length - 1].date}` : "-");
   const tripTotal = Number.isFinite(taxiD1Meta?.trips) ? taxiD1Meta.trips : taxiTrips.length;
   const datasetSummary = `
 サンプルデータセット情報（合成データ）:
+- データはユーザー本人の売上記録（車両1台・運転手はユーザー本人の1名）。車両・ドライバーの項目は無く、車両別・ドライバー別（運転手別）の集計・比較・絞り込みはできない
+- 勤務: 乗務は「出番」の日だけ（9:00出庫〜翌朝4:50帰庫、途中に2時間の休憩1回）。翌朝0:00〜4:59の乗車も出番の日の日付（date＝営業日）で記録されている。1日あたり（perDay）＝1出番あたり
+- シフト: 12日周期 ${TAXI_SHIFT_PATTERN.join("→")}（${TAXI_SHIFT_ANCHOR} が周期の先頭の出番）。明休・公休の日はデータなし
+- 今日=${taxiToday}（${taxiShiftTypeOf(taxiToday) || "-"}）、昨日=${taxiYesterday}（${taxiShiftTypeOf(taxiYesterday) || "-"}）、直近の出番（データの最終日）=${dataRange.split("〜")[1] || "-"}
 - 期間: 過去${TAXI_MONTHS}ヶ月（${dataRange}、今日=${taxiLocalDateString(new Date())}）
 - 総トリップ数: ${tripTotal.toLocaleString()}件
 - 運賃の前提: 運賃（税抜）＝距離(km)×${TAXI_FARE_PER_KM}円（初乗り・割増なし）。税込額＝税抜に消費税${TAXI_TAX_RATE * 100}%を加えた額（1乗車ごとに円未満四捨五入）。例: 10km → 6,000円（税込6,600円）。fare/売上は税抜、fareWithTax は税込。
 - 迎車（配車での迎え）: 約25%の乗車が迎車。迎車料金${TAXI_DISPATCH_FEE}円は非課税で税込額の後に加算。収入(totalFare)＝税込運賃＋迎車料金。例: 10km・迎車あり → 6,000円＋消費税600円＋迎車料金400円＝7,000円。query_data の dispatch で迎車あり/なしを絞り込める。
 - 音声認識では「迎車（げいしゃ）」が「芸者」と誤認識されやすい。「芸者」「げいしゃ」「ゲイシャ」は迎車として扱い、「もしかして迎車のことですか？」と確認してから迎車として答える。
 - 有効な値の一覧（これ以外の値はデータに存在しない）:
-  - 車両: ${TAXI_VEHICLES.join("、")}
-  - ドライバー: ${TAXI_DRIVERS.join("、")}
   - 営業エリア: ${TAXI_SERVICE_MUNICIPALITIES.join("・")}のみ（調布市中心）。これ以外の地名（23区など）はデータに存在しない
   - 乗車地・降車地: ${TAXI_AREAS.join("、")}
   - 町名（乗車地/降車地の住所の町名部分。住所には丁目が付く場合あり。乗車地: 町名）: ${Object.entries(TAXI_AREA_TOWNS).map(([a, ts]) => `${a}: ${ts.map(x => taxiTownPart(x[0])).join("・")}`).join(" / ")}
   - 町名の読み注意: 布田＝ふだ（「札」「ふだ」「フダ」と聞こえたら「もしかして布田（ふだ）のことですか？」と確認してから布田として答える）
   - 曜日: ${TAXI_WEEKDAYS.join("、")}
-  - 時刻: 00:00〜23:59（乗車時刻 time="HH:MM"、降車時刻 dropoffTime="HH:MM"＝乗車時刻＋実車時間、日付をまたぐ場合あり）
+  - 時刻: 09:00〜翌04:40（乗車時刻 time="HH:MM"、降車時刻 dropoffTime="HH:MM"＝乗車時刻＋実車時間。00:00〜04:59 は出番の翌朝だが date は出番の日）
   - 住所: pickupAddress / dropoffAddress は元データの文字列そのまま（丁目を含む場合や町名が無い場合もある。補完・正規化しない）。住所の質問は pickupKeyword / dropoffKeyword（部分一致）を使う
 
 利用可能なメトリック: ${Object.entries(TAXI_METRICS).map(([k, v]) => `${k}(${v.label})`).join(", ")}
@@ -10463,12 +10661,14 @@ ${taxiPanelData.map((p, i) => `${i}: ${p.title} - ${p.value} (${p.unit})`).join(
 ルール:
 1. 数値の質問（売上・乗車回数・平均・最高・最低・比較など）は必ず query_data を呼び、その結果の数値だけを使って答える。数値は絶対に自分で生成・推測しない。
 2. 「平均」「最高」「最低」で単位が曖昧なときは、乗車回数・売上なら1日あたり（perDay）、運賃・距離なら1乗車あたり（perTrip）を基本にし、どちらの意味か一言添える。最高/最低の日付やグループ名も添える。
-3. 条件（期間・曜日・時間帯・車両・ドライバー・乗車地・降車地・住所・距離・運賃）は query_data の引数で指定する。「15時から18時まで」は hourFrom=15, hourTo=18。分を含む指定（「15時半から17時まで」「15時30分から17時まで」）は timeFrom="15:30", timeTo="17:00"（開始を含み終了を含まない）。時刻指定は乗車時刻が基本、「降車した」「降りた」なら dropoffTimeFrom/dropoffTimeTo（例:「22時以降に降車」→ dropoffTimeFrom="22:00"、「22時から23時の間に降車」→ "22:00"〜"23:00"）。住所は「調布市下石原三丁目から乗った回数」→ pickupKeyword=["調布市下石原三丁目"]、「府中市白糸台への降車回数」→ dropoffKeyword=["府中市白糸台"]。住所キーワードが0件ならデータに無いことを伝え、suggestions があれば「もしかして〇〇のことですか？」と聞く。
-4. 音声認識の聞き間違い・誤字・存在しない値（例: 一覧にない乗車地・降車地名/町名/ドライバー名/車両名、25時などありえない時刻、似た音の名前）に見えるときは、有効な値の一覧から最も近い候補を選び「もしかして〇〇のことですか？」と提案する。query_data が error と suggestions を返した場合も同様にする。ユーザーの言葉が有効な値と完全に一致しないとき（カタカナ・ひらがな表記、「国領駅」「仙川駅」のような付け足し、似た音の別名など）も、黙って読み替えずに必ず「もしかして〇〇のことですか？」と一言添える。ただし市の省略（「布田」→調布市布田、「白糸台」→府中市白糸台）や丁目の省略は聞き間違いではないので、もしかしてを付けずにそのまま答える。候補が1つに絞れる場合は、その候補で query_data を実行して「〇〇であれば…です」と数値も添える。query_data の filters.corrections に読み替えがあれば、回答の最初に必ず「もしかして〇〇のことですか？」と書く。ありえない時刻（25時など）を自分で別の時刻に読み替えた場合も「もしかして〇時のことですか？」と確認する。
+3. 条件（期間・曜日・時間帯・乗車地・降車地・住所・距離・運賃・迎車）は query_data の引数で指定する。「15時から18時まで」は hourFrom=15, hourTo=18。分を含む指定（「15時半から17時まで」「15時30分から17時まで」）は timeFrom="15:30", timeTo="17:00"（開始を含み終了を含まない）。時刻指定は乗車時刻が基本、「降車した」「降りた」なら dropoffTimeFrom/dropoffTimeTo（例:「22時以降に降車」→ dropoffTimeFrom="22:00"、「22時から23時の間に降車」→ "22:00"〜"23:00"）。住所は「調布市下石原三丁目から乗った回数」→ pickupKeyword=["調布市下石原三丁目"]、「府中市白糸台への降車回数」→ dropoffKeyword=["府中市白糸台"]。住所キーワードが0件ならデータに無いことを伝え、suggestions があれば「もしかして〇〇のことですか？」と聞く。
+4. 音声認識の聞き間違い・誤字・存在しない値（例: 一覧にない乗車地・降車地名/町名、25時などありえない時刻、似た音の名前）に見えるときは、有効な値の一覧から最も近い候補を選び「もしかして〇〇のことですか？」と提案する。query_data が error と suggestions を返した場合も同様にする。ユーザーの言葉が有効な値と完全に一致しないとき（カタカナ・ひらがな表記、「国領駅」「仙川駅」のような付け足し、似た音の別名など）も、黙って読み替えずに必ず「もしかして〇〇のことですか？」と一言添える。ただし市の省略（「布田」→調布市布田、「白糸台」→府中市白糸台）や丁目の省略は聞き間違いではないので、もしかしてを付けずにそのまま答える。候補が1つに絞れる場合は、その候補で query_data を実行して「〇〇であれば…です」と数値も添える。query_data の filters.corrections に読み替えがあれば、回答の最初に必ず「もしかして〇〇のことですか？」と書く。ありえない時刻（25時など）を自分で別の時刻に読み替えた場合も「もしかして〇時のことですか？」と確認する。
 5. パネル表示を頼まれたら create_panel、固定パネルについての質問は focus_panel、分析の一覧は list_capabilities、パネル削除は clear_panels を使う。パネルの依頼には毎回必ず create_panel を呼ぶ（会話履歴に「パネルを作成しました」とあっても、それは過去の依頼の結果であり、今回のパネルはまだ存在しない）。create_panel を呼ばずに「パネルを作成しました」と書いてはいけない。
 6. 回答は自然な日本語で簡潔に（2〜4文程度）。表・Markdown（**など）・ツールの内部名や英語のキー名（perDay, groupStats, fareSummary など）は書かない。金額・件数はツールの数値をそのまま3桁カンマ区切りで書き（例: 101,757,180円）、万・億への換算はしない。
 7. 運賃・売上を答えるときは税抜と税込の両方を「6,000円（消費税込みで6,600円）」の形で示す（query_data の fareSummary を使う）。距離からの運賃計算は calc_fare を使う。売上の質問では通常、運賃（税抜/税込）を答え、迎車料金を含む収入や「迎車を除くと〜」は fareSummary.byDispatch / totalIncome を使って必要に応じて添える。
-8. 回答の最後に、これはサンプルデータであることを必ず一言添える（例:「※サンプルデータです」）。`;
+8. 回答の最後に、これはサンプルデータであることを必ず一言添える（例:「※サンプルデータです」）。
+9. 日付の指定（今日・昨日・○月○日）がデータの無い日（明休・公休、query_data の daysInPeriod=0）なら「その日は乗務なし（明休/公休）」と答え、直近の出番の数値を提案する。明休の日の「昨日」「昨夜」は前日の出番（今朝4:50までの乗務）を指すので、その出番の日付で query_data を呼ぶ。
+10. 車両別・ドライバー別（運転手別・号車別）の集計や比較は存在しないので、自分から提案・言及しない。頼まれたら「このデータはご本人の1台・1名分の記録なので、車両別・ドライバー別の分析はありません」と丁寧に伝え、時間帯別・曜日別・月別・乗車地別などの代わりの分析を提案する（query_data や create_panel は呼ばない）。`;
 
   const messages = [
     { role: "system", content: systemPrompt },
@@ -11355,7 +11555,7 @@ function handleTaxiQuickQuestion(question) {
 const taxiSuggestedQuestions = [
   { label: "月別売上", question: "月別の売上推移を出して" },
   { label: "曜日別", question: "曜日別の乗車回数を見せて" },
-  { label: "車両別", question: "車両ごとの稼働率比較" },
+  { label: "時間帯別", question: "時間帯別の売上と乗車回数を見せて" }, // v27: was 車両別 (1 car / 1 driver)
   { label: "一覧", question: "どの一覧表を出せますか？" },
   { label: "クリア", question: TAXI_CLEAR_CHAT_ACTION }, // v22: clears chat + created panels locally (no LLM call)
 ];

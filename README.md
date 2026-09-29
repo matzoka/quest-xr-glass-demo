@@ -373,22 +373,40 @@ v26 から、タクシー分析の集計（AIの `query_data`、作成パネル�
 パラメータ化SQLで集計します。D1 が使えない環境（Pages など、`503 db-unavailable`）や通信エラー時は、
 アプリ内の JavaScript 集計（サンプルデータ）に自動で切り替わり、ステータス行に小さな注記が出ます。
 
-- スキーマ: `migrations/0001_taxi_schema.sql`（`trips` = 正規化済み乗車記録、`vocab` = 有効な車両/ドライバー/エリア/町名と読み、`meta` = 注記・運賃ルール等）
+v27 から、データは**ご本人の1台・1名分の売上記録**（車両・ドライバーの区別なし）です。車両別・ドライバー別の
+集計・絞り込みはなく、AI やオフライン応答も「ありません」と答えます。固定パネル4枚目とクイックボタンは「時間帯別」
+（時間帯ごとの売上・乗車回数）です。サンプルデータは実際の勤務に合わせ、[シフトカレンダー](https://matzoka.github.io/shift-calendar/) の12日周期（出番→明休→出番→明休→出番→明休→公休→出番→明休→出番→明休→公休、2026-06-03 が起点の出番）の**出番の日だけ**乗務します。出番は 9:00 出庫〜翌朝 4:50 帰庫、途中に2時間の休憩（乗車なし）が1回。翌朝 0〜4時台の乗車も出番の日の日付（営業日）で記録します。1出番平均約35回・約60,000円（税抜）、1乗車約1,700円。
+
+- スキーマ: `migrations/0001_taxi_schema.sql` + `migrations/0002_single_driver.sql`（v27: `trips` から車両・ドライバー列を除き、
+  二次インデックスは `date` のみ。v26 の表は書き込みを発生させないよう `trips_v26_legacy` へ名前変更して残しています）。
+  `trips` = 正規化済み乗車記録、`vocab` = 有効なエリア/町名と読み、`meta` = 注記・運賃ルール・contentHash 等
 - 取り込み: `scripts/import-trips.mjs`（アプリの `taxiTripFromRecord()` をそのまま使って派生項目を計算し、trips / vocab / meta を**置き換え**ます）
+
+**D1 無料枠に注意**（1日あたり 書き込み 100,000 行・読み取り 5,000,000 行、00:00 UTC = 9:00 JST にリセット）。
+D1 は行の挿入・削除ごとに「表1行 + インデックス数」行を書き込みとして数えます。取り込み1回の書き込みは
+おおよそ `(旧件数 + 新件数) × 2 + (vocab + meta) × 2` 行です（例: 空の表へ 2,710 件 → 約 5,600 行、同じ件数の入れ替え → 約 11,000 行）。
+スクリプトは `--apply` の前に**読み取りだけ**で現在の件数・インデックス数・contentHash を確認し、
+内容が同じなら何も書き込まず終了、見積もりが `--max-writes`（既定 50,000）を超える場合は中止します。
+試験的な取り込みはリモートで繰り返さず、`--local`（`wrangler dev` のローカル D1）で行ってください。
+集計1回の読み取りは約 5,000〜40,000 行（2,710 件の場合、平均約 11,000 行）です。大量の自動テストをリモートに流すと読み取り枠を超えます。
 
 ```bash
 export CLOUDFLARE_API_TOKEN=...   # D1 Edit 権限つき
 export CLOUDFLARE_ACCOUNT_ID=...
-# 初回のみ: スキーマ作成
+# スキーマ（未適用のマイグレーションのみ適用）
 npx wrangler d1 migrations apply taxi-analytics --remote
-# サンプルデータ（アプリと同一の 26,712 件）
+# サンプルデータ（アプリと同一の 2,710 件）: まずローカルで確認してからリモートへ
+node scripts/import-trips.mjs --sample --local
 node scripts/import-trips.mjs --sample --apply
 # 実データ: 生レコードの JSON 配列（taxiTripFromRecord の入力形式）
 node scripts/import-trips.mjs --input records.json [--vocab vocab.json] --note "実データによる集計結果" --dataset "2026年4〜9月 PDF" --apply
+# 旧 v26 の表（任意・書き込み枠に余裕のある日に。削除の書き込み数は D1 の meta で確認）
+# npx wrangler d1 execute taxi-analytics --remote --command "DROP TABLE trips_v26_legacy"
 ```
 
-`records.json` の1件: `{ id, date "YYYY-MM-DD", time "HH:MM", vehicle, driver, pickupArea, pickupTown, pickupAddress,
-dropoffArea, dropoffTown, dropoffAddress, distance, dispatch, occupiedMinutes, emptyMinutes, fare?, dropoffTime?, dropoffDate? }`。
+`records.json` の1件: `{ id, date "YYYY-MM-DD", time "HH:MM", pickupArea, pickupTown, pickupAddress,
+dropoffArea, dropoffTown, dropoffAddress, distance, dispatch, occupiedMinutes, emptyMinutes, fare?, dropoffTime?, dropoffDate? }`
+（vehicle / driver があっても無視されます）。
 `--vocab` を省略すると有効値はレコードから（出現順で）作られます。読み（ひらがな）を付けたい場合は
 `[{ "kind": "town", "value": "調布市布田", "reading": "ふだ", "parent": "調布駅周辺" }, ...]` の形式で渡します。
-`--apply` を付けない場合は SQL ファイル（既定 `/tmp/taxi-import.sql`）の生成のみです。
+`--apply` / `--local` を付けない場合は SQL ファイル（既定 `/tmp/taxi-import.sql`）の生成のみです。
