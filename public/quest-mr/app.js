@@ -22,7 +22,7 @@ if (TAXI_ALLOWED && taxiAnalyticsButton) {
   taxiAnalyticsButton.removeAttribute("hidden");
 }
 
-const APP_VERSION = "v2026.09.29.19";
+const APP_VERSION = "v2026.09.29.20";
 const DEBUG_TOP_VIEW = new URLSearchParams(window.location.search).has("topDebug");
 const DEBUG_TOP_VIEW_DISTANCE = Number(new URLSearchParams(window.location.search).get("topDebugDist"));
 const DEBUG_BLACK_HOLE_VIEW = new URLSearchParams(window.location.search).has("blackHoleDebug");
@@ -2425,7 +2425,7 @@ function requestEnterpriseRareOrbit() {
   initAudio();
   enterpriseRarePending = true;
   nextShipAt = Math.min(nextShipAt, elapsed);
-  if (!shipActive && !klingonActive && !klingonPending) {
+  if (!shipActive && !klingonActive && !klingonPending && !isSceneEventSuppressed()) {
     enterpriseRarePending = false;
     spawnEnterpriseRareOrbit();
     statusEl.textContent = "Enterprise周回演出を開始しました。";
@@ -2863,6 +2863,7 @@ function orientKlingonAlongVelocity() {
 
 function updateKlingon(dt) {
   if (!klingonActive) {
+    if (isSceneEventSuppressed()) return; // v20: no new passes while in the taxi room
     if ((elapsed >= nextKlingonAt || klingonPending) && !shipActive) {
       if (!klingonModelLoaded) {
         klingonPending = true;
@@ -2946,6 +2947,7 @@ function updateKlingon(dt) {
 
 function updateEnterprise(dt) {
   if (!shipActive) {
+    if (isSceneEventSuppressed()) return; // v20: no new visits while in the taxi room
     if (enterpriseRarePending && !klingonActive && !klingonPending) {
       enterpriseRarePending = false;
       spawnEnterpriseRareOrbit();
@@ -3252,7 +3254,7 @@ function playPoseRecordSound() {
   master.gain.setValueAtTime(0.0001, now);
   master.gain.exponentialRampToValueAtTime(0.18, now + 0.012);
   master.gain.exponentialRampToValueAtTime(0.0001, now + 0.28);
-  const spatialAudio = connectDistanceGain(master, soundPos, 1, LOCAL_AUDIO_MIN_RATIO);
+  const spatialAudio = connectDistanceGain(master, soundPos, 1, LOCAL_AUDIO_MIN_RATIO, "ui");
   const tracked = trackSpatialAudio(spatialAudio, soundPos);
 
   [
@@ -3501,7 +3503,61 @@ function connectSpatialPanner(source, sourcePosition, options = {}) {
   return spatialAudio;
 }
 
-function connectDistanceGain(source, sourcePosition, maxVolume, minRatio = SHIP_AUDIO_MIN_RATIO) {
+// v20: two output buses. "event" = scene events / ambient (Enterprise, Klingon, black hole,
+// ball, countdown ...) muted while the viewer is in the taxi room or the mic records;
+// "ui" = button presses, muted only while the mic records. The recorder's own graph
+// (mic -> ScriptProcessor -> 0-gain sink -> destination) bypasses both buses.
+let audioBusContext = null;
+let audioEventBus = null;
+let audioUiBus = null;
+let audioEventBusMuted = false;
+let audioUiBusMuted = false;
+const AUDIO_BUS_RAMP_S = 0.08;
+
+function getAudioBus(bus = "event") {
+  if (!audioContext) return null;
+  if (audioBusContext !== audioContext) {
+    audioBusContext = audioContext;
+    audioEventBus = audioContext.createGain();
+    audioEventBus.gain.value = audioEventBusMuted ? 0 : 1;
+    audioEventBus.connect(audioContext.destination);
+    audioUiBus = audioContext.createGain();
+    audioUiBus.gain.value = audioUiBusMuted ? 0 : 1;
+    audioUiBus.connect(audioContext.destination);
+  }
+  return bus === "ui" ? audioUiBus : audioEventBus;
+}
+
+function rampAudioBus(node, muted) {
+  if (!node) return;
+  const now = node.context.currentTime;
+  node.gain.cancelScheduledValues(now);
+  node.gain.setValueAtTime(node.gain.value, now);
+  node.gain.linearRampToValueAtTime(muted ? 0 : 1, now + AUDIO_BUS_RAMP_S);
+}
+
+// Called every frame (and on mic state changes); only touches the graph on a change.
+function updateAudioBusMutes() {
+  const micOn = isTaxiMicCapturing();
+  const eventMuted = micOn || isSceneEventSuppressed();
+  const uiMuted = micOn;
+  if (!audioContext) {
+    audioEventBusMuted = eventMuted;
+    audioUiBusMuted = uiMuted;
+    return;
+  }
+  getAudioBus();
+  if (eventMuted !== audioEventBusMuted) {
+    audioEventBusMuted = eventMuted;
+    rampAudioBus(audioEventBus, eventMuted);
+  }
+  if (uiMuted !== audioUiBusMuted) {
+    audioUiBusMuted = uiMuted;
+    rampAudioBus(audioUiBus, uiMuted);
+  }
+}
+
+function connectDistanceGain(source, sourcePosition, maxVolume, minRatio = SHIP_AUDIO_MIN_RATIO, bus = "event") {
   const spatialAudio = connectSpatialPanner(source, sourcePosition);
   const { panner } = spatialAudio;
 
@@ -3510,11 +3566,12 @@ function connectDistanceGain(source, sourcePosition, maxVolume, minRatio = SHIP_
   distanceGain.gain.value = maxVolume * (1 - minRatio);
   if (floorGain) floorGain.gain.value = maxVolume * minRatio;
 
+  const out = getAudioBus(bus) || audioContext.destination;
   panner.connect(distanceGain);
-  distanceGain.connect(audioContext.destination);
+  distanceGain.connect(out);
   if (floorGain) {
     source.connect(floorGain);
-    floorGain.connect(audioContext.destination);
+    floorGain.connect(out);
   }
 
   spatialAudio.distanceGain = distanceGain;
@@ -3650,7 +3707,7 @@ function startBlackHoleRumble() {
     blackHoleRumbleSource.connect(blackHoleRumbleFilter);
     blackHoleRumbleSpatial = connectSpatialPanner(blackHoleRumbleFilter, BLACK_HOLE_POSITION, { attenuate: false });
     blackHoleRumbleSpatial.panner.connect(blackHoleRumbleGain);
-    blackHoleRumbleGain.connect(audioContext.destination);
+    blackHoleRumbleGain.connect(getAudioBus("event") || audioContext.destination);
     blackHoleRumbleSource.onended = () => {
       blackHoleRumbleSource = null;
       disconnectSpatialAudio(blackHoleRumbleSpatial);
@@ -3769,7 +3826,7 @@ function isOneShotAudioReady(sound) {
   return !!sound.buffer || !!sound.failed;
 }
 
-function playOneShotAudio(sound, volume = 0.72, sourcePosition = null, minRatio = LOCAL_AUDIO_MIN_RATIO) {
+function playOneShotAudio(sound, volume = 0.72, sourcePosition = null, minRatio = LOCAL_AUDIO_MIN_RATIO, bus = "event") {
   if (audioContext) {
     if (audioContext.state === "suspended") audioContext.resume();
     if (!sound.buffer && !sound.promise) loadOneShotAudio(sound);
@@ -3792,7 +3849,7 @@ function playOneShotAudio(sound, volume = 0.72, sourcePosition = null, minRatio 
     sound.source = source;
     source.buffer = sound.buffer;
     const soundPos = sourcePosition || getViewerAudioPosition(audioSourceWorldAlt).clone();
-    const spatialAudio = connectDistanceGain(source, soundPos, volume, minRatio);
+    const spatialAudio = connectDistanceGain(source, soundPos, volume, minRatio, bus);
     const tracked = trackSpatialAudio(spatialAudio, soundPos);
     sound.spatialAudio = spatialAudio;
     sound.spatialPosition = soundPos;
@@ -3819,7 +3876,7 @@ function playOneShotAudio(sound, volume = 0.72, sourcePosition = null, minRatio 
 }
 
 function playXrButtonPressSound() {
-  return playOneShotAudio(xrButtonPressSound, 0.86, getViewerAudioPosition(audioSourceWorld).clone(), LOCAL_AUDIO_MIN_RATIO);
+  return playOneShotAudio(xrButtonPressSound, 0.86, getViewerAudioPosition(audioSourceWorld).clone(), LOCAL_AUDIO_MIN_RATIO, "ui");
 }
 
 function playKlingonArrivalSound() {
@@ -5024,6 +5081,31 @@ let xrViewerRoomZone = null;
 
 function isXrHandUiAllowed() {
   return xrViewerRoomZone !== null || isViewerInTaxiAnalyticsRoomXr();
+}
+
+// v20: while the viewer is in the taxi room (XR walk-in / teleport, or the 2D preview)
+// no scene events start and their sounds are muted (event audio bus). Due timers are
+// pushed to "leave + grace" so nothing fires the instant the viewer walks out.
+const SCENE_EVENT_RESUME_GRACE_S = 10;
+function isSceneEventSuppressed() {
+  return inTaxiAnalyticsRoom || taxiAnalyticsPreview2D;
+}
+
+function isTaxiMicCapturing() {
+  return !!(taxiIsListening || taxiRecorder);
+}
+
+function updateSceneEventSuppression() {
+  if (isSceneEventSuppressed()) {
+    const t = elapsed + SCENE_EVENT_RESUME_GRACE_S;
+    if (nextMeteorAt < t) nextMeteorAt = t;
+    if (nextCometAt < t) nextCometAt = t;
+    if (nextShipAt < t) nextShipAt = t;
+    if (nextKlingonAt < t) nextKlingonAt = t;
+    if (nextSolarSpotAt < t) nextSolarSpotAt = t;
+    if (nextSolarProminenceAt < t) nextSolarProminenceAt = t;
+  }
+  updateAudioBusMutes();
 }
 
 // Walking in/out with the thumbstick must switch the taxi-room state just like
@@ -9190,38 +9272,7 @@ for (let i = 0; i < taxiPanelData.length; i++) {
   taxiAnalyticsPanels.push(panelMesh);
 }
 
-const taxiRoomTitleCanvas = document.createElement("canvas");
-taxiRoomTitleCanvas.width = 1200;
-taxiRoomTitleCanvas.height = 120;
-const taxiTitleCtx = taxiRoomTitleCanvas.getContext("2d");
-taxiTitleCtx.fillStyle = "rgba(18, 12, 32, 0.85)";
-taxiTitleCtx.fillRect(0, 0, 1200, 120);
-taxiTitleCtx.strokeStyle = "rgba(168, 132, 255, 0.5)";
-taxiTitleCtx.lineWidth = 2;
-taxiTitleCtx.strokeRect(4, 4, 1192, 112);
-const taxiRoomTitleText = "分析用の部屋 - タクシー業務ダッシュボード";
-const maxTitleTextWidth = 1120;
-let titleFontSize = 48;
-do {
-  taxiTitleCtx.font = `bold ${titleFontSize}px Arial, Helvetica, sans-serif`;
-  titleFontSize -= 2;
-} while (titleFontSize > 28 && taxiTitleCtx.measureText(taxiRoomTitleText).width > maxTitleTextWidth);
-taxiTitleCtx.fillStyle = "#e4daff";
-taxiTitleCtx.textAlign = "center";
-taxiTitleCtx.fillText(taxiRoomTitleText, 600, 75);
-const taxiRoomTitleTex = new THREE.CanvasTexture(taxiRoomTitleCanvas);
-taxiRoomTitleTex.colorSpace = THREE.SRGBColorSpace;
-
-const taxiRoomTitleMesh = new THREE.Mesh(
-  new THREE.PlaneGeometry(3.6, 0.36),
-  new THREE.MeshBasicMaterial({ map: taxiRoomTitleTex, transparent: true, side: THREE.DoubleSide })
-);
-taxiRoomTitleMesh.position.set(
-  TAXI_ANALYTICS_ROOM_POSITION.x,
-  TAXI_ANALYTICS_ROOM_POSITION.y + 1.5,
-  TAXI_ANALYTICS_ROOM_POSITION.z - TAXI_ANALYTICS_ROOM_HALF.z + 0.3
-);
-taxiAnalyticsGroup.add(taxiRoomTitleMesh);
+// v20: the old room title ("分析用の部屋 - タクシー業務ダッシュボード") was removed; it peeked out behind the 2x fixed panels.
 
 function makeTaxiReturnButtonTexture() {
   const c = document.createElement("canvas");
@@ -10855,6 +10906,7 @@ function createTaxiMicButton() {
 }
 
 function updateTaxiMicButton() {
+  updateAudioBusMutes(); // v20: mute SFX the moment recording starts / restore when it ends
   if (!taxiMicButtonMesh) return;
   const oldTex = taxiMicButtonTexture;
   taxiMicButtonTexture = makeTaxiMicButtonTexture(taxiIsListening, taxiVoiceBusy);
@@ -10871,24 +10923,25 @@ const taxiSuggestedQuestions = [
   { label: "一覧", question: "どの一覧表を出せますか？" },
   { label: "クリア", question: "パネルをクリアして" },
 ];
-const TAXI_QUESTION_BTN_W = 0.2;
-const TAXI_QUESTION_BTN_H = 0.085;
-const TAXI_QUESTION_BTN_GAP = 0.025;
+// v20: 2x (was 0.2 x 0.085 m, gap 0.025); row = 5*0.4 + 4*0.04 = 2.16 m, fits under the 2.2 m chat panel.
+const TAXI_QUESTION_BTN_W = 0.4;
+const TAXI_QUESTION_BTN_H = 0.17;
+const TAXI_QUESTION_BTN_GAP = 0.04;
 
 function makeTaxiQuestionButtonTexture(text) {
   const c = document.createElement("canvas");
-  c.width = 236;
-  c.height = 100;
+  c.width = 472;
+  c.height = 200;
   const ctx = c.getContext("2d");
   
   ctx.fillStyle = "rgba(60, 45, 90, 0.9)";
-  ctx.roundRect(0, 0, c.width, c.height, 14);
+  ctx.roundRect(0, 0, c.width, c.height, 28);
   ctx.fill();
   ctx.strokeStyle = "rgba(168, 132, 255, 0.7)";
-  ctx.lineWidth = 3;
+  ctx.lineWidth = 6;
   ctx.stroke();
   
-  ctx.font = "bold 36px Arial, Helvetica, sans-serif";
+  ctx.font = "bold 72px Arial, Helvetica, sans-serif"; // v20: 2x (36px)
   ctx.fillStyle = "#e4daff";
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
@@ -10901,7 +10954,7 @@ function makeTaxiQuestionButtonTexture(text) {
 
 const taxiQuestionButtons = [];
 
-// One row directly under the chat panel (panel is 1.1 m wide x 0.92 m tall).
+// One row directly under the chat panel (v19+: panel is 2.2 m wide x 1.84 m tall).
 function createTaxiQuestionButtons() {
   const n = taxiSuggestedQuestions.length;
   const rowW = n * TAXI_QUESTION_BTN_W + (n - 1) * TAXI_QUESTION_BTN_GAP;
@@ -11769,6 +11822,7 @@ renderer.setAnimationLoop((timestamp) => {
   updateXrAimRays();
   updateHandTouch(dt);
   updateLocomotion(dt);
+  updateSceneEventSuppression();
   if (
     audioContext?.state === "running" &&
     (
