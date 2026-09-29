@@ -118,6 +118,12 @@ p {
   background: linear-gradient(180deg, rgba(21, 33, 45, 0.96), rgba(6, 12, 19, 0.96));
 }
 
+.actionButton.demo.taxiAnalytics {
+  border-color: rgba(168, 132, 255, 0.55);
+  background: linear-gradient(180deg, rgba(33, 24, 50, 0.96), rgba(12, 8, 20, 0.96));
+  color: #e4daff;
+}
+
 .actionButton.demo.help {
   min-height: 36px;
   padding: 0 13px;

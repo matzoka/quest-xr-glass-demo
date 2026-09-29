@@ -12,8 +12,9 @@ const enterpriseOrbitButton = document.querySelector("#enterpriseOrbitButton");
 const klingonButton = document.querySelector("#klingonButton");
 const blackHoleTourButton = document.querySelector("#blackHoleTourButton");
 const controllerHelpButton = document.querySelector("#controllerHelpButton");
+const taxiAnalyticsButton = document.querySelector("#taxiAnalyticsButton");
 const poseDebugOutputEl = document.querySelector("#poseDebugOutput");
-const APP_VERSION = "v2026.06.20.11";
+const APP_VERSION = "v2026.09.29.01";
 const DEBUG_TOP_VIEW = new URLSearchParams(window.location.search).has("topDebug");
 const DEBUG_TOP_VIEW_DISTANCE = Number(new URLSearchParams(window.location.search).get("topDebugDist"));
 const DEBUG_BLACK_HOLE_VIEW = new URLSearchParams(window.location.search).has("blackHoleDebug");
@@ -97,6 +98,9 @@ camera.position.set(0, roomCenter.y, roomCenter.z + fitDist + roomHalf.z + 0.5);
 camera.lookAt(roomCenter);
 
 function applyDebugTopCamera() {
+  if (taxiAnalyticsPreview2D && !renderer.xr.isPresenting) {
+    return;
+  }
   if (DEBUG_CAMERA_VIEW && !renderer.xr.isPresenting) {
     const params = new URLSearchParams(window.location.search);
     const read = (name, fallback) => {
@@ -3068,6 +3072,7 @@ async function enterXr(mode) {
       enterpriseOrbitXrButton.visible = false;
       klingonXrButton.visible = false;
       blackHoleTourXrButton.visible = false;
+      taxiAnalyticsXrButton.visible = false;
       setXrButtonVolumesVisible(false);
       enterpriseOrbitXrIcon.visible = false;
       klingonXrIcon.visible = false;
@@ -3083,6 +3088,9 @@ async function enterXr(mode) {
         blackHoleTourCountdownTimer = null;
       }
       blackHoleWarpHud.visible = false;
+      inTaxiAnalyticsRoom = false;
+      taxiAnalyticsPreview2D = false;
+      taxiReturnXrButton.visible = false;
       setHandPresenceVisible(false);
       setControllerHelpVisible(false);
       currentMode = "preview";
@@ -3112,6 +3120,7 @@ async function enterXr(mode) {
     enterpriseOrbitXrButton.visible = true;
     klingonXrButton.visible = true;
     blackHoleTourXrButton.visible = true;
+    taxiAnalyticsXrButton.visible = true;
     enterpriseOrbitXrIcon.visible = true;
     klingonXrIcon.visible = true;
     blackHoleTourXrIcon.visible = true;
@@ -3153,6 +3162,7 @@ enterpriseOrbitButton?.addEventListener("click", requestEnterpriseRareOrbit);
 klingonButton?.addEventListener("click", requestKlingonPass);
 blackHoleTourButton?.addEventListener("click", requestBlackHoleTour);
 controllerHelpButton?.addEventListener("click", toggleControllerHelp);
+taxiAnalyticsButton?.addEventListener("click", requestTaxiAnalyticsRoom);
 
 updateXrAvailability();
 
@@ -4792,7 +4802,23 @@ blackHoleTourXrButton.visible = false;
 scene.add(blackHoleTourXrButton);
 enhanceXrButton(blackHoleTourXrButton, 4, "blackHole");
 const blackHoleTourXrIcon = makeXrIcon("blackHole", 4, XR_ICON_SIZE, "blackHole");
-const helpXrIcon = makeXrIcon("help", 5, XR_ICON_SIZE, "help");
+
+const taxiAnalyticsXrButton = new THREE.Mesh(
+  new THREE.PlaneGeometry(XR_BUTTON_W, XR_BUTTON_H),
+  new THREE.MeshBasicMaterial({
+    map: makeButtonTexture("タクシー業務アプリ分析", "rgba(168,132,255,0.95)"),
+    transparent: true,
+    depthTest: false,
+    side: THREE.DoubleSide,
+  })
+);
+placeXrButton(taxiAnalyticsXrButton, 5);
+taxiAnalyticsXrButton.renderOrder = 999;
+taxiAnalyticsXrButton.visible = false;
+scene.add(taxiAnalyticsXrButton);
+enhanceXrButton(taxiAnalyticsXrButton, 5, "taxiAnalytics");
+
+const helpXrIcon = makeXrIcon("help", 6, XR_ICON_SIZE, "help");
 
 const poseDebugXrButton = new THREE.Mesh(
   new THREE.PlaneGeometry(0.56, 0.2),
@@ -4973,6 +4999,7 @@ function activateXrButtonAction(action) {
   else if (action === "enterprise") requestEnterpriseRareOrbit();
   else if (action === "klingon") requestKlingonPass();
   else if (action === "blackHole") requestBlackHoleTour();
+  else if (action === "taxiAnalytics") requestTaxiAnalyticsRoom();
   else if (action === "help") toggleControllerHelp();
   else return false;
 
@@ -5019,8 +5046,10 @@ function getXrUiTargets() {
     enterpriseOrbitXrButton,
     klingonXrButton,
     blackHoleTourXrButton,
+    taxiAnalyticsXrButton,
   ];
   if (poseDebugXrButton.visible) targets.push(poseDebugXrHitArea, poseDebugXrButton);
+  if (taxiReturnXrButton.visible) targets.push(taxiReturnXrButton);
   return targets;
 }
 
@@ -5112,6 +5141,10 @@ for (let index = 0; index < 2; index += 1) {
         const action = xrButtonActions.get(uiHit.object);
         if (action) activateXrButtonAction(action);
         else if (uiHit.object === poseDebugXrButton || uiHit.object === poseDebugXrHitArea) capturePoseDebugUrl();
+        else if (uiHit.object === taxiReturnXrButton || uiHit.object.userData?.isTaxiReturn) {
+          playXrButtonPressSound();
+          returnFromTaxiAnalyticsRoom();
+        }
         return;
       }
     }
@@ -5160,6 +5193,12 @@ function updateHandTouch(dt) {
       activateXrButtonAction(touchedXrButtonAction);
     }
     xrButtonTouching[i] = touchedXrButtonAction;
+
+    if (checkTaxiReturnButtonHit(tmpHand) && !xrButtonTouching[i]) {
+      initAudio();
+      playXrButtonPressSound();
+      returnFromTaxiAnalyticsRoom();
+    }
 
     const touchingPoseDebug = isPoseDebugButtonTouched(tmpHand);
     if (touchingPoseDebug && !poseDebugTouching[i]) {
@@ -5301,6 +5340,12 @@ renderer.xr.addEventListener("sessionstart", () => {
 // Snap the player to the front-on lobby position where the whole XR button
 // stack and its icons fit comfortably in view.
 function resetToHome() {
+  if (inTaxiAnalyticsRoom) {
+    inTaxiAnalyticsRoom = false;
+    taxiAnalyticsPreview2D = false;
+    taxiReturnXrButton.visible = false;
+    statusEl.textContent = "太陽系の部屋へ戻りました。";
+  }
   locomotion.copy(XR_HOME_LOCOMOTION);
   applyXrLocomotionOffset();
 }
@@ -7687,6 +7732,361 @@ function updateBlackHole(dt, timeSeconds) {
 }
 
 // ---------------------------------------------------------------------------
+// Taxi Analytics Room: a separate analysis space next to the solar system room
+// with dashboard panels showing placeholder taxi business metrics.
+// ---------------------------------------------------------------------------
+const TAXI_ANALYTICS_ROOM_POSITION = new THREE.Vector3(15, 2.2, -2.2);
+const TAXI_ANALYTICS_ROOM_HALF = new THREE.Vector3(4.0, 2.2, 4.0);
+const TAXI_ANALYTICS_PANEL_ROW_CENTER = new THREE.Vector3(15, 2.3, -5.0);
+const taxiAnalyticsGroup = new THREE.Group();
+taxiAnalyticsGroup.visible = false;
+scene.add(taxiAnalyticsGroup);
+
+let inTaxiAnalyticsRoom = false;
+let taxiAnalyticsPreview2D = false;
+const taxiAnalyticsTeleportTarget = new THREE.Vector3();
+const taxiAnalyticsTeleportDelta = new THREE.Vector3();
+
+const taxiAnalyticsFloor = new THREE.GridHelper(
+  Math.max(TAXI_ANALYTICS_ROOM_HALF.x, TAXI_ANALYTICS_ROOM_HALF.z) * 2,
+  12,
+  0x4a3d6e,
+  0x2a1f42
+);
+taxiAnalyticsFloor.position.set(
+  TAXI_ANALYTICS_ROOM_POSITION.x,
+  TAXI_ANALYTICS_ROOM_POSITION.y - TAXI_ANALYTICS_ROOM_HALF.y,
+  TAXI_ANALYTICS_ROOM_POSITION.z
+);
+taxiAnalyticsGroup.add(taxiAnalyticsFloor);
+
+const taxiAnalyticsBounds = new THREE.LineSegments(
+  new THREE.EdgesGeometry(
+    new THREE.BoxGeometry(
+      TAXI_ANALYTICS_ROOM_HALF.x * 2,
+      TAXI_ANALYTICS_ROOM_HALF.y * 2,
+      TAXI_ANALYTICS_ROOM_HALF.z * 2
+    )
+  ),
+  new THREE.LineBasicMaterial({ color: 0xa884ff, transparent: true, opacity: 0.55 })
+);
+taxiAnalyticsBounds.position.copy(TAXI_ANALYTICS_ROOM_POSITION);
+taxiAnalyticsGroup.add(taxiAnalyticsBounds);
+
+const taxiAnalyticsLight1 = new THREE.PointLight(0xa884ff, 3.5, 12);
+taxiAnalyticsLight1.position.set(
+  TAXI_ANALYTICS_ROOM_POSITION.x,
+  TAXI_ANALYTICS_ROOM_POSITION.y + 1.6,
+  TAXI_ANALYTICS_ROOM_POSITION.z
+);
+taxiAnalyticsGroup.add(taxiAnalyticsLight1);
+
+const taxiAnalyticsLight2 = new THREE.PointLight(0xffffff, 2.5, 10);
+taxiAnalyticsLight2.position.set(
+  TAXI_ANALYTICS_ROOM_POSITION.x,
+  TAXI_ANALYTICS_ROOM_POSITION.y + 1.2,
+  TAXI_ANALYTICS_ROOM_POSITION.z - 2.5
+);
+taxiAnalyticsGroup.add(taxiAnalyticsLight2);
+
+function makeTaxiAnalyticsPanelTexture(title, value, unit, chartType) {
+  const c = document.createElement("canvas");
+  c.width = 512;
+  c.height = 384;
+  const ctx = c.getContext("2d");
+
+  ctx.fillStyle = "rgba(18, 12, 32, 0.92)";
+  ctx.fillRect(0, 0, c.width, c.height);
+
+  ctx.strokeStyle = "rgba(168, 132, 255, 0.65)";
+  ctx.lineWidth = 3;
+  ctx.strokeRect(8, 8, c.width - 16, c.height - 16);
+
+  ctx.fillStyle = "rgba(168, 132, 255, 0.12)";
+  ctx.fillRect(12, 12, c.width - 24, 52);
+
+  ctx.font = "bold 28px Arial, Helvetica, sans-serif";
+  ctx.fillStyle = "#e4daff";
+  ctx.textAlign = "center";
+  ctx.fillText(title, c.width / 2, 48);
+
+  ctx.font = "14px Arial, Helvetica, sans-serif";
+  ctx.fillStyle = "rgba(255, 200, 100, 0.9)";
+  ctx.fillText("⚠ サンプルデータ", c.width / 2, 82);
+
+  ctx.font = "bold 56px Arial, Helvetica, sans-serif";
+  ctx.fillStyle = "#ffffff";
+  ctx.fillText(value, c.width / 2, 160);
+
+  ctx.font = "22px Arial, Helvetica, sans-serif";
+  ctx.fillStyle = "#a884ff";
+  ctx.fillText(unit, c.width / 2, 195);
+
+  if (chartType === "bar") {
+    const bars = [0.6, 0.8, 0.45, 0.9, 0.7, 0.55, 0.85];
+    const barW = 48;
+    const barGap = 12;
+    const startX = (c.width - (bars.length * barW + (bars.length - 1) * barGap)) / 2;
+    const maxH = 100;
+    const baseY = 340;
+    ctx.fillStyle = "rgba(168, 132, 255, 0.75)";
+    for (let i = 0; i < bars.length; i++) {
+      const h = bars[i] * maxH;
+      ctx.fillRect(startX + i * (barW + barGap), baseY - h, barW, h);
+    }
+    ctx.font = "12px Arial";
+    ctx.fillStyle = "#8866cc";
+    const days = ["月", "火", "水", "木", "金", "土", "日"];
+    for (let i = 0; i < days.length; i++) {
+      ctx.fillText(days[i], startX + i * (barW + barGap) + barW / 2, baseY + 18);
+    }
+  } else if (chartType === "line") {
+    const points = [0.3, 0.25, 0.5, 0.8, 1.0, 0.7, 0.4, 0.2];
+    const startX = 50;
+    const endX = c.width - 50;
+    const baseY = 340;
+    const maxH = 100;
+    ctx.beginPath();
+    ctx.strokeStyle = "rgba(100, 200, 255, 0.9)";
+    ctx.lineWidth = 3;
+    for (let i = 0; i < points.length; i++) {
+      const x = startX + (i / (points.length - 1)) * (endX - startX);
+      const y = baseY - points[i] * maxH;
+      if (i === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+    }
+    ctx.stroke();
+    ctx.font = "12px Arial";
+    ctx.fillStyle = "#8866cc";
+    const hours = ["6時", "9時", "12時", "15時", "18時", "21時", "24時", "3時"];
+    for (let i = 0; i < hours.length; i++) {
+      const x = startX + (i / (hours.length - 1)) * (endX - startX);
+      ctx.fillText(hours[i], x, baseY + 18);
+    }
+  } else if (chartType === "pie") {
+    const cx = c.width / 2;
+    const cy = 280;
+    const r = 60;
+    const segments = [0.35, 0.25, 0.22, 0.18];
+    const colors = ["rgba(168, 132, 255, 0.85)", "rgba(100, 200, 255, 0.85)", "rgba(255, 180, 100, 0.85)", "rgba(120, 255, 160, 0.85)"];
+    let angle = -Math.PI / 2;
+    for (let i = 0; i < segments.length; i++) {
+      const slice = segments[i] * Math.PI * 2;
+      ctx.beginPath();
+      ctx.moveTo(cx, cy);
+      ctx.arc(cx, cy, r, angle, angle + slice);
+      ctx.closePath();
+      ctx.fillStyle = colors[i];
+      ctx.fill();
+      angle += slice;
+    }
+    ctx.font = "12px Arial";
+    ctx.fillStyle = "#e4daff";
+    ctx.fillText("走行中 35%", cx - 85, cy + 85);
+    ctx.fillText("待機 25%", cx + 55, cy + 85);
+  } else if (chartType === "gauge") {
+    const cx = c.width / 2;
+    const cy = 295;
+    const r = 65;
+    ctx.beginPath();
+    ctx.arc(cx, cy, r, Math.PI, 0);
+    ctx.strokeStyle = "rgba(80, 60, 120, 0.6)";
+    ctx.lineWidth = 16;
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(cx, cy, r, Math.PI, Math.PI + Math.PI * 0.78);
+    ctx.strokeStyle = "rgba(168, 132, 255, 0.9)";
+    ctx.lineWidth = 16;
+    ctx.stroke();
+    ctx.font = "12px Arial";
+    ctx.fillStyle = "#8866cc";
+    ctx.fillText("0%", cx - r - 5, cy + 20);
+    ctx.fillText("100%", cx + r - 10, cy + 20);
+  }
+
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+
+const taxiPanelData = [
+  { title: "日次売上", value: "¥847,200", unit: "本日合計", chart: "bar" },
+  { title: "乗車回数", value: "156", unit: "件 / 本日", chart: "line" },
+  { title: "ピーク時間帯", value: "18-21時", unit: "最多乗車時間", chart: "line" },
+  { title: "車両稼働率", value: "78%", unit: "全車両平均", chart: "gauge" },
+];
+
+const taxiAnalyticsPanels = [];
+const TAXI_PANEL_WIDTH = 1.2;
+const TAXI_PANEL_HEIGHT = 0.9;
+const TAXI_PANEL_GAP = 0.25;
+const TAXI_PANEL_START_X = TAXI_ANALYTICS_ROOM_POSITION.x - ((taxiPanelData.length - 1) * (TAXI_PANEL_WIDTH + TAXI_PANEL_GAP)) / 2;
+
+for (let i = 0; i < taxiPanelData.length; i++) {
+  const data = taxiPanelData[i];
+  const panelMesh = new THREE.Mesh(
+    new THREE.PlaneGeometry(TAXI_PANEL_WIDTH, TAXI_PANEL_HEIGHT),
+    new THREE.MeshBasicMaterial({
+      map: makeTaxiAnalyticsPanelTexture(data.title, data.value, data.unit, data.chart),
+      transparent: true,
+      side: THREE.DoubleSide,
+    })
+  );
+  panelMesh.position.set(
+    TAXI_PANEL_START_X + i * (TAXI_PANEL_WIDTH + TAXI_PANEL_GAP),
+    TAXI_ANALYTICS_ROOM_POSITION.y + 0.35,
+    TAXI_ANALYTICS_ROOM_POSITION.z - TAXI_ANALYTICS_ROOM_HALF.z + 0.6
+  );
+  panelMesh.rotation.x = -0.08;
+  taxiAnalyticsGroup.add(panelMesh);
+  taxiAnalyticsPanels.push(panelMesh);
+}
+
+const taxiRoomTitleCanvas = document.createElement("canvas");
+taxiRoomTitleCanvas.width = 800;
+taxiRoomTitleCanvas.height = 120;
+const taxiTitleCtx = taxiRoomTitleCanvas.getContext("2d");
+taxiTitleCtx.fillStyle = "rgba(18, 12, 32, 0.85)";
+taxiTitleCtx.fillRect(0, 0, 800, 120);
+taxiTitleCtx.strokeStyle = "rgba(168, 132, 255, 0.5)";
+taxiTitleCtx.lineWidth = 2;
+taxiTitleCtx.strokeRect(4, 4, 792, 112);
+taxiTitleCtx.font = "bold 48px Arial, Helvetica, sans-serif";
+taxiTitleCtx.fillStyle = "#e4daff";
+taxiTitleCtx.textAlign = "center";
+taxiTitleCtx.fillText("分析用の部屋 - タクシー業務ダッシュボード", 400, 75);
+const taxiRoomTitleTex = new THREE.CanvasTexture(taxiRoomTitleCanvas);
+taxiRoomTitleTex.colorSpace = THREE.SRGBColorSpace;
+
+const taxiRoomTitleMesh = new THREE.Mesh(
+  new THREE.PlaneGeometry(2.4, 0.36),
+  new THREE.MeshBasicMaterial({ map: taxiRoomTitleTex, transparent: true, side: THREE.DoubleSide })
+);
+taxiRoomTitleMesh.position.set(
+  TAXI_ANALYTICS_ROOM_POSITION.x,
+  TAXI_ANALYTICS_ROOM_POSITION.y + 1.5,
+  TAXI_ANALYTICS_ROOM_POSITION.z - TAXI_ANALYTICS_ROOM_HALF.z + 0.3
+);
+taxiAnalyticsGroup.add(taxiRoomTitleMesh);
+
+function makeTaxiReturnButtonTexture() {
+  const c = document.createElement("canvas");
+  c.width = 400;
+  c.height = 100;
+  const ctx = c.getContext("2d");
+  ctx.fillStyle = "rgba(60, 180, 255, 0.92)";
+  ctx.fillRect(0, 0, c.width, c.height);
+  ctx.strokeStyle = "rgba(255, 255, 255, 0.65)";
+  ctx.lineWidth = 4;
+  ctx.strokeRect(4, 4, c.width - 8, c.height - 8);
+  ctx.font = "bold 36px Arial, Helvetica, sans-serif";
+  ctx.fillStyle = "#ffffff";
+  ctx.textAlign = "center";
+  ctx.fillText("← 太陽系の部屋へ戻る", c.width / 2, 64);
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+
+const taxiReturnXrButton = new THREE.Mesh(
+  new THREE.PlaneGeometry(0.72, 0.18),
+  new THREE.MeshBasicMaterial({
+    map: makeTaxiReturnButtonTexture(),
+    transparent: true,
+    depthTest: false,
+    side: THREE.DoubleSide,
+  })
+);
+taxiReturnXrButton.position.set(
+  TAXI_ANALYTICS_ROOM_POSITION.x,
+  TAXI_ANALYTICS_ROOM_POSITION.y - 0.65,
+  TAXI_ANALYTICS_ROOM_POSITION.z - TAXI_ANALYTICS_ROOM_HALF.z + 1.2
+);
+taxiReturnXrButton.rotation.x = -0.25;
+taxiReturnXrButton.renderOrder = 1000;
+taxiReturnXrButton.visible = false;
+taxiReturnXrButton.userData.xrHitSize = { w: 0.72, h: 0.18, d: 0.04 };
+taxiReturnXrButton.userData.isTaxiReturn = true;
+taxiAnalyticsGroup.add(taxiReturnXrButton);
+
+function getTaxiAnalyticsViewTarget() {
+  return taxiAnalyticsTeleportTarget.set(
+    TAXI_ANALYTICS_ROOM_POSITION.x,
+    TAXI_ANALYTICS_ROOM_POSITION.y - 0.4,
+    TAXI_ANALYTICS_ROOM_POSITION.z + 1.8
+  );
+}
+
+function requestTaxiAnalyticsRoom() {
+  if (inTaxiAnalyticsRoom || taxiAnalyticsPreview2D) {
+    returnFromTaxiAnalyticsRoom();
+    return;
+  }
+  teleportToTaxiAnalyticsRoom();
+}
+
+function teleportToTaxiAnalyticsRoom() {
+  inTaxiAnalyticsRoom = true;
+  taxiAnalyticsGroup.visible = true;
+  taxiReturnXrButton.visible = renderer.xr.isPresenting;
+
+  getTaxiAnalyticsViewTarget();
+
+  if (renderer.xr.isPresenting && xrBaseRefSpace) {
+    getViewerPose(viewerWorld);
+    taxiAnalyticsTeleportDelta.copy(taxiAnalyticsTeleportTarget).sub(viewerWorld);
+    locomotion.add(taxiAnalyticsTeleportDelta);
+    applyXrLocomotionOffset();
+    statusEl.textContent = "分析用の部屋に移動しました。パネルを見回してください。グリップでホームに戻れます。";
+  } else {
+    taxiAnalyticsPreview2D = true;
+    camera.up.set(0, 1, 0);
+    camera.position.copy(taxiAnalyticsTeleportTarget);
+    camera.lookAt(TAXI_ANALYTICS_ROOM_POSITION.x, TAXI_ANALYTICS_ROOM_POSITION.y + 0.3, TAXI_ANALYTICS_ROOM_POSITION.z - TAXI_ANALYTICS_ROOM_HALF.z);
+    statusEl.textContent = "分析用の部屋（2Dプレビュー）。VR/ARで入ると中を歩き回れます。";
+  }
+}
+
+function returnFromTaxiAnalyticsRoom() {
+  if (!inTaxiAnalyticsRoom) return;
+  inTaxiAnalyticsRoom = false;
+  taxiAnalyticsPreview2D = false;
+  taxiReturnXrButton.visible = false;
+
+  if (renderer.xr.isPresenting && xrBaseRefSpace) {
+    resetToHome();
+    statusEl.textContent = "太陽系の部屋へ戻りました。";
+  } else {
+    const halfFovY = THREE.MathUtils.degToRad(camera.fov * 0.5);
+    const halfFovX = Math.atan(Math.tan(halfFovY) * camera.aspect);
+    const fitDist = Math.max(roomHalf.y / Math.tan(halfFovY), roomHalf.x / Math.tan(halfFovX));
+    camera.position.set(0, roomCenter.y, roomCenter.z + fitDist + roomHalf.z + 0.5);
+    camera.lookAt(roomCenter);
+    statusEl.textContent = "太陽系の部屋へ戻りました。";
+  }
+}
+
+function checkTaxiReturnButtonHit(point) {
+  if (!taxiReturnXrButton.visible) return false;
+  tmpVec.copy(point);
+  taxiReturnXrButton.worldToLocal(tmpVec);
+  const size = taxiReturnXrButton.userData.xrHitSize;
+  return (
+    Math.abs(tmpVec.x) <= size.w * 0.5 &&
+    Math.abs(tmpVec.y) <= size.h * 0.5 &&
+    Math.abs(tmpVec.z) <= size.d * 0.5
+  );
+}
+
+function updateTaxiAnalyticsRoom() {
+  if (!inTaxiAnalyticsRoom && !taxiAnalyticsGroup.visible) return;
+  
+  if (renderer.xr.isPresenting) {
+    taxiReturnXrButton.visible = inTaxiAnalyticsRoom;
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Ship flight safety: Enterprise and Klingon passes are cinematic, but they
 // should still respect obvious physical obstacles. At spawn time, build the
 // current obstacle list in world space and bend a route only when its straight
@@ -8348,6 +8748,7 @@ renderer.setAnimationLoop((timestamp) => {
   updatePlanetLighting();
   updateBlackHole(dt, elapsed);
   updateBlackHoleTourCountdown();
+  updateTaxiAnalyticsRoom();
 
   // Refresh world matrices so the Apollo mission can read the live Moon
   // position (the Moon both orbits the Earth and the Earth roams the room).
