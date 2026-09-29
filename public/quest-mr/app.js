@@ -22,7 +22,7 @@ if (TAXI_ALLOWED && taxiAnalyticsButton) {
   taxiAnalyticsButton.removeAttribute("hidden");
 }
 
-const APP_VERSION = "v2026.09.29.16";
+const APP_VERSION = "v2026.09.29.17";
 const DEBUG_TOP_VIEW = new URLSearchParams(window.location.search).has("topDebug");
 const DEBUG_TOP_VIEW_DISTANCE = Number(new URLSearchParams(window.location.search).get("topDebugDist"));
 const DEBUG_BLACK_HOLE_VIEW = new URLSearchParams(window.location.search).has("blackHoleDebug");
@@ -4989,13 +4989,58 @@ function isViewerInsideEarthFrame() {
 
 // The taxi analytics room sits outside the Earth frame (x = 11..19 m vs. the
 // solar room's |x| <= 4.5 m), so hands/controllers/rays must also be allowed
-// while the player is in that room.
+// while the player is in that room (reached by the button OR by walking with
+// the thumbstick) and in the corridor between the two rooms.
+function isPointInPaddedBox(p, center, half, pad) {
+  return (
+    Math.abs(p.x - center.x) <= half.x + pad &&
+    Math.abs(p.y - center.y) <= half.y + pad &&
+    Math.abs(p.z - center.z) <= half.z + pad
+  );
+}
+
+// "solar" | "corridor" | "taxi" | null (outside every room, e.g. black-hole tour)
+function getViewerXrRoomZone() {
+  if (!renderer.xr.isPresenting) return null;
+  getViewerPose(viewerWorld);
+  if (isPointInPaddedBox(viewerWorld, roomCenter, roomHalf, HAND_PRESENCE_ROOM_PAD)) return "solar";
+  if (!taxiAnalyticsGroup.visible) return null; // taxi room not opened yet
+  if (isPointInPaddedBox(viewerWorld, TAXI_ANALYTICS_ROOM_POSITION, TAXI_ANALYTICS_ROOM_HALF, HAND_PRESENCE_ROOM_PAD)) return "taxi";
+  const corridorMinX = roomCenter.x + roomHalf.x;
+  const corridorMaxX = TAXI_ANALYTICS_ROOM_POSITION.x - TAXI_ANALYTICS_ROOM_HALF.x;
+  if (
+    viewerWorld.x >= corridorMinX && viewerWorld.x <= corridorMaxX &&
+    Math.abs(viewerWorld.y - roomCenter.y) <= Math.min(roomHalf.y, TAXI_ANALYTICS_ROOM_HALF.y) + HAND_PRESENCE_ROOM_PAD &&
+    Math.abs(viewerWorld.z - roomCenter.z) <= Math.min(roomHalf.z, TAXI_ANALYTICS_ROOM_HALF.z) + HAND_PRESENCE_ROOM_PAD
+  ) return "corridor";
+  return null;
+}
+
 function isViewerInTaxiAnalyticsRoomXr() {
   return renderer.xr.isPresenting && inTaxiAnalyticsRoom && taxiAnalyticsGroup.visible;
 }
 
+let xrViewerRoomZone = null;
+
 function isXrHandUiAllowed() {
-  return isViewerInsideEarthFrame() || isViewerInTaxiAnalyticsRoomXr();
+  return xrViewerRoomZone !== null || isViewerInTaxiAnalyticsRoomXr();
+}
+
+// Walking in/out with the thumbstick must switch the taxi-room state just like
+// the teleport button / return button do (return button, taxi UI raycast targets).
+function syncTaxiRoomStateWithViewerZone(zone) {
+  if (!renderer.xr.isPresenting) return;
+  if (zone === "taxi" && !inTaxiAnalyticsRoom) {
+    inTaxiAnalyticsRoom = true;
+    taxiReturnXrButton.visible = true;
+    document.getElementById("taxiChatPanel")?.removeAttribute("hidden");
+    statusEl.textContent = "分析用の部屋に入りました。";
+  } else if (zone === "solar" && inTaxiAnalyticsRoom) {
+    inTaxiAnalyticsRoom = false;
+    taxiReturnXrButton.visible = false;
+    document.getElementById("taxiChatPanel")?.setAttribute("hidden", "");
+    statusEl.textContent = "太陽系の部屋に戻りました。";
+  }
 }
 
 function setHandPresenceVisible(visible) {
@@ -5006,6 +5051,8 @@ function setHandPresenceVisible(visible) {
 }
 
 function updateHandPresence() {
+  xrViewerRoomZone = getViewerXrRoomZone();
+  syncTaxiRoomStateWithViewerZone(xrViewerRoomZone);
   const visible = isXrHandUiAllowed();
   setHandPresenceVisible(visible);
 }
@@ -5054,9 +5101,11 @@ const gripValid = []; // whether gripPrev holds a usable value
 const gripTouching = []; // latch so one touch == one kick
 const poseDebugTouching = []; // latch so one hand press records once
 const xrButtonTouching = []; // latch so a physical button press fires once
+const taxiButtonTouching = []; // same latch for the taxi-room buttons (return / mic / questions / scroll)
 const xrAimControllers = [];
 const xrAimRays = [];
 const xrAimReticles = [];
+const xrAimHoverChat = []; // ray of controller i points at the taxi chat panel / its scroll buttons
 const XR_AIM_RAY_LENGTH = 2.4;
 
 function getXrUiTargets() {
@@ -5075,6 +5124,8 @@ function getXrUiTargets() {
     if (taxiMicButtonMesh) targets.push(taxiMicButtonMesh);
     targets.push(...taxiQuestionButtons);
     targets.push(...taxiAnalyticsPanels); // fixed dashboard panels: select = focus/highlight
+    targets.push(...taxiChatScrollButtons);
+    if (taxiChatPanelMesh) targets.push(taxiChatPanelMesh); // hover + thumbstick = scroll
   }
   return targets;
 }
@@ -5147,6 +5198,7 @@ for (let index = 0; index < 2; index += 1) {
   gripTouching.push(false);
   poseDebugTouching.push(false);
   xrButtonTouching.push(null);
+  taxiButtonTouching.push(null);
 
   const controller = renderer.xr.getController(index);
   const aimRay = makeXrAimRay();
@@ -5155,6 +5207,13 @@ for (let index = 0; index < 2; index += 1) {
   xrAimControllers.push(controller);
   xrAimRays.push(aimRay);
   xrAimReticles.push(aimReticle);
+  xrAimHoverChat.push(false);
+  controller.addEventListener("connected", (event) => {
+    controller.userData.inputSource = event.data;
+  });
+  controller.addEventListener("disconnected", () => {
+    controller.userData.inputSource = null;
+  });
   controller.addEventListener("select", () => {
     initAudio();
     // If aiming at the Exit button, leave the XR session instead of launching.
@@ -5182,6 +5241,10 @@ for (let index = 0; index < 2; index += 1) {
         else if (taxiAnalyticsPanels.includes(uiHit.object)) {
           playXrButtonPressSound();
           setTaxiFocusedPanel(taxiAnalyticsPanels.indexOf(uiHit.object));
+        }
+        else if (uiHit.object.userData?.isTaxiChatScroll) {
+          playXrButtonPressSound();
+          scrollTaxiChatPanel(uiHit.object.userData.scrollDir * TAXI_CHAT_SCROLL_STEP_PX);
         }
         return;
       }
@@ -5222,6 +5285,7 @@ function updateHandTouch(dt) {
       gripTouching[i] = false;
       poseDebugTouching[i] = false;
       xrButtonTouching[i] = null;
+      taxiButtonTouching[i] = null;
       continue;
     }
 
@@ -5234,24 +5298,25 @@ function updateHandTouch(dt) {
     }
     xrButtonTouching[i] = touchedXrButtonAction;
 
-    if (checkTaxiReturnButtonHit(tmpHand) && !xrButtonTouching[i]) {
+    // Taxi-room buttons fire once per touch (entering the hit box), not every frame.
+    let taxiTouch = null;
+    let touchedQuestion = null;
+    let touchedScrollDir = 0;
+    if (!xrButtonTouching[i]) {
+      if (checkTaxiReturnButtonHit(tmpHand)) taxiTouch = "return";
+      else if (inTaxiAnalyticsRoom && checkTaxiMicButtonHit(tmpHand)) taxiTouch = "mic";
+      else if (inTaxiAnalyticsRoom && (touchedQuestion = checkTaxiQuestionButtonHit(tmpHand))) taxiTouch = `q:${touchedQuestion}`;
+      else if (inTaxiAnalyticsRoom && (touchedScrollDir = checkTaxiChatScrollHit(tmpHand))) taxiTouch = `s:${touchedScrollDir}`;
+    }
+    if (taxiTouch && taxiTouch !== taxiButtonTouching[i]) {
       initAudio();
       playXrButtonPressSound();
-      returnFromTaxiAnalyticsRoom();
+      if (taxiTouch === "return") returnFromTaxiAnalyticsRoom();
+      else if (taxiTouch === "mic") toggleTaxiVoiceInput();
+      else if (touchedQuestion) processTaxiConversation(touchedQuestion);
+      else if (touchedScrollDir) scrollTaxiChatPanel(touchedScrollDir * TAXI_CHAT_SCROLL_STEP_PX);
     }
-
-    if (inTaxiAnalyticsRoom && checkTaxiMicButtonHit(tmpHand) && !xrButtonTouching[i]) {
-      initAudio();
-      playXrButtonPressSound();
-      toggleTaxiVoiceInput();
-    }
-
-    const touchedQuestion = inTaxiAnalyticsRoom ? checkTaxiQuestionButtonHit(tmpHand) : null;
-    if (touchedQuestion && !xrButtonTouching[i]) {
-      initAudio();
-      playXrButtonPressSound();
-      processTaxiConversation(touchedQuestion);
-    }
+    taxiButtonTouching[i] = taxiTouch;
 
     const touchingPoseDebug = isPoseDebugButtonTouched(tmpHand);
     if (touchingPoseDebug && !poseDebugTouching[i]) {
@@ -5291,6 +5356,7 @@ function updateXrAimRays() {
     const controller = xrAimControllers[i];
     const ray = xrAimRays[i];
     const reticle = xrAimReticles[i];
+    xrAimHoverChat[i] = false;
     if (!visible || !controller.visible) {
       ray.visible = false;
       reticle.visible = false;
@@ -5301,6 +5367,7 @@ function updateXrAimRays() {
     raycaster.ray.origin.setFromMatrixPosition(controller.matrixWorld);
     raycaster.ray.direction.set(0, 0, -1).applyMatrix4(tempMatrix);
     const uiHit = raycaster.intersectObjects(uiTargets)[0];
+    xrAimHoverChat[i] = !!(uiHit && (uiHit.object.userData?.isTaxiChatPanel || uiHit.object.userData?.isTaxiChatScroll));
     const hitDistance = uiHit ? Math.max(0.08, Math.min(XR_AIM_RAY_LENGTH, uiHit.distance)) : XR_AIM_RAY_LENGTH;
     const activeColor = uiHit ? 0x7affa7 : 0x8ff7ff;
 
@@ -5506,6 +5573,13 @@ function updatePoseDebugButton() {
   poseDebugXrPanel.quaternion.copy(cam.quaternion);
 }
 
+function isInputSourceHoveringTaxiChat(src) {
+  for (let i = 0; i < xrAimControllers.length; i += 1) {
+    if (xrAimHoverChat[i] && xrAimControllers[i].userData.inputSource === src) return true;
+  }
+  return false;
+}
+
 function updateLocomotion(dt) {
   const session = renderer.xr.getSession();
   if (!session || !xrBaseRefSpace) return;
@@ -5515,11 +5589,17 @@ function updateLocomotion(dt) {
   let mx = 0;
   let mz = 0;
   let my = 0;
+  let chatScroll = 0;
   for (const src of session.inputSources) {
     const ax = src.gamepad?.axes;
     if (!ax || ax.length < 2) continue;
     const x = ax.length >= 4 ? ax[2] : ax[0];
     const y = ax.length >= 4 ? ax[3] : ax[1];
+    if (inTaxiAnalyticsRoom && isInputSourceHoveringTaxiChat(src)) {
+      // Pointing at the chat panel: stick up = older messages, down = newer. No locomotion.
+      if (Math.abs(y) > 0.15) chatScroll += -y;
+      continue;
+    }
     if (src.handedness === "right") {
       if (Math.abs(y) > 0.15) my += -y; // push stick up to rise
     } else {
@@ -5527,6 +5607,7 @@ function updateLocomotion(dt) {
       if (Math.abs(y) > 0.15) mz += y;
     }
   }
+  if (chatScroll !== 0) scrollTaxiChatPanel(chatScroll * TAXI_CHAT_STICK_SCROLL_PX_PER_S * dt);
   if (mx === 0 && mz === 0 && my === 0) return;
 
   const cam = renderer.xr.getCamera();
@@ -9243,6 +9324,15 @@ let taxiFocusedPanelIndex = -1;
 let taxiFocusAnimationT = 0;
 let taxiSpeechRecognition = null;
 let taxiIsListening = false;
+let taxiVoiceBusy = false; // recorded audio is being transcribed
+let taxiWebSpeechUnusable = false; // Web Speech exists but failed (network/service) -> use recording
+let taxiRecorder = null;
+let taxiLastVoiceToggleAt = -1e9;
+const TAXI_STT_MAX_SEC = 12;
+const TAXI_VAD_RMS = 0.012;
+const TAXI_VAD_SILENCE_MS = 1400;
+const TAXI_VAD_NO_SPEECH_SEC = 7;
+const TAXI_MIC_PERMISSION_TIMEOUT_MS = 10000;
 
 const taxiPanelKeywords = {
   0: ["売上", "売り上げ", "収益", "金額", "日次", "revenue", "sales", "daily"],
@@ -9289,6 +9379,10 @@ function getTaxiLlmConfig() {
     const stored = localStorage.getItem(TAXI_CONVERSATION_STORAGE_KEY);
     if (stored) {
       const config = JSON.parse(stored);
+      if (config && typeof config === "object") {
+        config.endpoint = String(config.endpoint || "").trim();
+        config.apiKey = taxiSanitizeApiKey(config.apiKey);
+      }
       if (config.endpoint && config.apiKey) return config;
     }
   } catch (e) {
@@ -9720,6 +9814,172 @@ function executeTaxiToolCall(funcName, args, state) {
   return { ok: false, error: `未知のツール: ${funcName}` };
 }
 
+// ---------------------------------------------------------------------------
+// LLM relay fetch with readable (Japanese) errors, API-key sanitising, and
+// speech-to-text through the same relay (Quest Browser has no Web Speech API).
+// ---------------------------------------------------------------------------
+const TAXI_LLM_CLIENT_TIMEOUT_MS = 75000;
+const TAXI_STT_MODEL_DEFAULT = "mimo-v2.5"; // OpenCode Go: accepts input_audio (wav) in chat/completions
+const TAXI_STT_MAX_TOKENS = 1200;
+const TAXI_STT_PROMPT = `タクシー業務分析アシスタントへの日本語の音声質問です。聞こえたとおりに日本語で文字起こしし、文字起こし結果の1文だけを出力してください（説明・引用符なし）。
+よく出る語: 迎車（げいしゃ）, 乗車, 降車, 乗車地, 降車地, 売上, 乗車回数, 運賃, 税込, 1号車〜, ドライバー, 月別, 曜日別, 車両別, 稼働率, 布田（ふだ）, 国領, 仙川, 調布, つつじヶ丘, 柴崎, 深大寺, 西調布, 飛田給, 三鷹, 府中, 下石原, 白糸台`;
+
+// Pasted keys often carry spaces/newlines/zero-width chars or a "Bearer " prefix.
+function taxiSanitizeApiKey(raw) {
+  return String(raw ?? "")
+    .trim()
+    .replace(/^Bearer\s+/i, "")
+    .replace(/[\s\u200B-\u200D\u2060\uFEFF]+/g, "");
+}
+
+class TaxiLlmError extends Error {
+  constructor(message, info = {}) {
+    super(message);
+    this.name = "TaxiLlmError";
+    Object.assign(this, info);
+  }
+}
+
+// status + response body (+ X-Taxi-Relay-Error header from our worker) -> Japanese message
+function taxiDescribeLlmHttpError(status, bodyText, relayHeader) {
+  let body = null;
+  try { body = JSON.parse(bodyText); } catch (e) { body = null; }
+  const err = body && typeof body === "object" ? (body.error ?? null) : null;
+  const detail = String(
+    (err && typeof err === "object" ? err.message : typeof err === "string" ? err : "") ||
+    (body && typeof body.message === "string" ? body.message : "") ||
+    (!body && bodyText ? String(bodyText).replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim() : "")
+  ).slice(0, 120);
+  const type = String((err && typeof err === "object" && (err.type || err.code)) || "");
+  // Our relay's own errors: header (new worker) or the bare {error:{message}} shape without upstream "type"
+  const fromRelay = !!relayHeader || (status === 401 && detail === "Unauthorized" && !type && !(body && body.type));
+  const withDetail = (msg) => (detail && !fromRelay ? `${msg}（詳細: ${detail}）` : msg);
+
+  if (status === 401) {
+    if (fromRelay) return { kind: "relay-auth", message: "タクシー分析の利用認証（Cookie）がありません。キー付きURL（…/quest-mr/?key=…）で開き直してください" };
+    return { kind: "api-key", message: withDetail("APIキーが正しくありません（設定の⚙でキーを貼り直してください）") };
+  }
+  if (status === 403) return { kind: "forbidden", message: withDetail("このAPIキーではこのエンドポイント/モデルを利用できません（設定の⚙でキーとモデルを確認してください）") };
+  if (status === 400) {
+    if (/Missing API key/i.test(detail)) return { kind: "no-key", message: "APIキーが未設定です（設定の⚙でキーを入力してください）" };
+    if (fromRelay && /endpoint|https|port|host/i.test(detail)) return { kind: "endpoint", message: `エンドポイントURLが正しくありません（設定の⚙で https://…/chat/completions を確認してください）（${detail}）` };
+    if (/ModelProtocolUnsupported|model/i.test(type + " " + detail)) return { kind: "model", message: withDetail("モデル名が正しくないか、このエンドポイントでは使えないモデルです（設定の⚙でモデルを確認してください）") };
+    return { kind: "bad-request", message: withDetail("リクエストが受け付けられませんでした（400）") };
+  }
+  if (status === 404) return { kind: "not-found", message: withDetail("エンドポイントURLまたはモデルが見つかりません（404）。設定の⚙で確認してください") };
+  if (status === 413) return { kind: "too-large", message: "送信データが大きすぎます（413）。質問や録音を短くしてください" };
+  if (status === 429) return { kind: "rate-limit", message: withDetail("リクエストが多すぎるか利用上限に達しました（429）。少し待ってから再試行してください") };
+  if (status === 504) return { kind: "timeout", message: "LLMの応答がタイムアウトしました（504）。もう一度お試しください" };
+  if (status === 502 && fromRelay) return { kind: "unreachable", message: "LLMサーバーに接続できませんでした（502）。エンドポイントURLとネットワークを確認してください" };
+  if (status >= 500) return { kind: "server", message: withDetail(`LLMサーバーでエラーが発生しました（${status}）。時間をおいて再試行してください`) };
+  return { kind: "http", message: withDetail(`LLMの呼び出しに失敗しました（${status}）`) };
+}
+
+async function taxiLlmRelayFetch(config, payload) {
+  const apiKey = taxiSanitizeApiKey(config.apiKey);
+  if (!apiKey) throw new TaxiLlmError("APIキーが未設定です（設定の⚙でキーを入力してください）", { kind: "no-key" });
+  if (/[^\x21-\x7e]/.test(apiKey)) throw new TaxiLlmError("APIキーに使えない文字（全角文字など）が含まれています（設定の⚙でキーを貼り直してください）", { kind: "api-key" });
+  const controller = typeof AbortController === "function" ? new AbortController() : null;
+  const timer = controller ? setTimeout(() => controller.abort(), TAXI_LLM_CLIENT_TIMEOUT_MS) : null;
+  let response;
+  try {
+    response = await fetch(TAXI_LLM_RELAY_PATH, {
+      method: "POST",
+      credentials: "same-origin",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${apiKey}`,
+        "X-LLM-Endpoint": String(config.endpoint || "").trim(),
+        "X-Opencode-Session": taxiLlmSessionId,
+      },
+      body: JSON.stringify(payload),
+      ...(controller ? { signal: controller.signal } : {}),
+    });
+  } catch (e) {
+    if (e && e.name === "AbortError") {
+      throw new TaxiLlmError(`LLMの応答がタイムアウトしました（${Math.round(TAXI_LLM_CLIENT_TIMEOUT_MS / 1000)}秒）。もう一度お試しください`, { kind: "timeout" });
+    }
+    throw new TaxiLlmError("LLMに接続できませんでした（ネットワークエラー）。通信状態を確認してください", { kind: "network" });
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+  if (!response.ok) {
+    let text = "";
+    try { text = await response.text(); } catch (e) { text = ""; }
+    const relayHeader = response.headers && typeof response.headers.get === "function" ? response.headers.get("X-Taxi-Relay-Error") : null;
+    const d = taxiDescribeLlmHttpError(response.status, text, relayHeader);
+    throw new TaxiLlmError(d.message, { kind: d.kind, status: response.status });
+  }
+  try {
+    return await response.json();
+  } catch (e) {
+    throw new TaxiLlmError("LLMの応答を読み取れませんでした（JSONではありません）。エンドポイントURLを確認してください", { kind: "bad-json" });
+  }
+}
+
+// Float32 PCM chunks at inputRate -> 16 kHz mono 16-bit WAV bytes
+function taxiEncodeWav16k(chunks, inputRate) {
+  let n = 0;
+  for (const c of chunks) n += c.length;
+  const input = new Float32Array(n);
+  let off = 0;
+  for (const c of chunks) { input.set(c, off); off += c.length; }
+  const outRate = 16000;
+  const ratio = inputRate / outRate;
+  const outLen = Math.max(0, Math.floor(n / ratio));
+  const pcm = new Int16Array(outLen);
+  for (let i = 0; i < outLen; i++) {
+    const start = Math.floor(i * ratio);
+    const end = Math.min(n, Math.max(start + 1, Math.floor((i + 1) * ratio)));
+    let sum = 0;
+    for (let k = start; k < end; k++) sum += input[k];
+    const v = Math.max(-1, Math.min(1, sum / (end - start)));
+    pcm[i] = v < 0 ? v * 0x8000 : v * 0x7fff;
+  }
+  const bytes = new Uint8Array(44 + pcm.length * 2);
+  const dv = new DataView(bytes.buffer);
+  const writeStr = (o, str) => { for (let i = 0; i < str.length; i++) bytes[o + i] = str.charCodeAt(i); };
+  writeStr(0, "RIFF"); dv.setUint32(4, 36 + pcm.length * 2, true); writeStr(8, "WAVE");
+  writeStr(12, "fmt "); dv.setUint32(16, 16, true); dv.setUint16(20, 1, true); dv.setUint16(22, 1, true);
+  dv.setUint32(24, outRate, true); dv.setUint32(28, outRate * 2, true); dv.setUint16(32, 2, true); dv.setUint16(34, 16, true);
+  writeStr(36, "data"); dv.setUint32(40, pcm.length * 2, true);
+  for (let i = 0; i < pcm.length; i++) dv.setInt16(44 + i * 2, pcm[i], true);
+  return bytes;
+}
+
+function taxiBytesToBase64(bytes) {
+  let bin = "";
+  for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+  return btoa(bin);
+}
+
+function taxiCleanTranscript(text) {
+  let t = String(text ?? "").trim().split("\n").map((x) => x.trim()).filter(Boolean)[0] || "";
+  t = t.replace(/^(文字起こし(結果)?|書き起こし|transcript(ion)?)\s*[:：]\s*/i, "");
+  t = t.replace(/^[「『"“]+/, "").replace(/[」』"”]+$/, "").trim();
+  return t;
+}
+
+async function taxiTranscribeAudioBase64(wavBase64, config) {
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const data = await taxiLlmRelayFetch(config, {
+      model: String(config.sttModel || "").trim() || TAXI_STT_MODEL_DEFAULT,
+      messages: [{
+        role: "user",
+        content: [
+          { type: "text", text: TAXI_STT_PROMPT },
+          { type: "input_audio", input_audio: { data: wavBase64, format: "wav" } },
+        ],
+      }],
+      max_tokens: attempt === 0 ? TAXI_STT_MAX_TOKENS : TAXI_STT_MAX_TOKENS * 2,
+      temperature: 0,
+    });
+    const text = taxiCleanTranscript(data?.choices?.[0]?.message?.content);
+    if (text) return text;
+  }
+  return "";
+}
+
 async function callLlmBackend(userMessage, config) {
   const dataRange = taxiTrips.length ? `${taxiTrips[0].date}〜${taxiTrips[taxiTrips.length - 1].date}` : "-";
   const datasetSummary = `
@@ -9783,30 +10043,14 @@ ${taxiPanelData.map((p, i) => `${i}: ${p.title} - ${p.value} (${p.unit})`).join(
   try {
     for (let round = 0; round < TAXI_LLM_MAX_ROUNDS; round++) {
       const finalRound = round === TAXI_LLM_MAX_ROUNDS - 1;
-      const response = await fetch(TAXI_LLM_RELAY_PATH, {
-        method: "POST",
-        credentials: "same-origin",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${config.apiKey}`,
-          "X-LLM-Endpoint": config.endpoint,
-          "X-Opencode-Session": taxiLlmSessionId,
-        },
-        body: JSON.stringify({
-          model: config.model || "gpt-4o-mini",
-          messages,
-          tools: LLM_TOOLS,
-          tool_choice: finalRound ? "none" : "auto",
-          max_tokens: state.emptyRetries > 0 ? TAXI_LLM_RETRY_MAX_TOKENS : TAXI_LLM_MAX_TOKENS,
-          temperature: 0.3,
-        }),
+      const data = await taxiLlmRelayFetch(config, {
+        model: config.model || "gpt-4o-mini",
+        messages,
+        tools: LLM_TOOLS,
+        tool_choice: finalRound ? "none" : "auto",
+        max_tokens: state.emptyRetries > 0 ? TAXI_LLM_RETRY_MAX_TOKENS : TAXI_LLM_MAX_TOKENS,
+        temperature: 0.3,
       });
-
-      if (!response.ok) {
-        throw new Error(`API error: ${response.status}`);
-      }
-
-      const data = await response.json();
       const choice = data.choices?.[0];
       if (!choice) {
         return { text: "応答を取得できませんでした。", focusPanel: -1, fallback: true };
@@ -9859,7 +10103,8 @@ ${taxiPanelData.map((p, i) => `${i}: ${p.title} - ${p.value} (${p.unit})`).join(
     return { text: state.toolNotes.join("\n") || "処理を完了しました。", focusPanel: state.focusPanel, panelCreated: state.panelCreated };
   } catch (error) {
     console.error("LLM API error:", error);
-    return { text: `LLMエラー: ${error.message}。オフラインモードで応答します。`, focusPanel: -1, fallback: true };
+    const detail = error instanceof TaxiLlmError ? error.message : `${error?.message || error}`;
+    return { text: `LLMエラー: ${detail}\n（オフラインモードで応答します）`, focusPanel: -1, fallback: true, errorKind: error?.kind || "unknown" };
   }
 }
 
@@ -9884,6 +10129,7 @@ async function processTaxiConversation(userMessage) {
   }
   
   taxiConversationHistory.push({ role: "assistant", content: response.text });
+  if (!taxiIsListening && !taxiVoiceBusy) taxiVoiceStatusText = "";
   updateTaxiChatPanel();
   
   if (response.focusPanel >= 0 && response.focusPanel < taxiAnalyticsPanels.length) {
@@ -9891,12 +10137,15 @@ async function processTaxiConversation(userMessage) {
   }
 }
 
+function setTaxiVoiceStatus(text) {
+  taxiVoiceStatusText = text || "";
+  if (text) statusEl.textContent = text;
+  if (taxiChatPanelMesh) makeTaxiChatPanelTexture(taxiConversationHistory);
+}
+
 function initTaxiSpeechRecognition() {
   const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-  if (!SpeechRecognition) {
-    console.log("Speech recognition not supported");
-    return false;
-  }
+  if (!SpeechRecognition) return false;
   
   taxiSpeechRecognition = new SpeechRecognition();
   taxiSpeechRecognition.lang = "ja-JP";
@@ -9905,17 +10154,24 @@ function initTaxiSpeechRecognition() {
   
   taxiSpeechRecognition.onresult = (event) => {
     const transcript = event.results[0][0].transcript;
-    processTaxiConversation(transcript);
     taxiIsListening = false;
     updateTaxiMicButton();
+    setTaxiVoiceStatus(`認識: 「${transcript}」`);
+    processTaxiConversation(transcript);
   };
   
   taxiSpeechRecognition.onerror = (event) => {
     console.log("Speech recognition error:", event.error);
     taxiIsListening = false;
     updateTaxiMicButton();
-    if (event.error === "no-speech") {
-      statusEl.textContent = "音声が検出されませんでした。もう一度お試しください。";
+    if (event.error === "no-speech") setTaxiVoiceStatus("音声が検出されませんでした。もう一度お試しください。");
+    else if (event.error === "not-allowed") setTaxiVoiceStatus("マイクの使用が許可されていません。ブラウザのサイト設定でマイクを許可してください。");
+    else if (event.error === "audio-capture") setTaxiVoiceStatus("マイクが見つかりません。");
+    else if (event.error === "aborted") setTaxiVoiceStatus("");
+    else {
+      // network / service-not-allowed / language-not-supported: the browser has the API but no working service
+      taxiWebSpeechUnusable = true;
+      setTaxiVoiceStatus(`ブラウザの音声認識が使えません（${event.error}）。もう一度🎤を押すと録音→AI文字起こしで入力します。`);
     }
   };
   
@@ -9928,20 +10184,220 @@ function initTaxiSpeechRecognition() {
 }
 
 function toggleTaxiVoiceInput() {
-  if (!taxiSpeechRecognition && !initTaxiSpeechRecognition()) {
-    statusEl.textContent = "このブラウザは音声認識に対応していません。";
+  const now = performance.now();
+  if (now - taxiLastVoiceToggleAt < 400) return; // ray select + touch in the same press
+  taxiLastVoiceToggleAt = now;
+
+  if (taxiVoiceBusy) {
+    setTaxiVoiceStatus("文字起こし中です。少しお待ちください…");
     return;
   }
-  
-  if (taxiIsListening) {
-    taxiSpeechRecognition.stop();
-    taxiIsListening = false;
-  } else {
-    taxiSpeechRecognition.start();
-    taxiIsListening = true;
-    statusEl.textContent = "話してください...（例：売上は？）";
+  if (taxiRecorder) {
+    stopTaxiRecording("manual");
+    return;
   }
+  if (taxiIsListening && taxiSpeechRecognition) {
+    taxiSpeechRecognition.stop();
+    return;
+  }
+
+  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (SpeechRecognition && !taxiWebSpeechUnusable) {
+    if (!taxiSpeechRecognition) initTaxiSpeechRecognition();
+    try {
+      taxiSpeechRecognition.start();
+      taxiIsListening = true;
+      setTaxiVoiceStatus("🎤 聞いています…（例：売上は？）");
+    } catch (e) {
+      taxiIsListening = false;
+      setTaxiVoiceStatus(`音声認識を開始できませんでした: ${e.message}`);
+    }
+    updateTaxiMicButton();
+    return;
+  }
+  startTaxiRecording();
+}
+
+function taxiMicErrorMessage(e) {
+  const name = e?.name || "";
+  if (name === "TaxiPermissionTimeout") {
+    return "マイク許可の確認がVR内に表示されていない可能性があります。VRを終了し、2D画面の🎤ボタンでマイクを許可してから、もう一度お試しください。";
+  }
+  if (name === "NotAllowedError" || name === "SecurityError" || name === "PermissionDeniedError") {
+    return "マイクの使用が許可されていません。VRを終了して2D画面の🎤ボタンでマイクを許可してから、もう一度VRに入ってください（Questの設定 > プライバシー > マイク、ブラウザのサイト設定も確認）。";
+  }
+  if (name === "NotFoundError" || name === "OverconstrainedError") return "マイクが見つかりません。";
+  if (name === "NotReadableError") return "マイクを使用できません（他のアプリが使用中の可能性があります）。";
+  return `マイクを開始できませんでした（${name || "Error"}: ${e?.message || e}）`;
+}
+
+async function startTaxiRecording() {
+  const config = getTaxiLlmConfig();
+  if (!config) {
+    setTaxiVoiceStatus("このブラウザ（Quest Browserなど）は音声認識APIに非対応です。録音をAIで文字起こしするには、設定⚙でLLMのエンドポイントとAPIキーを保存してください。");
+    return;
+  }
+  if (!navigator.mediaDevices?.getUserMedia) {
+    setTaxiVoiceStatus("このブラウザではマイクを使用できません（getUserMedia 非対応）。");
+    return;
+  }
+  const rec = { chunks: [], samples: 0, stopped: false, speechStarted: false, voiceBlocks: 0, level: 0, lastStatusAt: 0 };
+  taxiRecorder = rec;
+  taxiIsListening = true;
   updateTaxiMicButton();
+  setTaxiVoiceStatus("マイクを準備しています…");
+
+  let stream;
+  try {
+    let timedOut = false;
+    const gum = navigator.mediaDevices.getUserMedia({
+      audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+    });
+    gum.then((st) => { if (timedOut || rec.stopped) st.getTracks().forEach((t) => t.stop()); }, () => {});
+    stream = await Promise.race([
+      gum,
+      new Promise((_, reject) => setTimeout(() => {
+        timedOut = true;
+        const err = new Error("permission timeout");
+        err.name = "TaxiPermissionTimeout";
+        reject(err);
+      }, TAXI_MIC_PERMISSION_TIMEOUT_MS)),
+    ]);
+  } catch (e) {
+    console.warn("[taxi-voice] getUserMedia failed", e);
+    if (taxiRecorder === rec) taxiRecorder = null;
+    rec.stopped = true;
+    taxiIsListening = false;
+    updateTaxiMicButton();
+    setTaxiVoiceStatus(taxiMicErrorMessage(e));
+    return;
+  }
+  if (rec.stopped || taxiRecorder !== rec) {
+    stream.getTracks().forEach((t) => t.stop());
+    return;
+  }
+
+  try {
+    // Reuse the app's (already running, gesture-unlocked) AudioContext; a new one could stay suspended in XR.
+    initAudio();
+    const AudioContextCtor = window.AudioContext || window.webkitAudioContext;
+    const actx = audioContext || new AudioContextCtor();
+    rec.ownContext = actx !== audioContext;
+    if (actx.state === "suspended") { try { await actx.resume(); } catch (e) { /* ignore */ } }
+    const source = actx.createMediaStreamSource(stream);
+    const proc = actx.createScriptProcessor(4096, 1, 1);
+    const sink = actx.createGain();
+    sink.gain.value = 0;
+    source.connect(proc);
+    proc.connect(sink);
+    sink.connect(actx.destination);
+    Object.assign(rec, { stream, actx, source, proc, sink, rate: actx.sampleRate, startedAt: performance.now(), lastVoiceAt: performance.now() });
+    proc.onaudioprocess = (ev) => {
+      if (rec.stopped) return;
+      const d = ev.inputBuffer.getChannelData(0);
+      rec.chunks.push(new Float32Array(d));
+      rec.samples += d.length;
+      let sum = 0;
+      for (let k = 0; k < d.length; k++) sum += d[k] * d[k];
+      const rms = Math.sqrt(sum / d.length);
+      rec.level = Math.max(rms, rec.level * 0.8);
+      const t = performance.now();
+      if (rms > TAXI_VAD_RMS) {
+        rec.voiceBlocks += 1;
+        if (rec.voiceBlocks >= 2) rec.speechStarted = true;
+        rec.lastVoiceAt = t;
+      } else {
+        rec.voiceBlocks = 0;
+      }
+      const elapsedSec = rec.samples / rec.rate;
+      if (elapsedSec >= TAXI_STT_MAX_SEC) stopTaxiRecording("max");
+      else if (rec.speechStarted && t - rec.lastVoiceAt > TAXI_VAD_SILENCE_MS) stopTaxiRecording("silence");
+      else if (!rec.speechStarted && elapsedSec > TAXI_VAD_NO_SPEECH_SEC) stopTaxiRecording("nospeech");
+      else if (t - rec.lastStatusAt > 250) {
+        rec.lastStatusAt = t;
+        const bars = Math.max(0, Math.min(5, Math.round(rec.level / 0.02)));
+        setTaxiVoiceStatus(`🎤 聞いています… 音量${"▮".repeat(bars)}${"▯".repeat(5 - bars)} 残り${Math.max(0, Math.ceil(TAXI_STT_MAX_SEC - elapsedSec))}秒（話し終えると自動送信／もう一度押すと終了）`);
+      }
+    };
+    setTaxiVoiceStatus("🎤 聞いています…（話し終えると自動送信／もう一度押すと終了）");
+  } catch (e) {
+    console.warn("[taxi-voice] audio graph failed", e);
+    stream.getTracks().forEach((t) => t.stop());
+    if (taxiRecorder === rec) taxiRecorder = null;
+    rec.stopped = true;
+    taxiIsListening = false;
+    updateTaxiMicButton();
+    setTaxiVoiceStatus(`録音を開始できませんでした（${e?.name || "Error"}: ${e?.message || e}）`);
+  }
+}
+
+function stopTaxiRecording(reason) {
+  const rec = taxiRecorder;
+  if (!rec || rec.stopped) return;
+  rec.stopped = true;
+  taxiRecorder = null;
+  taxiIsListening = false;
+  try {
+    if (rec.proc) rec.proc.onaudioprocess = null;
+    rec.source?.disconnect();
+    rec.proc?.disconnect();
+    rec.sink?.disconnect();
+  } catch (e) { /* ignore */ }
+  rec.stream?.getTracks().forEach((t) => t.stop());
+  if (rec.ownContext) rec.actx?.close?.().catch?.(() => {});
+  updateTaxiMicButton();
+
+  const seconds = rec.rate ? rec.samples / rec.rate : 0;
+  if (reason === "cancel" || seconds < 0.3) {
+    setTaxiVoiceStatus(reason === "cancel" ? "" : "録音が短すぎます。もう一度お試しください。");
+    return;
+  }
+  if (reason === "nospeech" || (!rec.speechStarted && reason !== "manual")) {
+    setTaxiVoiceStatus("音声が検出されませんでした（マイクに向かって、もう少し大きな声で話してください）。");
+    return;
+  }
+  const b64 = taxiBytesToBase64(taxiEncodeWav16k(rec.chunks, rec.rate));
+  taxiTranscribeAndAsk(b64);
+}
+
+async function taxiTranscribeAndAsk(wavBase64) {
+  const config = getTaxiLlmConfig();
+  if (!config) {
+    setTaxiVoiceStatus("設定⚙でLLMのエンドポイントとAPIキーを保存してください。");
+    return;
+  }
+  taxiVoiceBusy = true;
+  updateTaxiMicButton();
+  setTaxiVoiceStatus("文字起こし中…（AI）");
+  let text = "";
+  try {
+    text = await taxiTranscribeAudioBase64(wavBase64, config);
+  } catch (e) {
+    taxiVoiceBusy = false;
+    updateTaxiMicButton();
+    setTaxiVoiceStatus(`音声の文字起こしに失敗しました: ${e?.message || e}`);
+    return;
+  }
+  taxiVoiceBusy = false;
+  updateTaxiMicButton();
+  if (!text) {
+    setTaxiVoiceStatus("聞き取れませんでした。もう一度お試しください。");
+    return;
+  }
+  setTaxiVoiceStatus(`認識: 「${text}」`);
+  processTaxiConversation(text);
+}
+
+// Ask for the microphone while still in the 2D page (a permission prompt may not show inside immersive VR).
+async function primeTaxiMicPermission() {
+  if (!navigator.mediaDevices?.getUserMedia) return "unsupported";
+  try {
+    const st = await navigator.mediaDevices.getUserMedia({ audio: true });
+    st.getTracks().forEach((t) => t.stop());
+    return "granted";
+  } catch (e) {
+    return e?.name || "error";
+  }
 }
 
 function setTaxiFocusedPanel(index) {
@@ -9976,76 +10432,139 @@ function updateTaxiPanelFocus() {
   }
 }
 
-function makeTaxiChatPanelTexture(messages = []) {
-  const c = document.createElement("canvas");
-  c.width = 600;
-  c.height = 500;
-  const ctx = c.getContext("2d");
-  
+// XR chat panel: the whole (recent) conversation is laid out on a virtual
+// column and a scroll window is drawn onto a persistent canvas. 0 = latest.
+const TAXI_CHAT_CANVAS_W = 600;
+const TAXI_CHAT_CANVAS_H = 500;
+const TAXI_CHAT_VIEW_TOP = 52;
+const TAXI_CHAT_VIEW_BOTTOM = TAXI_CHAT_CANVAS_H - 34;
+const TAXI_CHAT_LINE_H = 19;
+const TAXI_CHAT_MAX_RENDER_MESSAGES = 40;
+const TAXI_CHAT_SCROLL_STEP_PX = 150;
+const TAXI_CHAT_STICK_SCROLL_PX_PER_S = 520;
+let taxiChatScrollPx = 0; // how far the view is scrolled up from the latest message
+let taxiChatMaxScrollPx = 0;
+let taxiChatRenderedCount = -1;
+let taxiVoiceStatusText = "";
+let taxiChatCanvas = null;
+let taxiChatCtx = null;
+
+function layoutTaxiChatMessages(ctx, messages, textWidth) {
+  const blocks = [];
+  let total = 0;
+  for (const msg of messages.slice(-TAXI_CHAT_MAX_RENDER_MESSAGES)) {
+    const lines = [];
+    for (const para of String(msg.content ?? "").split("\n")) {
+      if (!para.trim()) {
+        if (lines.length && lines[lines.length - 1] !== "") lines.push("");
+        continue;
+      }
+      lines.push(...wrapText(ctx, para, textWidth, 15));
+    }
+    while (lines.length && lines[lines.length - 1] === "") lines.pop();
+    const h = 22 + Math.max(1, lines.length) * TAXI_CHAT_LINE_H + 6;
+    blocks.push({ isUser: msg.role === "user", lines, y: total, h });
+    total += h + 8;
+  }
+  return { blocks, total: Math.max(0, total - 8) };
+}
+
+function drawTaxiChatPanel(ctx, messages, scrollPx, statusText) {
+  const W = TAXI_CHAT_CANVAS_W;
+  const H = TAXI_CHAT_CANVAS_H;
+  ctx.clearRect(0, 0, W, H);
   ctx.fillStyle = "rgba(12, 8, 20, 0.92)";
-  ctx.fillRect(0, 0, c.width, c.height);
-  
+  ctx.fillRect(0, 0, W, H);
   ctx.strokeStyle = "rgba(100, 180, 255, 0.6)";
   ctx.lineWidth = 2;
-  ctx.strokeRect(4, 4, c.width - 8, c.height - 8);
-  
+  ctx.strokeRect(4, 4, W - 8, H - 8);
   ctx.fillStyle = "rgba(100, 180, 255, 0.15)";
-  ctx.fillRect(8, 8, c.width - 16, 36);
-  
+  ctx.fillRect(8, 8, W - 16, 36);
   ctx.font = "bold 18px Arial, Helvetica, sans-serif";
   ctx.fillStyle = "#a8d4ff";
   ctx.textAlign = "center";
-  ctx.fillText("AI 分析アシスタント（サンプルデータ）", c.width / 2, 32);
-  
-  const maxLines = 12;
-  const lineHeight = 32;
-  const startY = 65;
+  ctx.fillText("AI 分析アシスタント（サンプルデータ）", W / 2, 32);
+
+  const viewH = TAXI_CHAT_VIEW_BOTTOM - TAXI_CHAT_VIEW_TOP;
   const padding = 16;
-  
+  const scrollbarW = 10;
+  const boxW = W - padding * 2 - scrollbarW - 6;
+  const textWidth = boxW - 12;
   ctx.textAlign = "left";
-  ctx.font = "15px Arial, Helvetica, sans-serif";
-  
-  const recentMessages = messages.slice(-8);
-  let y = startY;
-  
-  for (const msg of recentMessages) {
-    const isUser = msg.role === "user";
-    ctx.fillStyle = isUser ? "rgba(168, 132, 255, 0.2)" : "rgba(100, 180, 255, 0.15)";
-    
-    const lines = wrapText(ctx, msg.content, c.width - padding * 3, 14);
-    const boxHeight = lines.length * 18 + 12;
-    
-    if (y + boxHeight > c.height - 20) break;
-    
-    ctx.fillRect(padding, y - 2, c.width - padding * 2, boxHeight);
-    
-    ctx.fillStyle = isUser ? "#d4c4ff" : "#c8e4ff";
-    ctx.font = "bold 12px Arial";
-    ctx.fillText(isUser ? "あなた:" : "AI:", padding + 6, y + 12);
-    
-    ctx.font = "14px Arial";
-    for (let i = 0; i < lines.length && i < 3; i++) {
-      ctx.fillText(lines[i], padding + 6, y + 28 + i * 18);
-    }
-    if (lines.length > 3) {
-      ctx.fillStyle = "rgba(200, 200, 200, 0.6)";
-      ctx.fillText("...", padding + 6, y + 28 + 3 * 18);
-    }
-    
-    y += boxHeight + 8;
-  }
-  
+
   if (messages.length === 0) {
+    taxiChatMaxScrollPx = 0;
     ctx.fillStyle = "rgba(200, 200, 200, 0.6)";
     ctx.font = "italic 14px Arial";
     ctx.textAlign = "center";
-    ctx.fillText("マイクボタンを押すか、質問ボタンをタップしてください", c.width / 2, c.height / 2);
-    ctx.fillText("例：「売上は？」「ピーク時間は？」", c.width / 2, c.height / 2 + 24);
+    ctx.fillText("マイクボタンを押すか、下の質問ボタンを押してください", W / 2, H / 2);
+    ctx.fillText("例：「売上は？」「ピーク時間は？」", W / 2, H / 2 + 24);
+    ctx.textAlign = "left";
+  } else {
+    const { blocks, total } = layoutTaxiChatMessages(ctx, messages, textWidth);
+    const maxScroll = Math.max(0, total - viewH);
+    taxiChatMaxScrollPx = maxScroll;
+    const scroll = Math.min(Math.max(scrollPx, 0), maxScroll);
+    const offsetY = TAXI_CHAT_VIEW_TOP - (maxScroll - scroll);
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(0, TAXI_CHAT_VIEW_TOP, W, viewH);
+    ctx.clip();
+    for (const block of blocks) {
+      const y = offsetY + block.y;
+      if (y + block.h < TAXI_CHAT_VIEW_TOP || y > TAXI_CHAT_VIEW_BOTTOM) continue;
+      ctx.fillStyle = block.isUser ? "rgba(168, 132, 255, 0.2)" : "rgba(100, 180, 255, 0.15)";
+      ctx.fillRect(padding, y, boxW, block.h);
+      ctx.fillStyle = block.isUser ? "#d4c4ff" : "#c8e4ff";
+      ctx.font = "bold 12px Arial";
+      ctx.fillText(block.isUser ? "あなた:" : "AI:", padding + 6, y + 15);
+      ctx.font = "15px Arial";
+      for (let i = 0; i < block.lines.length; i++) {
+        ctx.fillText(block.lines[i], padding + 6, y + 22 + (i + 1) * TAXI_CHAT_LINE_H - 4);
+      }
+    }
+    ctx.restore();
+    if (maxScroll > 0) {
+      const trackX = W - padding - scrollbarW;
+      ctx.fillStyle = "rgba(255, 255, 255, 0.12)";
+      ctx.fillRect(trackX, TAXI_CHAT_VIEW_TOP, scrollbarW, viewH);
+      const thumbH = Math.max(28, (viewH * viewH) / (total || 1));
+      const thumbY = TAXI_CHAT_VIEW_TOP + (viewH - thumbH) * ((maxScroll - scroll) / maxScroll);
+      ctx.fillStyle = "rgba(143, 247, 255, 0.75)";
+      ctx.fillRect(trackX, thumbY, scrollbarW, thumbH);
+    }
   }
-  
-  const tex = new THREE.CanvasTexture(c);
-  tex.colorSpace = THREE.SRGBColorSpace;
-  return tex;
+
+  ctx.font = "13px Arial";
+  ctx.fillStyle = statusText ? "#ffd27a" : "rgba(200, 200, 220, 0.65)";
+  const footer = statusText || (taxiChatMaxScrollPx > 0
+    ? (Math.min(Math.max(scrollPx, 0), taxiChatMaxScrollPx) > 0 ? "▼で最新へ / パネルを指してスティック上下でスクロール" : "▲で過去の会話 / パネルを指してスティック上下でスクロール")
+    : "🎤 または下の質問ボタンで質問できます");
+  ctx.fillText(truncateTaxiChatLine(ctx, footer, W - padding * 2), padding, H - 14);
+}
+
+function truncateTaxiChatLine(ctx, text, maxWidth) {
+  if (ctx.measureText(text).width <= maxWidth) return text;
+  let t = text;
+  while (t.length > 1 && ctx.measureText(t + "…").width > maxWidth) t = t.slice(0, -1);
+  return t + "…";
+}
+
+function makeTaxiChatPanelTexture(messages = []) {
+  if (!taxiChatCanvas) {
+    taxiChatCanvas = document.createElement("canvas");
+    taxiChatCanvas.width = TAXI_CHAT_CANVAS_W;
+    taxiChatCanvas.height = TAXI_CHAT_CANVAS_H;
+    taxiChatCtx = taxiChatCanvas.getContext("2d");
+  }
+  drawTaxiChatPanel(taxiChatCtx, messages, taxiChatScrollPx, taxiVoiceStatusText);
+  if (!taxiChatPanelTexture) {
+    taxiChatPanelTexture = new THREE.CanvasTexture(taxiChatCanvas);
+    taxiChatPanelTexture.colorSpace = THREE.SRGBColorSpace;
+  } else {
+    taxiChatPanelTexture.needsUpdate = true;
+  }
+  return taxiChatPanelTexture;
 }
 
 function wrapText(ctx, text, maxWidth, fontSize) {
@@ -10072,7 +10591,7 @@ let taxiChatPanelMesh = null;
 let taxiChatPanelTexture = null;
 
 function createTaxiChatPanel() {
-  taxiChatPanelTexture = makeTaxiChatPanelTexture([]);
+  makeTaxiChatPanelTexture([]);
   taxiChatPanelMesh = new THREE.Mesh(
     new THREE.PlaneGeometry(1.1, 0.92),
     new THREE.MeshBasicMaterial({
@@ -10087,19 +10606,90 @@ function createTaxiChatPanel() {
     TAXI_ANALYTICS_ROOM_POSITION.z
   );
   taxiChatPanelMesh.rotation.y = -Math.PI / 4;
+  taxiChatPanelMesh.userData.isTaxiChatPanel = true;
   taxiAnalyticsGroup.add(taxiChatPanelMesh);
+}
+
+// Place a control relative to the chat panel (panel-local x = right, y = up, z = toward the viewer).
+function placeOnTaxiChatPanel(mesh, localX, localY, localZ = 0.01) {
+  mesh.position.set(localX, localY, localZ).applyEuler(taxiChatPanelMesh.rotation).add(taxiChatPanelMesh.position);
+  mesh.rotation.copy(taxiChatPanelMesh.rotation);
 }
 
 function updateTaxiChatPanel() {
   if (!taxiChatPanelMesh) return;
-  const oldTex = taxiChatPanelTexture;
-  taxiChatPanelTexture = makeTaxiChatPanelTexture(taxiConversationHistory);
-  taxiChatPanelMesh.material.map = taxiChatPanelTexture;
-  taxiChatPanelMesh.material.needsUpdate = true;
-  if (oldTex) oldTex.dispose();
+  if (taxiConversationHistory.length !== taxiChatRenderedCount) {
+    taxiChatRenderedCount = taxiConversationHistory.length;
+    taxiChatScrollPx = 0; // new message: jump to the latest
+  }
+  makeTaxiChatPanelTexture(taxiConversationHistory);
 }
 
-function makeTaxiMicButtonTexture(isListening) {
+// deltaPx > 0 scrolls toward older messages. Returns true when the view moved.
+function scrollTaxiChatPanel(deltaPx) {
+  if (!taxiChatPanelMesh) return false;
+  const next = Math.min(Math.max(taxiChatScrollPx + deltaPx, 0), taxiChatMaxScrollPx);
+  if (Math.abs(next - taxiChatScrollPx) < 0.5) return false;
+  taxiChatScrollPx = next;
+  makeTaxiChatPanelTexture(taxiConversationHistory);
+  return true;
+}
+
+function makeTaxiChatScrollButtonTexture(dir) {
+  const c = document.createElement("canvas");
+  c.width = 128;
+  c.height = 128;
+  const ctx = c.getContext("2d");
+  ctx.fillStyle = "rgba(40, 60, 90, 0.92)";
+  ctx.roundRect(4, 4, 120, 120, 18);
+  ctx.fill();
+  ctx.strokeStyle = "rgba(143, 247, 255, 0.8)";
+  ctx.lineWidth = 4;
+  ctx.stroke();
+  ctx.fillStyle = "#dff8ff";
+  ctx.beginPath();
+  if (dir > 0) {
+    ctx.moveTo(64, 30); ctx.lineTo(100, 90); ctx.lineTo(28, 90);
+  } else {
+    ctx.moveTo(64, 98); ctx.lineTo(100, 38); ctx.lineTo(28, 38);
+  }
+  ctx.closePath();
+  ctx.fill();
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+
+const taxiChatScrollButtons = [];
+
+function createTaxiChatScrollButtons() {
+  for (const dir of [1, -1]) {
+    const btn = new THREE.Mesh(
+      new THREE.PlaneGeometry(0.13, 0.13),
+      new THREE.MeshBasicMaterial({ map: makeTaxiChatScrollButtonTexture(dir), transparent: true, side: THREE.DoubleSide })
+    );
+    placeOnTaxiChatPanel(btn, 0.64, dir > 0 ? 0.33 : 0.13, 0.01);
+    btn.userData.isTaxiChatScroll = true;
+    btn.userData.scrollDir = dir;
+    btn.userData.xrHitSize = { w: 0.13, h: 0.13, d: 0.06 };
+    taxiAnalyticsGroup.add(btn);
+    taxiChatScrollButtons.push(btn);
+  }
+}
+
+function checkTaxiChatScrollHit(point) {
+  for (const btn of taxiChatScrollButtons) {
+    tmpVec.copy(point);
+    btn.worldToLocal(tmpVec);
+    const size = btn.userData.xrHitSize;
+    if (Math.abs(tmpVec.x) <= size.w * 0.5 && Math.abs(tmpVec.y) <= size.h * 0.5 && Math.abs(tmpVec.z) <= size.d * 0.5) {
+      return btn.userData.scrollDir;
+    }
+  }
+  return 0;
+}
+
+function makeTaxiMicButtonTexture(isListening, isBusy = false) {
   const c = document.createElement("canvas");
   c.width = 200;
   c.height = 200;
@@ -10107,7 +10697,7 @@ function makeTaxiMicButtonTexture(isListening) {
   
   ctx.beginPath();
   ctx.arc(100, 100, 90, 0, Math.PI * 2);
-  ctx.fillStyle = isListening ? "rgba(255, 100, 100, 0.9)" : "rgba(100, 180, 255, 0.85)";
+  ctx.fillStyle = isBusy ? "rgba(255, 170, 60, 0.9)" : isListening ? "rgba(255, 100, 100, 0.9)" : "rgba(100, 180, 255, 0.85)";
   ctx.fill();
   ctx.strokeStyle = "rgba(255, 255, 255, 0.8)";
   ctx.lineWidth = 4;
@@ -10133,11 +10723,11 @@ function makeTaxiMicButtonTexture(isListening) {
   ctx.lineTo(115, 140);
   ctx.stroke();
   
-  if (isListening) {
+  if (isListening || isBusy) {
     ctx.font = "bold 14px Arial";
     ctx.fillStyle = "#ffffff";
     ctx.textAlign = "center";
-    ctx.fillText("聴いています...", 100, 175);
+    ctx.fillText(isBusy ? "文字起こし中..." : "聴いています...", 100, 175);
   }
   
   const tex = new THREE.CanvasTexture(c);
@@ -10158,12 +10748,8 @@ function createTaxiMicButton() {
       side: THREE.DoubleSide,
     })
   );
-  taxiMicButtonMesh.position.set(
-    TAXI_ANALYTICS_ROOM_POSITION.x + TAXI_ANALYTICS_ROOM_HALF.x - 0.7,
-    TAXI_ANALYTICS_ROOM_POSITION.y - 0.25,
-    TAXI_ANALYTICS_ROOM_POSITION.z + 0.65
-  );
-  taxiMicButtonMesh.rotation.y = -Math.PI / 4;
+  // Right of the chat panel, below the ▲▼ scroll buttons.
+  placeOnTaxiChatPanel(taxiMicButtonMesh, 0.69, -0.28, 0.02);
   taxiMicButtonMesh.userData.isTaxiMicButton = true;
   taxiMicButtonMesh.userData.xrHitSize = { w: 0.22, h: 0.22, d: 0.06 };
   taxiAnalyticsGroup.add(taxiMicButtonMesh);
@@ -10172,34 +10758,38 @@ function createTaxiMicButton() {
 function updateTaxiMicButton() {
   if (!taxiMicButtonMesh) return;
   const oldTex = taxiMicButtonTexture;
-  taxiMicButtonTexture = makeTaxiMicButtonTexture(taxiIsListening);
+  taxiMicButtonTexture = makeTaxiMicButtonTexture(taxiIsListening, taxiVoiceBusy);
   taxiMicButtonMesh.material.map = taxiMicButtonTexture;
   taxiMicButtonMesh.material.needsUpdate = true;
   if (oldTex) oldTex.dispose();
 }
 
+// Same labels/questions as the 2D quick buttons (index.html .taxiQuickBtn).
 const taxiSuggestedQuestions = [
-  "月別売上を出して",
-  "曜日別乗車回数",
-  "車両別稼働率",
-  "どの分析ができる？",
-  "パネルをクリア",
+  { label: "月別売上", question: "月別の売上推移を出して" },
+  { label: "曜日別", question: "曜日別の乗車回数を見せて" },
+  { label: "車両別", question: "車両ごとの稼働率比較" },
+  { label: "一覧", question: "どの一覧表を出せますか？" },
+  { label: "クリア", question: "パネルをクリアして" },
 ];
+const TAXI_QUESTION_BTN_W = 0.2;
+const TAXI_QUESTION_BTN_H = 0.085;
+const TAXI_QUESTION_BTN_GAP = 0.025;
 
 function makeTaxiQuestionButtonTexture(text) {
   const c = document.createElement("canvas");
-  c.width = 280;
-  c.height = 60;
+  c.width = 236;
+  c.height = 100;
   const ctx = c.getContext("2d");
   
   ctx.fillStyle = "rgba(60, 45, 90, 0.9)";
-  ctx.roundRect(0, 0, c.width, c.height, 12);
+  ctx.roundRect(0, 0, c.width, c.height, 14);
   ctx.fill();
   ctx.strokeStyle = "rgba(168, 132, 255, 0.7)";
-  ctx.lineWidth = 2;
+  ctx.lineWidth = 3;
   ctx.stroke();
   
-  ctx.font = "bold 22px Arial, Helvetica, sans-serif";
+  ctx.font = "bold 36px Arial, Helvetica, sans-serif";
   ctx.fillStyle = "#e4daff";
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
@@ -10212,26 +10802,26 @@ function makeTaxiQuestionButtonTexture(text) {
 
 const taxiQuestionButtons = [];
 
+// One row directly under the chat panel (panel is 1.1 m wide x 0.92 m tall).
 function createTaxiQuestionButtons() {
-  const startX = TAXI_ANALYTICS_ROOM_POSITION.x - TAXI_ANALYTICS_ROOM_HALF.x + 0.9;
-  const startY = TAXI_ANALYTICS_ROOM_POSITION.y + 0.2;
-  const startZ = TAXI_ANALYTICS_ROOM_POSITION.z;
+  const n = taxiSuggestedQuestions.length;
+  const rowW = n * TAXI_QUESTION_BTN_W + (n - 1) * TAXI_QUESTION_BTN_GAP;
+  const localY = -0.46 - 0.025 - TAXI_QUESTION_BTN_H / 2;
   
-  for (let i = 0; i < taxiSuggestedQuestions.length; i++) {
+  for (let i = 0; i < n; i++) {
     const q = taxiSuggestedQuestions[i];
     const btn = new THREE.Mesh(
-      new THREE.PlaneGeometry(0.42, 0.09),
+      new THREE.PlaneGeometry(TAXI_QUESTION_BTN_W, TAXI_QUESTION_BTN_H),
       new THREE.MeshBasicMaterial({
-        map: makeTaxiQuestionButtonTexture(q),
+        map: makeTaxiQuestionButtonTexture(q.label),
         transparent: true,
         side: THREE.DoubleSide,
       })
     );
-    btn.position.set(startX, startY - i * 0.12, startZ);
-    btn.rotation.y = Math.PI / 4;
+    placeOnTaxiChatPanel(btn, -rowW / 2 + TAXI_QUESTION_BTN_W / 2 + i * (TAXI_QUESTION_BTN_W + TAXI_QUESTION_BTN_GAP), localY, 0.01);
     btn.userData.isTaxiQuestionButton = true;
-    btn.userData.questionText = q;
-    btn.userData.xrHitSize = { w: 0.42, h: 0.09, d: 0.06 };
+    btn.userData.questionText = q.question;
+    btn.userData.xrHitSize = { w: TAXI_QUESTION_BTN_W, h: TAXI_QUESTION_BTN_H, d: 0.06 };
     taxiAnalyticsGroup.add(btn);
     taxiQuestionButtons.push(btn);
   }
@@ -10266,6 +10856,7 @@ function checkTaxiMicButtonHit(point) {
 }
 
 createTaxiChatPanel();
+createTaxiChatScrollButtons();
 createTaxiMicButton();
 createTaxiQuestionButtons();
 
@@ -10280,6 +10871,7 @@ const taxiSettingsModalEl = document.getElementById("taxiSettingsModal");
 const llmEndpointEl = document.getElementById("llmEndpoint");
 const llmApiKeyEl = document.getElementById("llmApiKey");
 const llmModelEl = document.getElementById("llmModel");
+const llmSttModelEl = document.getElementById("llmSttModel");
 const llmSaveBtnEl = document.getElementById("llmSaveBtn");
 const llmClearBtnEl = document.getElementById("llmClearBtn");
 const llmCloseBtnEl = document.getElementById("llmCloseBtn");
@@ -10336,7 +10928,7 @@ updateTaxiMicButton = function() {
   originalUpdateTaxiMicButton();
   if (taxiMicBtnEl) {
     taxiMicBtnEl.classList.toggle("listening", taxiIsListening);
-    taxiMicBtnEl.textContent = taxiIsListening ? "⏹" : "🎤";
+    taxiMicBtnEl.textContent = taxiVoiceBusy ? "…" : taxiIsListening ? "⏹" : "🎤";
   }
 };
 
@@ -10355,14 +10947,17 @@ taxiSettingsBtnEl?.addEventListener("click", () => {
       if (llmEndpointEl) llmEndpointEl.value = config.endpoint || "";
       if (llmApiKeyEl) llmApiKeyEl.value = config.apiKey || "";
       if (llmModelEl) llmModelEl.value = config.model || "";
+      if (llmSttModelEl) llmSttModelEl.value = config.sttModel || "";
     }
   }
 });
 
 llmSaveBtnEl?.addEventListener("click", () => {
   const endpoint = llmEndpointEl?.value.trim();
-  const apiKey = llmApiKeyEl?.value.trim();
+  const apiKey = taxiSanitizeApiKey(llmApiKeyEl?.value);
   const model = llmModelEl?.value.trim();
+  const sttModel = llmSttModelEl?.value.trim() || "";
+  if (llmApiKeyEl) llmApiKeyEl.value = apiKey;
   
   if (!endpoint || !apiKey) {
     if (llmStatusEl) llmStatusEl.textContent = "エンドポイントとAPIキーは必須です。";
@@ -10370,8 +10965,17 @@ llmSaveBtnEl?.addEventListener("click", () => {
   }
   
   try {
-    localStorage.setItem(TAXI_CONVERSATION_STORAGE_KEY, JSON.stringify({ endpoint, apiKey, model }));
+    localStorage.setItem(TAXI_CONVERSATION_STORAGE_KEY, JSON.stringify({ endpoint, apiKey, model, sttModel }));
     if (llmStatusEl) llmStatusEl.textContent = "設定を保存しました。LLMモードで動作します。";
+    if (!(window.SpeechRecognition || window.webkitSpeechRecognition)) {
+      // No Web Speech (Quest Browser): voice input records audio -> ask for the mic now, outside VR.
+      primeTaxiMicPermission().then((r) => {
+        if (!llmStatusEl) return;
+        llmStatusEl.textContent = r === "granted"
+          ? "設定を保存しました。マイクも許可済みです（音声は録音→AI文字起こしで入力）。"
+          : `設定を保存しました。マイクは未許可です（${r}）。音声入力を使う場合はマイクを許可してください。`;
+      });
+    }
   } catch (e) {
     if (llmStatusEl) llmStatusEl.textContent = "保存に失敗しました: " + e.message;
   }
@@ -10382,6 +10986,7 @@ llmClearBtnEl?.addEventListener("click", () => {
   if (llmEndpointEl) llmEndpointEl.value = "";
   if (llmApiKeyEl) llmApiKeyEl.value = "";
   if (llmModelEl) llmModelEl.value = "";
+  if (llmSttModelEl) llmSttModelEl.value = "";
   if (llmStatusEl) llmStatusEl.textContent = "設定をクリアしました。オフラインモードで動作します。";
 });
 
