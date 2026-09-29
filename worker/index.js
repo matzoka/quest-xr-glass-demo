@@ -123,6 +123,86 @@ function isTaxiRoomPath(pathname) {
 }
 
 /**
+ * LLM relay (same-origin POST /api/llm) for OpenCode endpoints, which send
+ * no CORS headers. Only available with a valid taxi cookie. Upstream is
+ * restricted to an allowlist (no open proxy).
+ */
+const LLM_RELAY_PATH = "/api/llm";
+const LLM_ALLOWED_ENDPOINTS = [
+  "https://opencode.ai/zen/go/v1/chat/completions",
+  "https://opencode.ai/zen/v1/chat/completions",
+];
+const LLM_DEFAULT_ENDPOINT = LLM_ALLOWED_ENDPOINTS[0];
+const LLM_MAX_BODY_BYTES = 256 * 1024;
+const LLM_TIMEOUT_MS = 60000;
+const LLM_USER_AGENT = "quest-xr-taxi-assistant/1.0";
+
+function jsonResponse(status, obj) {
+  return new Response(JSON.stringify(obj), {
+    status,
+    headers: { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" },
+  });
+}
+
+function normalizeLlmEndpoint(raw) {
+  if (!raw) return LLM_DEFAULT_ENDPOINT;
+  let e = String(raw).trim().replace(/\/+$/, "");
+  if (/\/v1$/.test(e)) e += "/chat/completions";
+  return LLM_ALLOWED_ENDPOINTS.includes(e) ? e : null;
+}
+
+async function handleLlmRelay(request, env, taxiAllowed) {
+  if (request.method !== "POST") {
+    return new Response("Method Not Allowed", { status: 405, headers: { Allow: "POST" } });
+  }
+  if (!taxiAllowed) return jsonResponse(401, { error: { message: "Unauthorized" } });
+
+  const upstream = normalizeLlmEndpoint(request.headers.get("X-LLM-Endpoint"));
+  if (!upstream) return jsonResponse(400, { error: { message: "Endpoint not allowed" } });
+
+  const declared = parseInt(request.headers.get("Content-Length") || "0", 10);
+  if (declared > LLM_MAX_BODY_BYTES) return jsonResponse(413, { error: { message: "Payload too large" } });
+  const body = await request.arrayBuffer();
+  if (body.byteLength > LLM_MAX_BODY_BYTES) return jsonResponse(413, { error: { message: "Payload too large" } });
+  if (body.byteLength === 0) return jsonResponse(400, { error: { message: "Empty body" } });
+
+  let apiKey = env.OPENCODE_API_KEY || "";
+  if (!apiKey) {
+    const m = /^Bearer\s+(.+)$/i.exec(request.headers.get("Authorization") || "");
+    apiKey = m ? m[1].trim() : "";
+  }
+  if (!apiKey) return jsonResponse(401, { error: { message: "No API key configured" } });
+
+  const session = (request.headers.get("X-Opencode-Session") || "").slice(0, 128) || crypto.randomUUID();
+
+  let upstreamRes;
+  try {
+    upstreamRes = await fetch(upstream, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${apiKey}`,
+        "User-Agent": LLM_USER_AGENT,
+        "x-opencode-session": session,
+      },
+      body,
+      signal: AbortSignal.timeout(LLM_TIMEOUT_MS),
+    });
+  } catch (e) {
+    const timeout = e && (e.name === "TimeoutError" || e.name === "AbortError");
+    return jsonResponse(timeout ? 504 : 502, { error: { message: timeout ? "Upstream timeout" : "Upstream fetch failed" } });
+  }
+
+  return new Response(upstreamRes.body, {
+    status: upstreamRes.status,
+    headers: {
+      "Content-Type": upstreamRes.headers.get("Content-Type") || "application/json",
+      "Cache-Control": "no-store",
+    },
+  });
+}
+
+/**
  * Main request handler
  */
 export default {
@@ -180,6 +260,11 @@ export default {
 
     // If no secret is configured, taxi features are disabled entirely
     const taxiAllowed = isAuthenticated && !!secret;
+
+    // Same-origin LLM relay (requires taxi cookie)
+    if (pathname === LLM_RELAY_PATH) {
+      return handleLlmRelay(request, env, taxiAllowed);
+    }
 
     // Block direct access to taxi room assets if not authenticated
     if (isTaxiRoomPath(pathname) && !taxiAllowed) {
