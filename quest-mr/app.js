@@ -14,7 +14,7 @@ const blackHoleTourButton = document.querySelector("#blackHoleTourButton");
 const controllerHelpButton = document.querySelector("#controllerHelpButton");
 const taxiAnalyticsButton = document.querySelector("#taxiAnalyticsButton");
 const poseDebugOutputEl = document.querySelector("#poseDebugOutput");
-const APP_VERSION = "v2026.09.29.02";
+const APP_VERSION = "v2026.09.29.03";
 const DEBUG_TOP_VIEW = new URLSearchParams(window.location.search).has("topDebug");
 const DEBUG_TOP_VIEW_DISTANCE = Number(new URLSearchParams(window.location.search).get("topDebugDist"));
 const DEBUG_BLACK_HOLE_VIEW = new URLSearchParams(window.location.search).has("blackHoleDebug");
@@ -7943,6 +7943,474 @@ const taxiPanelData = [
   { title: "車両稼働率", value: "78%", unit: "全車両平均", chart: "gauge" },
 ];
 
+// ---------------------------------------------------------------------------
+// Synthetic Trip Dataset Generator
+// Creates deterministic sample data for taxi analytics
+// ---------------------------------------------------------------------------
+const TAXI_DATASET_SEED = 42;
+const TAXI_MONTHS = 6;
+const TAXI_VEHICLES = ["車両A", "車両B", "車両C", "車両D", "車両E", "車両F", "車両G", "車両H"];
+const TAXI_DRIVERS = ["田中", "鈴木", "佐藤", "山田", "高橋", "伊藤", "渡辺", "中村"];
+const TAXI_AREAS = ["新宿", "渋谷", "池袋", "品川", "銀座", "上野", "浅草", "六本木"];
+const TAXI_WEEKDAYS = ["日", "月", "火", "水", "木", "金", "土"];
+
+function taxiSeededRandom(seed) {
+  let s = seed;
+  return function() {
+    s = (s * 1103515245 + 12345) & 0x7fffffff;
+    return s / 0x7fffffff;
+  };
+}
+
+function generateTaxiDataset() {
+  const rand = taxiSeededRandom(TAXI_DATASET_SEED);
+  const trips = [];
+  const today = new Date();
+  const startDate = new Date(today);
+  startDate.setMonth(startDate.getMonth() - TAXI_MONTHS);
+  
+  let tripId = 1;
+  for (let d = new Date(startDate); d <= today; d.setDate(d.getDate() + 1)) {
+    const dayOfWeek = d.getDay();
+    const weekday = TAXI_WEEKDAYS[dayOfWeek];
+    const isWeekend = dayOfWeek === 0 || dayOfWeek === 6;
+    const baseTripsPerDay = isWeekend ? 120 : 160;
+    const tripsToday = Math.floor(baseTripsPerDay * (0.8 + rand() * 0.4));
+    
+    for (let t = 0; t < tripsToday; t++) {
+      const hour = Math.floor(weightedHourRandom(rand, isWeekend));
+      const vehicle = TAXI_VEHICLES[Math.floor(rand() * TAXI_VEHICLES.length)];
+      const driver = TAXI_DRIVERS[Math.floor(rand() * TAXI_DRIVERS.length)];
+      const pickupArea = TAXI_AREAS[Math.floor(rand() * TAXI_AREAS.length)];
+      const dropoffArea = TAXI_AREAS[Math.floor(rand() * TAXI_AREAS.length)];
+      const distance = Math.round((1 + rand() * 15) * 10) / 10;
+      const baseFare = 500 + distance * 300;
+      const fare = Math.round(baseFare * (0.9 + rand() * 0.3));
+      const occupiedMinutes = Math.round(distance * 4 + rand() * 10);
+      const emptyMinutes = Math.round(rand() * 20 + 5);
+      
+      trips.push({
+        id: tripId++,
+        date: new Date(d).toISOString().split("T")[0],
+        year: d.getFullYear(),
+        month: d.getMonth() + 1,
+        day: d.getDate(),
+        weekday,
+        dayOfWeek,
+        hour,
+        vehicle,
+        driver,
+        pickupArea,
+        dropoffArea,
+        distance,
+        fare,
+        occupiedMinutes,
+        emptyMinutes,
+      });
+    }
+  }
+  return trips;
+}
+
+function weightedHourRandom(rand, isWeekend) {
+  const weights = isWeekend
+    ? [0.5, 0.3, 0.2, 0.2, 0.3, 0.5, 0.8, 1.2, 1.5, 1.8, 2.0, 2.2, 2.5, 2.3, 2.0, 1.8, 1.5, 2.0, 2.5, 3.0, 2.8, 2.5, 2.0, 1.2]
+    : [0.3, 0.2, 0.1, 0.1, 0.2, 0.5, 1.0, 2.5, 3.0, 2.0, 1.5, 1.2, 1.5, 1.3, 1.2, 1.5, 2.0, 3.0, 3.5, 2.8, 2.2, 1.8, 1.2, 0.6];
+  const total = weights.reduce((a, b) => a + b, 0);
+  let r = rand() * total;
+  for (let h = 0; h < 24; h++) {
+    r -= weights[h];
+    if (r <= 0) return h;
+  }
+  return 12;
+}
+
+const taxiTrips = generateTaxiDataset();
+console.log(`Generated ${taxiTrips.length} synthetic taxi trips for analytics`);
+
+// ---------------------------------------------------------------------------
+// Analysis Spec Schema & Query Engine
+// ---------------------------------------------------------------------------
+const TAXI_METRICS = {
+  fare: { label: "売上", unit: "円", aggregate: "sum", format: v => `¥${v.toLocaleString()}` },
+  tripCount: { label: "乗車回数", unit: "件", aggregate: "count", format: v => `${v.toLocaleString()}件` },
+  distance: { label: "走行距離", unit: "km", aggregate: "sum", format: v => `${v.toFixed(1)}km` },
+  avgFare: { label: "平均運賃", unit: "円", aggregate: "avg", field: "fare", format: v => `¥${Math.round(v).toLocaleString()}` },
+  avgDistance: { label: "平均距離", unit: "km", aggregate: "avg", field: "distance", format: v => `${v.toFixed(1)}km` },
+  occupiedTime: { label: "実車時間", unit: "分", aggregate: "sum", field: "occupiedMinutes", format: v => `${Math.round(v).toLocaleString()}分` },
+  emptyTime: { label: "空車時間", unit: "分", aggregate: "sum", field: "emptyMinutes", format: v => `${Math.round(v).toLocaleString()}分` },
+  utilizationRate: { label: "稼働率", unit: "%", aggregate: "custom", format: v => `${v.toFixed(1)}%` },
+};
+
+const TAXI_DIMENSIONS = {
+  month: { label: "月別", field: "month", format: v => `${v}月` },
+  weekday: { label: "曜日別", field: "weekday", sort: (a, b) => TAXI_WEEKDAYS.indexOf(a) - TAXI_WEEKDAYS.indexOf(b) },
+  hour: { label: "時間帯別", field: "hour", format: v => `${v}時` },
+  vehicle: { label: "車両別", field: "vehicle" },
+  driver: { label: "ドライバー別", field: "driver" },
+  pickupArea: { label: "乗車エリア別", field: "pickupArea" },
+  dropoffArea: { label: "降車エリア別", field: "dropoffArea" },
+  date: { label: "日別", field: "date" },
+};
+
+const TAXI_CHART_TYPES = ["bar", "line", "table", "kpi"];
+
+function validateAnalysisSpec(spec) {
+  const errors = [];
+  if (!spec.metric || !TAXI_METRICS[spec.metric]) {
+    errors.push(`無効なメトリック: ${spec.metric}`);
+  }
+  if (spec.groupBy && !TAXI_DIMENSIONS[spec.groupBy]) {
+    errors.push(`無効なグループ化: ${spec.groupBy}`);
+  }
+  if (spec.chartType && !TAXI_CHART_TYPES.includes(spec.chartType)) {
+    errors.push(`無効なチャートタイプ: ${spec.chartType}`);
+  }
+  return { valid: errors.length === 0, errors };
+}
+
+function queryTaxiData(spec) {
+  const validation = validateAnalysisSpec(spec);
+  if (!validation.valid) {
+    return { error: validation.errors.join(", "), data: [] };
+  }
+  
+  let data = [...taxiTrips];
+  
+  if (spec.filters) {
+    for (const [field, value] of Object.entries(spec.filters)) {
+      if (Array.isArray(value)) {
+        data = data.filter(row => value.includes(row[field]));
+      } else {
+        data = data.filter(row => row[field] === value);
+      }
+    }
+  }
+  
+  const metricDef = TAXI_METRICS[spec.metric];
+  
+  if (!spec.groupBy) {
+    const value = aggregateMetric(data, spec.metric, metricDef);
+    return {
+      data: [{ label: metricDef.label, value, formatted: metricDef.format(value) }],
+      total: value,
+      totalFormatted: metricDef.format(value),
+    };
+  }
+  
+  const dimDef = TAXI_DIMENSIONS[spec.groupBy];
+  const groups = new Map();
+  
+  for (const row of data) {
+    const key = row[dimDef.field];
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(row);
+  }
+  
+  let result = [];
+  for (const [key, rows] of groups) {
+    const value = aggregateMetric(rows, spec.metric, metricDef);
+    const label = dimDef.format ? dimDef.format(key) : String(key);
+    result.push({ key, label, value, formatted: metricDef.format(value), count: rows.length });
+  }
+  
+  if (dimDef.sort) {
+    result.sort((a, b) => dimDef.sort(a.key, b.key));
+  } else if (spec.sort === "desc") {
+    result.sort((a, b) => b.value - a.value);
+  } else if (spec.sort === "asc") {
+    result.sort((a, b) => a.value - b.value);
+  }
+  
+  if (spec.limit && spec.limit > 0) {
+    result = result.slice(0, spec.limit);
+  }
+  
+  const total = result.reduce((sum, r) => sum + r.value, 0);
+  return {
+    data: result,
+    total,
+    totalFormatted: metricDef.format(total),
+  };
+}
+
+function aggregateMetric(rows, metric, metricDef) {
+  if (rows.length === 0) return 0;
+  
+  switch (metricDef.aggregate) {
+    case "count":
+      return rows.length;
+    case "sum":
+      return rows.reduce((sum, r) => sum + (r[metricDef.field || metric] || 0), 0);
+    case "avg":
+      const field = metricDef.field || metric;
+      return rows.reduce((sum, r) => sum + (r[field] || 0), 0) / rows.length;
+    case "custom":
+      if (metric === "utilizationRate") {
+        const occupied = rows.reduce((sum, r) => sum + r.occupiedMinutes, 0);
+        const empty = rows.reduce((sum, r) => sum + r.emptyMinutes, 0);
+        return occupied / (occupied + empty) * 100;
+      }
+      return 0;
+    default:
+      return 0;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Dynamic Panel Renderer
+// ---------------------------------------------------------------------------
+const MAX_DYNAMIC_PANELS = 4;
+const dynamicTaxiPanels = [];
+const DYNAMIC_PANEL_WIDTH = 1.0;
+const DYNAMIC_PANEL_HEIGHT = 0.85;
+const DYNAMIC_PANEL_Z_OFFSET = 1.2;
+
+function renderDynamicPanelTexture(spec, queryResult) {
+  const c = document.createElement("canvas");
+  c.width = 480;
+  c.height = 400;
+  const ctx = c.getContext("2d");
+  
+  ctx.fillStyle = "rgba(15, 10, 28, 0.94)";
+  ctx.fillRect(0, 0, c.width, c.height);
+  
+  ctx.strokeStyle = "rgba(100, 180, 255, 0.6)";
+  ctx.lineWidth = 2;
+  ctx.strokeRect(4, 4, c.width - 8, c.height - 8);
+  
+  ctx.fillStyle = "rgba(100, 180, 255, 0.12)";
+  ctx.fillRect(8, 8, c.width - 16, 44);
+  
+  const title = spec.title || `${TAXI_METRICS[spec.metric]?.label || spec.metric}${spec.groupBy ? ` (${TAXI_DIMENSIONS[spec.groupBy]?.label || spec.groupBy})` : ""}`;
+  ctx.font = "bold 20px Arial, Helvetica, sans-serif";
+  ctx.fillStyle = "#a8d4ff";
+  ctx.textAlign = "center";
+  ctx.fillText(truncateText(ctx, title, c.width - 40), c.width / 2, 38);
+  
+  ctx.font = "11px Arial";
+  ctx.fillStyle = "rgba(255, 200, 100, 0.85)";
+  ctx.fillText("⚠ サンプルデータ", c.width / 2, 58);
+  
+  const chartType = spec.chartType || (spec.groupBy ? "bar" : "kpi");
+  const data = queryResult.data || [];
+  
+  if (chartType === "kpi" || (!spec.groupBy && data.length === 1)) {
+    ctx.font = "bold 48px Arial";
+    ctx.fillStyle = "#ffffff";
+    ctx.fillText(data[0]?.formatted || "N/A", c.width / 2, 180);
+    ctx.font = "18px Arial";
+    ctx.fillStyle = "#8899bb";
+    ctx.fillText(TAXI_METRICS[spec.metric]?.label || "", c.width / 2, 215);
+  } else if (chartType === "bar") {
+    renderBarChart(ctx, data, 30, 80, c.width - 60, 280);
+  } else if (chartType === "line") {
+    renderLineChart(ctx, data, 30, 80, c.width - 60, 280);
+  } else if (chartType === "table") {
+    renderTable(ctx, data, spec, 20, 75, c.width - 40, 300);
+  }
+  
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+
+function truncateText(ctx, text, maxWidth) {
+  if (ctx.measureText(text).width <= maxWidth) return text;
+  while (text.length > 3 && ctx.measureText(text + "...").width > maxWidth) {
+    text = text.slice(0, -1);
+  }
+  return text + "...";
+}
+
+function renderBarChart(ctx, data, x, y, width, height) {
+  if (data.length === 0) return;
+  const maxVal = Math.max(...data.map(d => d.value), 1);
+  const barWidth = Math.min(40, (width - 20) / data.length - 8);
+  const chartHeight = height - 50;
+  const startX = x + (width - (barWidth + 8) * data.length) / 2;
+  
+  for (let i = 0; i < Math.min(data.length, 12); i++) {
+    const d = data[i];
+    const barH = (d.value / maxVal) * chartHeight;
+    const bx = startX + i * (barWidth + 8);
+    const by = y + chartHeight - barH;
+    
+    ctx.fillStyle = "rgba(100, 180, 255, 0.8)";
+    ctx.fillRect(bx, by, barWidth, barH);
+    
+    ctx.font = "10px Arial";
+    ctx.fillStyle = "#aabbcc";
+    ctx.textAlign = "center";
+    ctx.save();
+    ctx.translate(bx + barWidth / 2, y + chartHeight + 12);
+    ctx.fillText(truncateText(ctx, d.label, barWidth + 6), 0, 0);
+    ctx.restore();
+    
+    ctx.fillStyle = "#ffffff";
+    ctx.fillText(abbreviateNumber(d.value), bx + barWidth / 2, by - 5);
+  }
+}
+
+function renderLineChart(ctx, data, x, y, width, height) {
+  if (data.length < 2) {
+    renderBarChart(ctx, data, x, y, width, height);
+    return;
+  }
+  const maxVal = Math.max(...data.map(d => d.value), 1);
+  const chartHeight = height - 50;
+  const stepX = (width - 40) / (data.length - 1);
+  
+  ctx.beginPath();
+  ctx.strokeStyle = "rgba(100, 200, 255, 0.9)";
+  ctx.lineWidth = 3;
+  
+  for (let i = 0; i < data.length; i++) {
+    const px = x + 20 + i * stepX;
+    const py = y + chartHeight - (data[i].value / maxVal) * chartHeight;
+    if (i === 0) ctx.moveTo(px, py);
+    else ctx.lineTo(px, py);
+  }
+  ctx.stroke();
+  
+  for (let i = 0; i < data.length; i++) {
+    const px = x + 20 + i * stepX;
+    const py = y + chartHeight - (data[i].value / maxVal) * chartHeight;
+    ctx.beginPath();
+    ctx.arc(px, py, 4, 0, Math.PI * 2);
+    ctx.fillStyle = "#64c8ff";
+    ctx.fill();
+  }
+  
+  ctx.font = "10px Arial";
+  ctx.fillStyle = "#aabbcc";
+  ctx.textAlign = "center";
+  const labelStep = Math.ceil(data.length / 8);
+  for (let i = 0; i < data.length; i += labelStep) {
+    const px = x + 20 + i * stepX;
+    ctx.fillText(truncateText(ctx, data[i].label, stepX * labelStep - 4), px, y + chartHeight + 15);
+  }
+}
+
+function renderTable(ctx, data, spec, x, y, width, height) {
+  const rowHeight = 24;
+  const maxRows = Math.floor((height - 30) / rowHeight);
+  const displayData = data.slice(0, maxRows);
+  
+  ctx.fillStyle = "rgba(60, 80, 100, 0.3)";
+  ctx.fillRect(x, y, width, 26);
+  
+  ctx.font = "bold 12px Arial";
+  ctx.fillStyle = "#a8d4ff";
+  ctx.textAlign = "left";
+  ctx.fillText(TAXI_DIMENSIONS[spec.groupBy]?.label || "項目", x + 10, y + 18);
+  ctx.textAlign = "right";
+  ctx.fillText(TAXI_METRICS[spec.metric]?.label || "値", x + width - 10, y + 18);
+  
+  ctx.font = "12px Arial";
+  for (let i = 0; i < displayData.length; i++) {
+    const ry = y + 30 + i * rowHeight;
+    if (i % 2 === 0) {
+      ctx.fillStyle = "rgba(40, 50, 70, 0.3)";
+      ctx.fillRect(x, ry, width, rowHeight);
+    }
+    ctx.fillStyle = "#c8d8e8";
+    ctx.textAlign = "left";
+    ctx.fillText(truncateText(ctx, displayData[i].label, width * 0.5), x + 10, ry + 16);
+    ctx.textAlign = "right";
+    ctx.fillText(displayData[i].formatted, x + width - 10, ry + 16);
+  }
+}
+
+function abbreviateNumber(num) {
+  if (num >= 1000000) return (num / 1000000).toFixed(1) + "M";
+  if (num >= 10000) return (num / 10000).toFixed(1) + "万";
+  if (num >= 1000) return (num / 1000).toFixed(1) + "K";
+  return num.toFixed(0);
+}
+
+function createDynamicPanel(spec) {
+  const validation = validateAnalysisSpec(spec);
+  if (!validation.valid) {
+    return { success: false, error: validation.errors.join(", ") };
+  }
+  
+  const queryResult = queryTaxiData(spec);
+  if (queryResult.error) {
+    return { success: false, error: queryResult.error };
+  }
+  
+  if (dynamicTaxiPanels.length >= MAX_DYNAMIC_PANELS) {
+    const oldest = dynamicTaxiPanels.shift();
+    if (oldest.mesh) {
+      oldest.mesh.geometry.dispose();
+      oldest.mesh.material.map?.dispose();
+      oldest.mesh.material.dispose();
+      taxiAnalyticsGroup.remove(oldest.mesh);
+    }
+  }
+  
+  const texture = renderDynamicPanelTexture(spec, queryResult);
+  const mesh = new THREE.Mesh(
+    new THREE.PlaneGeometry(DYNAMIC_PANEL_WIDTH, DYNAMIC_PANEL_HEIGHT),
+    new THREE.MeshBasicMaterial({ map: texture, transparent: true, side: THREE.DoubleSide })
+  );
+  
+  const panelIndex = dynamicTaxiPanels.length;
+  const row = Math.floor(panelIndex / 2);
+  const col = panelIndex % 2;
+  
+  mesh.position.set(
+    TAXI_ANALYTICS_ROOM_POSITION.x + (col - 0.5) * (DYNAMIC_PANEL_WIDTH + 0.15),
+    TAXI_ANALYTICS_ROOM_POSITION.y + 0.3 - row * (DYNAMIC_PANEL_HEIGHT + 0.1),
+    TAXI_ANALYTICS_ROOM_POSITION.z - TAXI_ANALYTICS_ROOM_HALF.z + DYNAMIC_PANEL_Z_OFFSET
+  );
+  mesh.rotation.x = -0.06;
+  
+  taxiAnalyticsGroup.add(mesh);
+  
+  const panelInfo = { spec, queryResult, mesh, createdAt: Date.now() };
+  dynamicTaxiPanels.push(panelInfo);
+  
+  return {
+    success: true,
+    panel: panelInfo,
+    summary: `${spec.title || TAXI_METRICS[spec.metric]?.label}を表示しました（${queryResult.data.length}件のデータ）`,
+  };
+}
+
+function clearDynamicPanels() {
+  for (const panel of dynamicTaxiPanels) {
+    if (panel.mesh) {
+      panel.mesh.geometry.dispose();
+      panel.mesh.material.map?.dispose();
+      panel.mesh.material.dispose();
+      taxiAnalyticsGroup.remove(panel.mesh);
+    }
+  }
+  dynamicTaxiPanels.length = 0;
+  return { success: true, message: "動的パネルをすべてクリアしました。" };
+}
+
+function listAvailableAnalyses() {
+  const metrics = Object.entries(TAXI_METRICS).map(([k, v]) => `${v.label}`).join("、");
+  const dimensions = Object.entries(TAXI_DIMENSIONS).map(([k, v]) => `${v.label}`).join("、");
+  return {
+    metrics: Object.keys(TAXI_METRICS),
+    dimensions: Object.keys(TAXI_DIMENSIONS),
+    chartTypes: TAXI_CHART_TYPES,
+    description: `利用可能なメトリック: ${metrics}\n利用可能な集計軸: ${dimensions}\nチャートタイプ: 棒グラフ、折れ線、表、KPI`,
+    examples: [
+      "月別の売上推移を出して",
+      "曜日別の乗車回数を見せて",
+      "車両ごとの稼働率比較",
+      "時間帯別の売上をグラフで",
+      "ドライバー別の走行距離",
+      "エリア別の乗車回数トップ5",
+    ],
+  };
+}
+
 const taxiAnalyticsPanels = [];
 const TAXI_PANEL_WIDTH = 1.2;
 const TAXI_PANEL_HEIGHT = 0.9;
@@ -8221,39 +8689,283 @@ function matchTaxiPanelIntent(text) {
   return bestMatch;
 }
 
+// ---------------------------------------------------------------------------
+// Intent & Slot Extraction for Dynamic Panel Generation
+// ---------------------------------------------------------------------------
+const METRIC_KEYWORDS = {
+  fare: ["売上", "売り上げ", "収益", "金額", "売上高", "revenue"],
+  tripCount: ["乗車", "回数", "件数", "トリップ", "trips", "rides"],
+  distance: ["距離", "走行距離", "キロ", "km", "distance"],
+  avgFare: ["平均運賃", "平均売上", "客単価"],
+  avgDistance: ["平均距離"],
+  occupiedTime: ["実車", "乗車時間"],
+  emptyTime: ["空車", "待機時間"],
+  utilizationRate: ["稼働率", "稼働", "効率", "utilization"],
+};
+
+const DIMENSION_KEYWORDS = {
+  month: ["月別", "月ごと", "月毎", "各月", "monthly"],
+  weekday: ["曜日", "曜日別", "曜日ごと", "weekly"],
+  hour: ["時間帯", "時間別", "時間ごと", "hourly", "時"],
+  vehicle: ["車両", "車両別", "車ごと", "vehicle"],
+  driver: ["ドライバー", "運転手", "driver"],
+  pickupArea: ["乗車エリア", "乗車地", "ピックアップ"],
+  dropoffArea: ["降車エリア", "降車地", "ドロップオフ"],
+};
+
+const CHART_KEYWORDS = {
+  bar: ["棒グラフ", "バー", "bar"],
+  line: ["折れ線", "推移", "グラフ", "トレンド", "line"],
+  table: ["表", "一覧表", "テーブル", "リスト", "table"],
+  kpi: ["数値", "合計", "トータル", "kpi"],
+};
+
+function extractAnalysisIntent(text) {
+  const lowerText = text.toLowerCase();
+  
+  if (lowerText.includes("どの一覧") || lowerText.includes("何ができ") || lowerText.includes("出せますか") || 
+      lowerText.includes("どんな分析") || lowerText.includes("利用可能") || lowerText.includes("できること")) {
+    return { type: "list_capabilities" };
+  }
+  
+  if (lowerText.includes("クリア") || lowerText.includes("消して") || lowerText.includes("削除") || 
+      lowerText.includes("片付け") || lowerText.includes("閉じて")) {
+    return { type: "clear_panels" };
+  }
+  
+  const wantsPanel = lowerText.includes("出して") || lowerText.includes("見せて") || lowerText.includes("表示") ||
+                     lowerText.includes("グラフ") || lowerText.includes("一覧") || lowerText.includes("比較") ||
+                     lowerText.includes("分析") || lowerText.includes("推移");
+  
+  if (!wantsPanel) {
+    return { type: "question" };
+  }
+  
+  let metric = null;
+  let metricScore = 0;
+  for (const [m, keywords] of Object.entries(METRIC_KEYWORDS)) {
+    for (const kw of keywords) {
+      if (lowerText.includes(kw.toLowerCase())) {
+        const score = kw.length;
+        if (score > metricScore) {
+          metric = m;
+          metricScore = score;
+        }
+      }
+    }
+  }
+  
+  let dimension = null;
+  let dimScore = 0;
+  for (const [d, keywords] of Object.entries(DIMENSION_KEYWORDS)) {
+    for (const kw of keywords) {
+      if (lowerText.includes(kw.toLowerCase())) {
+        const score = kw.length;
+        if (score > dimScore) {
+          dimension = d;
+          dimScore = score;
+        }
+      }
+    }
+  }
+  
+  let chartType = null;
+  for (const [ct, keywords] of Object.entries(CHART_KEYWORDS)) {
+    for (const kw of keywords) {
+      if (lowerText.includes(kw.toLowerCase())) {
+        chartType = ct;
+        break;
+      }
+    }
+    if (chartType) break;
+  }
+  
+  let limit = null;
+  const topMatch = text.match(/トップ\s*(\d+)|上位\s*(\d+)|(\d+)\s*件/);
+  if (topMatch) {
+    limit = parseInt(topMatch[1] || topMatch[2] || topMatch[3]);
+  }
+  
+  if (!metric && !dimension) {
+    return { type: "ambiguous", text };
+  }
+  
+  return {
+    type: "create_panel",
+    spec: {
+      metric: metric || "fare",
+      groupBy: dimension,
+      chartType: chartType || (dimension ? "bar" : "kpi"),
+      limit,
+      sort: "desc",
+    },
+  };
+}
+
 function generateOfflineResponse(userMessage) {
   const lowerMsg = userMessage.toLowerCase();
   
-  if (lowerMsg.includes("こんにちは") || lowerMsg.includes("はじめ") || lowerMsg.includes("hello") || lowerMsg.includes("hi")) {
-    return { text: taxiGeneralResponses.greeting, focusPanel: -1 };
+  if (lowerMsg.includes("こんにちは") || lowerMsg.includes("はじめ") || lowerMsg.includes("hello")) {
+    return { 
+      text: "こんにちは！タクシー業務分析アシスタントです。「月別の売上推移を出して」「車両ごとの稼働率を見せて」などと話しかけてください。「どの一覧表を出せますか？」で利用可能な分析を確認できます。", 
+      focusPanel: -1 
+    };
   }
   
-  if (lowerMsg.includes("全部") || lowerMsg.includes("すべて") || lowerMsg.includes("一覧") || lowerMsg.includes("概要") || lowerMsg.includes("all")) {
-    return { text: taxiGeneralResponses.allPanels, focusPanel: -1 };
+  const intent = extractAnalysisIntent(userMessage);
+  
+  if (intent.type === "list_capabilities") {
+    const info = listAvailableAnalyses();
+    return {
+      text: `以下の分析が可能です：\n\n【メトリック】${info.metrics.map(m => TAXI_METRICS[m].label).join("、")}\n\n【集計軸】${info.dimensions.map(d => TAXI_DIMENSIONS[d].label).join("、")}\n\n【例】\n${info.examples.slice(0, 4).join("\n")}`,
+      focusPanel: -1,
+    };
+  }
+  
+  if (intent.type === "clear_panels") {
+    const result = clearDynamicPanels();
+    return { text: result.message, focusPanel: -1 };
+  }
+  
+  if (intent.type === "create_panel") {
+    const result = createDynamicPanel(intent.spec);
+    if (result.success) {
+      const metricLabel = TAXI_METRICS[intent.spec.metric]?.label || intent.spec.metric;
+      const dimLabel = intent.spec.groupBy ? TAXI_DIMENSIONS[intent.spec.groupBy]?.label : "";
+      const dataCount = result.panel?.queryResult?.data?.length || 0;
+      return {
+        text: `${dimLabel}${metricLabel}のパネルを作成しました。${dataCount}件のデータを集計しています。\n\n（サンプルデータ：過去6ヶ月の約${taxiTrips.length.toLocaleString()}件のトリップ記録）`,
+        focusPanel: -1,
+        panelCreated: true,
+      };
+    } else {
+      return { text: `パネル作成エラー: ${result.error}`, focusPanel: -1 };
+    }
+  }
+  
+  if (intent.type === "ambiguous") {
+    return {
+      text: "どのような分析をご希望ですか？\n\n例えば：\n・「月別の売上推移を出して」\n・「曜日別の乗車回数を見せて」\n・「車両ごとの稼働率比較」\n\n「どの一覧表を出せますか？」で全ての選択肢を確認できます。",
+      focusPanel: -1,
+    };
   }
   
   const panelIdx = matchTaxiPanelIntent(userMessage);
-  
   if (panelIdx >= 0) {
     const response = taxiPanelResponses[panelIdx];
-    const wantsDetail = lowerMsg.includes("詳") || lowerMsg.includes("detail") || lowerMsg.includes("もっと");
-    const text = wantsDetail ? response.detail : response.summary;
-    return { text, focusPanel: panelIdx };
+    const wantsDetail = lowerMsg.includes("詳") || lowerMsg.includes("もっと");
+    return { text: wantsDetail ? response.detail : response.summary, focusPanel: panelIdx };
   }
   
   return { text: taxiGeneralResponses.unknown, focusPanel: -1 };
 }
 
+const LLM_TOOLS = [
+  {
+    type: "function",
+    function: {
+      name: "create_panel",
+      description: "Create a new analysis panel with specified metric and grouping. The panel will be rendered with data from the sample dataset.",
+      parameters: {
+        type: "object",
+        properties: {
+          metric: {
+            type: "string",
+            enum: Object.keys(TAXI_METRICS),
+            description: "The metric to display: fare (売上), tripCount (乗車回数), distance (走行距離), avgFare (平均運賃), avgDistance (平均距離), utilizationRate (稼働率)",
+          },
+          groupBy: {
+            type: "string",
+            enum: [...Object.keys(TAXI_DIMENSIONS), ""],
+            description: "Dimension to group by: month (月別), weekday (曜日別), hour (時間帯別), vehicle (車両別), driver (ドライバー別), pickupArea (乗車エリア別), dropoffArea (降車エリア別). Empty string for total/KPI view.",
+          },
+          chartType: {
+            type: "string",
+            enum: TAXI_CHART_TYPES,
+            description: "Chart type: bar, line, table, kpi",
+          },
+          title: {
+            type: "string",
+            description: "Optional custom title for the panel",
+          },
+          limit: {
+            type: "number",
+            description: "Limit number of items (e.g., top 5)",
+          },
+          sort: {
+            type: "string",
+            enum: ["asc", "desc", ""],
+            description: "Sort order for the data",
+          },
+        },
+        required: ["metric"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "focus_panel",
+      description: "Highlight/focus one of the fixed dashboard panels (0-3)",
+      parameters: {
+        type: "object",
+        properties: {
+          panelIndex: {
+            type: "number",
+            description: "Panel index: 0=日次売上, 1=乗車回数, 2=ピーク時間帯, 3=車両稼働率",
+          },
+        },
+        required: ["panelIndex"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "clear_panels",
+      description: "Clear all dynamically generated panels",
+      parameters: { type: "object", properties: {} },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "list_capabilities",
+      description: "List available metrics, dimensions, and example analyses",
+      parameters: { type: "object", properties: {} },
+    },
+  },
+];
+
 async function callLlmBackend(userMessage, config) {
-  const systemPrompt = `あなたはタクシー業務分析アシスタントです。以下のサンプルデータを元に、ユーザーの質問に日本語で答えてください。
+  const datasetSummary = `
+サンプルデータセット情報:
+- 期間: 過去${TAXI_MONTHS}ヶ月
+- 総トリップ数: ${taxiTrips.length.toLocaleString()}件
+- 車両数: ${TAXI_VEHICLES.length}台
+- ドライバー数: ${TAXI_DRIVERS.length}人
+- エリア数: ${TAXI_AREAS.length}箇所
 
-利用可能なパネルデータ:
-${taxiPanelData.map((p, i) => `パネル${i}: ${p.title} - ${p.value} (${p.unit})`).join("\n")}
+利用可能なメトリック: ${Object.entries(TAXI_METRICS).map(([k, v]) => `${k}(${v.label})`).join(", ")}
+利用可能な集計軸: ${Object.entries(TAXI_DIMENSIONS).map(([k, v]) => `${k}(${v.label})`).join(", ")}
+`;
 
-回答時に特定のパネルをフォーカスしたい場合は、回答の最後に [FOCUS_PANEL:番号] を追加してください（番号は0-3）。
-例: [FOCUS_PANEL:0] は日次売上パネルをフォーカスします。
+  const systemPrompt = `あなたはタクシー業務分析アシスタントです。ユーザーの分析リクエストに応じて、適切なツールを呼び出してパネルを作成してください。
 
-簡潔に、フレンドリーに回答してください。これはサンプルデータであることを必要に応じて伝えてください。`;
+${datasetSummary}
+
+固定パネル（focus_panelで参照可能）:
+${taxiPanelData.map((p, i) => `${i}: ${p.title} - ${p.value} (${p.unit})`).join("\n")}
+
+ルール:
+1. ユーザーが分析を依頼したら、create_panelツールを使用してパネルを作成
+2. 既存の固定パネルについて質問されたら、focus_panelでハイライト
+3. 利用可能な分析を聞かれたら、list_capabilitiesを使用
+4. パネルを消したいと言われたら、clear_panelsを使用
+5. 数値は絶対に自分で生成せず、必ずツールを呼び出してデータから計算させる
+6. 日本語で簡潔に回答
+
+これはサンプルデータであることを伝えてください。`;
 
   const messages = [
     { role: "system", content: systemPrompt },
@@ -8271,8 +8983,10 @@ ${taxiPanelData.map((p, i) => `パネル${i}: ${p.title} - ${p.value} (${p.unit}
       body: JSON.stringify({
         model: config.model || "gpt-4o-mini",
         messages,
-        max_tokens: 500,
-        temperature: 0.7,
+        tools: LLM_TOOLS,
+        tool_choice: "auto",
+        max_tokens: 800,
+        temperature: 0.5,
       }),
     });
 
@@ -8281,8 +8995,66 @@ ${taxiPanelData.map((p, i) => `パネル${i}: ${p.title} - ${p.value} (${p.unit}
     }
 
     const data = await response.json();
-    let text = data.choices?.[0]?.message?.content || "応答を取得できませんでした。";
+    const choice = data.choices?.[0];
     
+    if (!choice) {
+      return { text: "応答を取得できませんでした。", focusPanel: -1, fallback: true };
+    }
+    
+    const toolCalls = choice.message?.tool_calls;
+    if (toolCalls && toolCalls.length > 0) {
+      const results = [];
+      let focusPanel = -1;
+      
+      for (const toolCall of toolCalls) {
+        const funcName = toolCall.function?.name;
+        let args = {};
+        try {
+          args = JSON.parse(toolCall.function?.arguments || "{}");
+        } catch (e) {
+          results.push(`ツール引数のパースエラー: ${e.message}`);
+          continue;
+        }
+        
+        if (funcName === "create_panel") {
+          const validation = validateAnalysisSpec(args);
+          if (!validation.valid) {
+            results.push(`無効なパネル仕様: ${validation.errors.join(", ")}`);
+            continue;
+          }
+          const panelResult = createDynamicPanel(args);
+          if (panelResult.success) {
+            const metricLabel = TAXI_METRICS[args.metric]?.label || args.metric;
+            const dimLabel = args.groupBy ? `${TAXI_DIMENSIONS[args.groupBy]?.label}` : "";
+            const dataCount = panelResult.panel?.queryResult?.data?.length || 0;
+            results.push(`${dimLabel}${metricLabel}のパネルを作成しました（${dataCount}件）`);
+          } else {
+            results.push(`パネル作成エラー: ${panelResult.error}`);
+          }
+        } else if (funcName === "focus_panel") {
+          const idx = args.panelIndex;
+          if (idx >= 0 && idx < 4) {
+            focusPanel = idx;
+            results.push(`${taxiPanelData[idx]?.title}パネルをハイライトしました`);
+          }
+        } else if (funcName === "clear_panels") {
+          const clearResult = clearDynamicPanels();
+          results.push(clearResult.message);
+        } else if (funcName === "list_capabilities") {
+          const info = listAvailableAnalyses();
+          results.push(`利用可能な分析:\nメトリック: ${info.metrics.map(m => TAXI_METRICS[m].label).join("、")}\n集計軸: ${info.dimensions.map(d => TAXI_DIMENSIONS[d].label).join("、")}`);
+        }
+      }
+      
+      let textContent = choice.message?.content || "";
+      if (results.length > 0) {
+        textContent = textContent ? `${textContent}\n\n${results.join("\n")}` : results.join("\n");
+      }
+      
+      return { text: textContent || "処理を完了しました。", focusPanel, panelCreated: true };
+    }
+    
+    let text = choice.message?.content || "応答を取得できませんでした。";
     let focusPanel = -1;
     const focusMatch = text.match(/\[FOCUS_PANEL:(\d)\]/);
     if (focusMatch) {
@@ -8635,11 +9407,11 @@ function updateTaxiMicButton() {
 }
 
 const taxiSuggestedQuestions = [
-  "売上は？",
-  "乗車回数は？",
-  "ピーク時間は？",
-  "稼働率は？",
-  "全部見せて",
+  "月別売上を出して",
+  "曜日別乗車回数",
+  "車両別稼働率",
+  "どの分析ができる？",
+  "パネルをクリア",
 ];
 
 function makeTaxiQuestionButtonTexture(text) {

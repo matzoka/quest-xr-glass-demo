@@ -306,6 +306,12 @@ p {
   background: rgba(60, 45, 90, 0.9);
 }
 
+.taxiQuickBtn.taxiClearBtn {
+  border-color: rgba(255, 100, 100, 0.4);
+  background: rgba(60, 30, 40, 0.7);
+  color: #ffaaaa;
+}
+
 /* Modal */
 .modalOverlay {
   position: fixed;
@@ -315,6 +321,9 @@ p {
   justify-content: center;
   background: rgba(0, 0, 0, 0.75);
   z-index: 100;
+}
+.modalOverlay[hidden] {
+  display: none;
 }
 
 .modalContent {
