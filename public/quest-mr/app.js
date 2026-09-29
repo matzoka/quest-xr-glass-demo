@@ -22,7 +22,7 @@ if (TAXI_ALLOWED && taxiAnalyticsButton) {
   taxiAnalyticsButton.removeAttribute("hidden");
 }
 
-const APP_VERSION = "v2026.09.29.13";
+const APP_VERSION = "v2026.09.29.14";
 const DEBUG_TOP_VIEW = new URLSearchParams(window.location.search).has("topDebug");
 const DEBUG_TOP_VIEW_DISTANCE = Number(new URLSearchParams(window.location.search).get("topDebugDist"));
 const DEBUG_BLACK_HOLE_VIEW = new URLSearchParams(window.location.search).has("blackHoleDebug");
@@ -7961,6 +7961,54 @@ const TAXI_VEHICLES = ["車両A", "車両B", "車両C", "車両D", "車両E", "�
 const TAXI_DRIVERS = ["田中", "鈴木", "佐藤", "山田", "高橋", "伊藤", "渡辺", "中村"];
 const TAXI_AREAS = ["新宿", "渋谷", "池袋", "品川", "銀座", "上野", "浅草", "六本木"];
 const TAXI_WEEKDAYS = ["日", "月", "火", "水", "木", "金", "土"];
+// 住所 per 乗車地/降車地: [区市＋町名, 読み, 丁目の最大値(0=丁目なし)]. Real town names only, no 番地.
+const TAXI_AREA_TOWNS = {
+  新宿: [["新宿区西新宿", "にししんじゅく", 8], ["新宿区新宿", "しんじゅく", 7], ["新宿区歌舞伎町", "かぶきちょう", 2], ["新宿区百人町", "ひゃくにんちょう", 4], ["新宿区四谷", "よつや", 4], ["新宿区大久保", "おおくぼ", 3], ["新宿区高田馬場", "たかだのばば", 4]],
+  渋谷: [["渋谷区道玄坂", "どうげんざか", 2], ["渋谷区宇田川町", "うだがわちょう", 0], ["渋谷区神南", "じんなん", 2], ["渋谷区渋谷", "しぶや", 4], ["渋谷区桜丘町", "さくらがおかちょう", 0], ["渋谷区神宮前", "じんぐうまえ", 6], ["渋谷区円山町", "まるやまちょう", 0]],
+  池袋: [["豊島区南池袋", "みなみいけぶくろ", 4], ["豊島区西池袋", "にしいけぶくろ", 5], ["豊島区東池袋", "ひがしいけぶくろ", 5], ["豊島区池袋", "いけぶくろ", 4], ["豊島区目白", "めじろ", 5], ["豊島区上池袋", "かみいけぶくろ", 4]],
+  品川: [["港区港南", "こうなん", 5], ["港区高輪", "たかなわ", 4], ["品川区北品川", "きたしながわ", 6], ["品川区東品川", "ひがししながわ", 5], ["港区芝浦", "しばうら", 4], ["品川区大崎", "おおさき", 5]],
+  銀座: [["中央区銀座", "ぎんざ", 8], ["千代田区有楽町", "ゆうらくちょう", 2], ["中央区築地", "つきじ", 7], ["中央区京橋", "きょうばし", 3], ["中央区日本橋", "にほんばし", 3], ["千代田区丸の内", "まるのうち", 3]],
+  上野: [["台東区上野", "うえの", 7], ["台東区東上野", "ひがしうえの", 6], ["台東区上野公園", "うえのこうえん", 0], ["文京区湯島", "ゆしま", 4], ["台東区上野桜木", "うえのさくらぎ", 2], ["文京区本郷", "ほんごう", 7]],
+  浅草: [["台東区浅草", "あさくさ", 7], ["台東区花川戸", "はなかわど", 2], ["台東区雷門", "かみなりもん", 2], ["台東区西浅草", "にしあさくさ", 3], ["台東区寿", "ことぶき", 4], ["台東区駒形", "こまがた", 2]],
+  六本木: [["港区六本木", "ろっぽんぎ", 7], ["港区赤坂", "あかさか", 9], ["港区西麻布", "にしあざぶ", 4], ["港区麻布十番", "あざぶじゅうばん", 4], ["港区南青山", "みなみあおやま", 7], ["港区元麻布", "もとあざぶ", 3]],
+  // 郊外の降車地（長距離の一部のみ。乗車地の抽選には使わない）
+  調布: [["調布市布田", "ふだ", 6], ["調布市小島町", "こじまちょう", 3], ["調布市国領町", "こくりょうちょう", 8], ["調布市下石原", "しもいしわら", 3]],
+};
+const TAXI_SUBURB_AREA = "調布";
+const TAXI_ALL_AREAS = [...TAXI_AREAS, TAXI_SUBURB_AREA];
+const TAXI_KANJI_NUM = ["", "一", "二", "三", "四", "五", "六", "七", "八", "九"];
+// Homophones heard by speech recognition -> reading (e.g. 札 -> ふだ = 布田)
+const TAXI_HOMOPHONES = { 札: "ふだ" };
+const TAXI_TOWNS = Object.values(TAXI_AREA_TOWNS).flat().map(([t]) => t);
+const TAXI_TOWN_READINGS = Object.fromEntries(Object.values(TAXI_AREA_TOWNS).flat().map(([t, r]) => [t, r]));
+function taxiTownPart(name) {
+  return String(name).replace(/^.+?[区市]/u, "");
+}
+function taxiStripChome(name) {
+  return String(name).replace(/[一二三四五六七八九十]+丁目$/u, "");
+}
+function taxiReadingOf(name) {
+  return TAXI_READINGS[name] || TAXI_TOWN_READINGS[name] || TAXI_TOWN_READINGS[taxiStripChome(name)] || null;
+}
+function taxiAddressFor(townEntry, r) {
+  const [town, , maxChome] = townEntry;
+  if (maxChome > 0 && r < 0.7) return `${town}${TAXI_KANJI_NUM[Math.floor((r / 0.7) * maxChome) + 1]}丁目`;
+  return town;
+}
+// Sample-data fare rule: fare (税抜) = distance(km) × 600円, 税込 = 税抜 × (1 + 10%)
+const TAXI_FARE_PER_KM = 600;
+const TAXI_TAX_RATE = 0.10;
+const TAXI_DISPATCH_FEE = 400; // 迎車料金 (not taxed, added after tax)
+const TAXI_DISPATCH_RATE = 0.25;
+
+// 税抜 = 距離×600, 消費税 = round(税抜×10%), 税込 = 税抜+消費税, 収入 = 税込 + 迎車料金(迎車時400円)
+function taxiFareForDistance(distanceKm, dispatch = false) {
+  const fare = Math.round(distanceKm * TAXI_FARE_PER_KM);
+  const tax = Math.round(fare * TAXI_TAX_RATE);
+  const fareWithTax = fare + tax;
+  const dispatchFee = dispatch ? TAXI_DISPATCH_FEE : 0;
+  return { fare, tax, fareWithTax, dispatchFee, totalFare: fareWithTax + dispatchFee };
+}
 
 function taxiSeededRandom(seed) {
   let s = seed;
@@ -7972,6 +8020,15 @@ function taxiSeededRandom(seed) {
 
 function generateTaxiDataset() {
   const rand = taxiSeededRandom(TAXI_DATASET_SEED);
+  // Separate RNG for minutes so the main rand() sequence (and every other field) is unchanged
+  const minuteRand = taxiSeededRandom(TAXI_DATASET_SEED + 1000);
+  // Another separate RNG for 迎車 (dispatch) flags
+  const dispatchRand = taxiSeededRandom(TAXI_DATASET_SEED + 2000);
+  // Another separate RNG for 町名 (pickupTown / dropoffTown)
+  const townRand = taxiSeededRandom(TAXI_DATASET_SEED + 3000);
+  // More separate RNGs: 丁目 choice, and suburban (調布) dropoffs for some long trips
+  const addrRand = taxiSeededRandom(TAXI_DATASET_SEED + 4000);
+  const suburbRand = taxiSeededRandom(TAXI_DATASET_SEED + 5000);
   const trips = [];
   const today = new Date();
   const startDate = new Date(today);
@@ -7987,37 +8044,122 @@ function generateTaxiDataset() {
     
     for (let t = 0; t < tripsToday; t++) {
       const hour = Math.floor(weightedHourRandom(rand, isWeekend));
+      const minute = Math.min(59, Math.floor(minuteRand() * 60));
       const vehicle = TAXI_VEHICLES[Math.floor(rand() * TAXI_VEHICLES.length)];
       const driver = TAXI_DRIVERS[Math.floor(rand() * TAXI_DRIVERS.length)];
       const pickupArea = TAXI_AREAS[Math.floor(rand() * TAXI_AREAS.length)];
-      const dropoffArea = TAXI_AREAS[Math.floor(rand() * TAXI_AREAS.length)];
+      const centralDropoffArea = TAXI_AREAS[Math.floor(rand() * TAXI_AREAS.length)];
       const distance = Math.round((1 + rand() * 15) * 10) / 10;
-      const baseFare = 500 + distance * 300;
-      const fare = Math.round(baseFare * (0.9 + rand() * 0.3));
+      rand(); // former random fare multiplier: keep the RNG sequence so all other fields stay identical
+      const dispatch = dispatchRand() < TAXI_DISPATCH_RATE;
+      const toSuburb = suburbRand() < 0.1 && distance >= 12;
+      const dropoffArea = toSuburb ? TAXI_SUBURB_AREA : centralDropoffArea;
+      const pickupTowns = TAXI_AREA_TOWNS[pickupArea];
+      const dropoffTowns = TAXI_AREA_TOWNS[dropoffArea];
+      const pickupEntry = pickupTowns[Math.min(pickupTowns.length - 1, Math.floor(townRand() * pickupTowns.length))];
+      const dropoffEntry = dropoffTowns[Math.min(dropoffTowns.length - 1, Math.floor(townRand() * dropoffTowns.length))];
+      const pickupTown = pickupEntry[0];
+      const dropoffTown = dropoffEntry[0];
+      const pickupAddress = taxiAddressFor(pickupEntry, addrRand());
+      const dropoffAddress = taxiAddressFor(dropoffEntry, addrRand());
       const occupiedMinutes = Math.round(distance * 4 + rand() * 10);
       const emptyMinutes = Math.round(rand() * 20 + 5);
-      
-      trips.push({
+
+      // Raw record (same shape an imported real record would have), normalised below
+      trips.push(taxiTripFromRecord({
         id: tripId++,
         date: taxiLocalDateString(d),
-        year: d.getFullYear(),
-        month: d.getMonth() + 1,
-        day: d.getDate(),
-        weekday,
-        dayOfWeek,
-        hour,
+        time: `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`,
         vehicle,
         driver,
         pickupArea,
+        pickupTown,
+        pickupAddress,
         dropoffArea,
+        dropoffTown,
+        dropoffAddress,
         distance,
-        fare,
+        dispatch,
         occupiedMinutes,
         emptyMinutes,
-      });
+      }));
     }
   }
   return trips;
+}
+
+// ---------------------------------------------------------------------------
+// Trip normaliser: builds the analysis record (derived calendar fields, fares,
+// dropoff time) from a raw record. Real imported data (e.g. from a PDF) should be
+// passed through this same function so query_data works unchanged.
+// Raw fields: id, date "YYYY-MM-DD", time "HH:MM" (乗車時刻), vehicle, driver,
+// pickupArea, pickupTown, pickupAddress, dropoffArea, dropoffTown, dropoffAddress,
+// distance (km), dispatch (bool), occupiedMinutes, emptyMinutes,
+// optional fare (税抜) / dropoffTime / dropoffDate if the source provides them.
+// Addresses are kept verbatim (never normalised or completed).
+// ---------------------------------------------------------------------------
+function taxiTripFromRecord(rec) {
+  const [y, mo, da] = String(rec.date).split("-").map(Number);
+  const d = new Date(y, mo - 1, da);
+  const [hh, mm] = String(rec.time || "00:00").split(":").map(Number);
+  const occupiedMinutes = Number(rec.occupiedMinutes) || 0;
+  let dropoffTime = rec.dropoffTime;
+  let dropoffDate = rec.dropoffDate;
+  if (!dropoffTime) {
+    const total = hh * 60 + mm + occupiedMinutes;
+    const dayShift = Math.floor(total / 1440);
+    const m = total % 1440;
+    dropoffTime = `${String(Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`;
+    if (!dropoffDate) {
+      const dd = new Date(d);
+      dd.setDate(dd.getDate() + dayShift);
+      dropoffDate = taxiLocalDateString(dd);
+    }
+  }
+  if (!dropoffDate) dropoffDate = rec.date;
+  const [dh, dm] = dropoffTime.split(":").map(Number);
+  const dispatch = !!rec.dispatch;
+  const computed = taxiFareForDistance(Number(rec.distance) || 0, dispatch);
+  let { fare, tax, fareWithTax, dispatchFee, totalFare } = computed;
+  if (rec.fare !== undefined && rec.fare !== null && rec.fare !== "") {
+    fare = Math.round(Number(rec.fare));
+    tax = Math.round(fare * TAXI_TAX_RATE);
+    fareWithTax = fare + tax;
+    totalFare = fareWithTax + dispatchFee;
+  }
+  return {
+    id: rec.id,
+    date: rec.date,
+    year: d.getFullYear(),
+    month: d.getMonth() + 1,
+    day: d.getDate(),
+    weekday: TAXI_WEEKDAYS[d.getDay()],
+    dayOfWeek: d.getDay(),
+    hour: hh,
+    minute: mm,
+    time: `${String(hh).padStart(2, "0")}:${String(mm).padStart(2, "0")}`,
+    dropoffDate,
+    dropoffTime,
+    dropoffHour: dh,
+    dropoffMinute: dm,
+    vehicle: rec.vehicle,
+    driver: rec.driver,
+    pickupArea: rec.pickupArea ?? "",
+    pickupTown: rec.pickupTown ?? "",
+    pickupAddress: rec.pickupAddress ?? rec.pickupTown ?? "",
+    dropoffArea: rec.dropoffArea ?? "",
+    dropoffTown: rec.dropoffTown ?? "",
+    dropoffAddress: rec.dropoffAddress ?? rec.dropoffTown ?? "",
+    distance: Number(rec.distance) || 0,
+    dispatch,
+    fare,
+    tax,
+    fareWithTax,
+    dispatchFee,
+    totalFare,
+    occupiedMinutes,
+    emptyMinutes: Number(rec.emptyMinutes) || 0,
+  };
 }
 
 function weightedHourRandom(rand, isWeekend) {
@@ -8041,6 +8183,9 @@ console.log(`Generated ${taxiTrips.length} synthetic taxi trips for analytics`);
 // ---------------------------------------------------------------------------
 const TAXI_METRICS = {
   fare: { label: "売上", unit: "円", aggregate: "sum", format: v => `¥${v.toLocaleString()}` },
+  fareWithTax: { label: "売上(税込)", unit: "円", aggregate: "sum", field: "fareWithTax", format: v => `¥${v.toLocaleString()}` },
+  totalFare: { label: "収入(税込+迎車)", unit: "円", aggregate: "sum", field: "totalFare", format: v => `¥${v.toLocaleString()}` },
+  dispatchFee: { label: "迎車料金", unit: "円", aggregate: "sum", field: "dispatchFee", format: v => `¥${v.toLocaleString()}` },
   tripCount: { label: "乗車回数", unit: "件", aggregate: "count", format: v => `${v.toLocaleString()}件` },
   distance: { label: "走行距離", unit: "km", aggregate: "sum", format: v => `${v.toFixed(1)}km` },
   avgFare: { label: "平均運賃", unit: "円", aggregate: "avg", field: "fare", format: v => `¥${Math.round(v).toLocaleString()}` },
@@ -8056,8 +8201,10 @@ const TAXI_DIMENSIONS = {
   hour: { label: "時間帯別", field: "hour", format: v => `${v}時` },
   vehicle: { label: "車両別", field: "vehicle" },
   driver: { label: "ドライバー別", field: "driver" },
-  pickupArea: { label: "乗車エリア別", field: "pickupArea" },
-  dropoffArea: { label: "降車エリア別", field: "dropoffArea" },
+  pickupArea: { label: "乗車地別", field: "pickupArea" },
+  dropoffArea: { label: "降車地別", field: "dropoffArea" },
+  pickupTown: { label: "乗車地町名別", field: "pickupTown" },
+  dropoffTown: { label: "降車地町名別", field: "dropoffTown" },
   date: { label: "日別", field: "date" },
 };
 
@@ -8173,8 +8320,8 @@ function aggregateMetric(rows, metric, metricDef) {
 // ---------------------------------------------------------------------------
 const TAXI_QUERY_MAX_GROUPS = 31;
 const TAXI_QUERY_DEFAULT_GROUPS = 10;
-const TAXI_ADDITIVE_METRICS = ["tripCount", "fare", "distance", "occupiedTime", "emptyTime"];
-const TAXI_PER_TRIP_FIELDS = { fare: "fare", avgFare: "fare", distance: "distance", avgDistance: "distance", occupiedTime: "occupiedMinutes", emptyTime: "emptyMinutes" };
+const TAXI_ADDITIVE_METRICS = ["tripCount", "fare", "fareWithTax", "totalFare", "dispatchFee", "distance", "occupiedTime", "emptyTime"];
+const TAXI_PER_TRIP_FIELDS = { fare: "fare", fareWithTax: "fareWithTax", totalFare: "totalFare", avgFare: "fare", distance: "distance", avgDistance: "distance", occupiedTime: "occupiedMinutes", emptyTime: "emptyMinutes" };
 const TAXI_READINGS = {
   新宿: "しんじゅく", 渋谷: "しぶや", 池袋: "いけぶくろ", 品川: "しながわ",
   銀座: "ぎんざ", 上野: "うえの", 浅草: "あさくさ", 六本木: "ろっぽんぎ",
@@ -8220,15 +8367,17 @@ const TAXI_TERM_SUFFIX_RE = /(区|駅|周辺|エリア|地区|さん|氏|運転�
 function taxiStrongMatch(value, validValues) {
   const v = taxiNormText(value).replace(TAXI_TERM_SUFFIX_RE, "");
   if (!v) return null;
-  const hits = validValues.filter(c => v === taxiNormText(c) || v === TAXI_READINGS[c]);
+  const hv = TAXI_HOMOPHONES[v] || v;
+  const hits = validValues.filter(c => v === taxiNormText(c) || v === taxiNormText(taxiTownPart(c)) || hv === taxiReadingOf(c));
   return hits.length === 1 ? hits[0] : null;
 }
 
 // Suggest the closest valid values (kanji or reading, e.g. "シンジュク区" -> 新宿)
 function taxiSuggest(value, validValues, max = 3) {
-  const v = taxiNormText(value).replace(TAXI_TERM_SUFFIX_RE, "");
+  const v0 = taxiNormText(value).replace(TAXI_TERM_SUFFIX_RE, "");
+  const v = TAXI_HOMOPHONES[v0] || v0;
   const scored = validValues.map(cand => {
-    const forms = [taxiNormText(cand), TAXI_READINGS[cand]].filter(Boolean);
+    const forms = [taxiNormText(cand), taxiNormText(taxiTownPart(cand)), taxiNormText(taxiStripChome(taxiTownPart(cand))), taxiReadingOf(cand)].filter(Boolean);
     let best = Infinity;
     for (const f of forms) {
       let d = taxiEditDistance(v, f) / Math.max(v.length, f.length, 1);
@@ -8237,9 +8386,9 @@ function taxiSuggest(value, validValues, max = 3) {
     }
     return { cand, d: best };
   });
-  scored.sort((a, b) => a.d - b.d);
+  scored.sort((a, b) => a.d - b.d || a.cand.length - b.cand.length);
   // No clear candidate (e.g. "車両Z": every vehicle is equally far) -> let validValues speak
-  if (scored.length > max && scored[0].d === scored[max].d) return [];
+  if (scored.length > max && scored[0].d === scored[max].d && scored[0].d > 0.1) return [];
   return scored.filter(s => s.d <= 0.67).slice(0, max).map(s => s.cand);
 }
 
@@ -8261,7 +8410,12 @@ function taxiCanonicalValue(kind, raw) {
     const c = s.replace(/(さん|氏)$/u, "");
     return TAXI_DRIVERS.includes(c) ? c : null;
   }
-  if (kind === "area") return TAXI_AREAS.includes(s) ? s : null;
+  if (kind === "area") return TAXI_ALL_AREAS.includes(s) ? s : null;
+  if (kind === "town") {
+    if (TAXI_TOWNS.includes(s)) return s;
+    const hits = TAXI_TOWNS.filter(t => taxiTownPart(t) === s || taxiTownPart(t) === taxiTownPart(s) && t.startsWith(s.slice(0, s.length - taxiTownPart(s).length)));
+    return hits.length === 1 ? hits[0] : null;
+  }
   return null;
 }
 
@@ -8372,11 +8526,104 @@ function runTaxiFreeQuery(args = {}) {
     applied.hours = `${hf}:00〜${ht}:00（${ht}時ちょうどは含まない。乗車開始hour=${hs.join(",")}）`;
   }
 
+  // timeFrom / timeTo ("HH:MM", from inclusive, to exclusive, wraps past midnight). Wins over hourFrom/hourTo.
+  const parseHm = (v, allow24) => {
+    const m = /^(\d{1,2}):(\d{2})$/.exec(String(v).normalize("NFKC").trim());
+    if (!m) return null;
+    const h = +m[1], mi = +m[2];
+    if (mi > 59 || h > 24 || (h === 24 && (mi !== 0 || !allow24))) return null;
+    return h * 60 + mi;
+  };
+  let timeRange = null;
+  const hasTimeFrom = args.timeFrom !== undefined && args.timeFrom !== null && args.timeFrom !== "";
+  const hasTimeTo = args.timeTo !== undefined && args.timeTo !== null && args.timeTo !== "";
+  if (hasTimeFrom || hasTimeTo) {
+    const tf = hasTimeFrom ? parseHm(args.timeFrom, false) : 0;
+    const tt = hasTimeTo ? parseHm(args.timeTo, true) : 1440;
+    if (tf === null) errors.push({ field: "timeFrom", value: args.timeFrom, message: "timeFrom は \"HH:MM\"（00:00〜23:59、含む）で指定してください" });
+    if (tt === null) errors.push({ field: "timeTo", value: args.timeTo, message: "timeTo は \"HH:MM\"（00:01〜24:00、含まない）で指定してください" });
+    if (tf !== null && tt !== null) {
+      timeRange = { from: tf, to: tt };
+      const fmt = m => `${String(Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`;
+      applied.time = `${fmt(tf)}〜${fmt(tt)}（${fmt(tt)}ちょうどは含まない${tf >= tt ? "、深夜をまたぐ" : ""}）`;
+      if (hourSet) {
+        applied.hoursIgnored = "timeFrom/timeTo を優先したため hourFrom/hourTo は無視";
+        delete applied.hours;
+      }
+      // hours touched by the time range (for groupBy=hour)
+      hourSet = new Set();
+      const span = tf < tt ? tt - tf : 1440 - tf + tt;
+      for (let k = 0; k < span; k++) hourSet.add(Math.floor(((tf + k) % 1440) / 60));
+    }
+  }
+  const inTimeRange = t => {
+    if (!timeRange) return true;
+    const m = t.hour * 60 + t.minute;
+    return timeRange.from < timeRange.to ? (m >= timeRange.from && m < timeRange.to) : (m >= timeRange.from || m < timeRange.to);
+  };
+
+  // Dropoff time range (降車時刻) "HH:MM", from inclusive, to exclusive, wraps past midnight
+  let dropoffRange = null;
+  const hasDf = args.dropoffTimeFrom !== undefined && args.dropoffTimeFrom !== null && args.dropoffTimeFrom !== "";
+  const hasDt = args.dropoffTimeTo !== undefined && args.dropoffTimeTo !== null && args.dropoffTimeTo !== "";
+  if (hasDf || hasDt) {
+    const df = hasDf ? parseHm(args.dropoffTimeFrom, false) : 0;
+    const dt = hasDt ? parseHm(args.dropoffTimeTo, true) : 1440;
+    if (df === null) errors.push({ field: "dropoffTimeFrom", value: args.dropoffTimeFrom, message: "dropoffTimeFrom は \"HH:MM\"（含む）で指定してください" });
+    if (dt === null) errors.push({ field: "dropoffTimeTo", value: args.dropoffTimeTo, message: "dropoffTimeTo は \"HH:MM\"（含まない、\"24:00\"可）で指定してください" });
+    if (df !== null && dt !== null) {
+      dropoffRange = { from: df, to: dt };
+      const fmt = m => `${String(Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`;
+      applied.dropoffTime = `降車 ${fmt(df)}〜${fmt(dt)}（${fmt(dt)}ちょうどは含まない${df >= dt ? "、深夜をまたぐ" : ""}）`;
+    }
+  }
+  const inDropoffRange = t => {
+    if (!dropoffRange) return true;
+    const m = t.dropoffHour * 60 + t.dropoffMinute;
+    return dropoffRange.from < dropoffRange.to ? (m >= dropoffRange.from && m < dropoffRange.to) : (m >= dropoffRange.from || m < dropoffRange.to);
+  };
+
+  // Address keywords: verbatim substring match (OR within an array) against the raw address
+  const keywordList = v => (v === undefined || v === null || v === "" ? null : (Array.isArray(v) ? v : [v]).map(k => String(k).normalize("NFKC").trim()).filter(Boolean));
+  const pickupKeywords = keywordList(args.pickupKeyword);
+  const dropoffKeywords = keywordList(args.dropoffKeyword);
+  for (const [kws, field, label] of [[pickupKeywords, "pickupAddress", "pickupKeyword"], [dropoffKeywords, "dropoffAddress", "dropoffKeyword"]]) {
+    if (!kws || !kws.length) continue;
+    applied[label] = kws;
+    const addresses = [...new Set(taxiTrips.map(t => t[field]).filter(Boolean))];
+    const otherField = field === "pickupAddress" ? "dropoffAddress" : "pickupAddress";
+    for (const kw of kws) {
+      if (!addresses.some(a => a.normalize("NFKC").includes(kw))) {
+        const otherTrips = taxiTrips.filter(t => String(t[otherField] || "").normalize("NFKC").includes(kw)).length;
+        errors.push({
+          ...(otherTrips ? { foundInOtherSide: { field: otherField === "dropoffAddress" ? "降車地住所" : "乗車地住所", trips: otherTrips } } : {}),
+          field: label,
+          value: kw,
+          message: `「${kw}」を含む住所はデータにありません（0件）`,
+          suggestions: taxiSuggest(kw, addresses, 5),
+          knownAddressesSample: addresses.slice(0, 30),
+        });
+      }
+    }
+  }
+  const matchKw = (kws, addr) => !kws || !kws.length || kws.some(k => String(addr || "").normalize("NFKC").includes(k));
+
   const weekdaySet = taxiFilterValues("weekday", args.weekdays, "weekdays", TAXI_WEEKDAYS, errors, applied);
   const vehicleSet = taxiFilterValues("vehicle", args.vehicles, "vehicles", TAXI_VEHICLES, errors, applied);
   const driverSet = taxiFilterValues("driver", args.drivers, "drivers", TAXI_DRIVERS, errors, applied);
-  const pickupSet = taxiFilterValues("area", args.pickupAreas, "pickupAreas", TAXI_AREAS, errors, applied);
-  const dropoffSet = taxiFilterValues("area", args.dropoffAreas, "dropoffAreas", TAXI_AREAS, errors, applied);
+  const pickupSet = taxiFilterValues("area", args.pickupAreas, "pickupAreas", TAXI_ALL_AREAS, errors, applied);
+  const dropoffSet = taxiFilterValues("area", args.dropoffAreas, "dropoffAreas", TAXI_ALL_AREAS, errors, applied);
+  const pickupTownSet = taxiFilterValues("town", args.pickupTowns, "pickupTowns", TAXI_TOWNS, errors, applied);
+  const dropoffTownSet = taxiFilterValues("town", args.dropoffTowns, "dropoffTowns", TAXI_TOWNS, errors, applied);
+
+  let dispatchFilter = null;
+  if (args.dispatch !== undefined && args.dispatch !== null && args.dispatch !== "") {
+    const dv = String(args.dispatch).normalize("NFKC").trim().toLowerCase();
+    if (["true", "1", "yes", "はい", "あり", "有"].includes(dv)) dispatchFilter = true;
+    else if (["false", "0", "no", "いいえ", "なし", "無"].includes(dv)) dispatchFilter = false;
+    else errors.push({ field: "dispatch", value: args.dispatch, message: "dispatch は true(迎車あり) / false(迎車なし) で指定してください" });
+    if (dispatchFilter !== null) applied.dispatch = dispatchFilter ? "迎車ありのみ" : "迎車なしのみ";
+  }
 
   const ranges = {};
   for (const k of ["distanceMin", "distanceMax", "fareMin", "fareMax"]) {
@@ -8401,11 +8648,17 @@ function runTaxiFreeQuery(args = {}) {
 
   const rows = taxiTrips.filter(t =>
     inCalendar(t) &&
-    (!hourSet || hourSet.has(t.hour)) &&
+    (timeRange ? inTimeRange(t) : (!hourSet || hourSet.has(t.hour))) &&
     (!vehicleSet || vehicleSet.has(t.vehicle)) &&
     (!driverSet || driverSet.has(t.driver)) &&
     (!pickupSet || pickupSet.has(t.pickupArea)) &&
     (!dropoffSet || dropoffSet.has(t.dropoffArea)) &&
+    (dispatchFilter === null || t.dispatch === dispatchFilter) &&
+    (!pickupTownSet || pickupTownSet.has(t.pickupTown)) &&
+    inDropoffRange(t) &&
+    matchKw(pickupKeywords, t.pickupAddress) &&
+    matchKw(dropoffKeywords, t.dropoffAddress) &&
+    (!dropoffTownSet || dropoffTownSet.has(t.dropoffTown)) &&
     (ranges.distanceMin === undefined || t.distance >= ranges.distanceMin) &&
     (ranges.distanceMax === undefined || t.distance <= ranges.distanceMax) &&
     (ranges.fareMin === undefined || t.fare >= ranges.fareMin) &&
@@ -8435,7 +8688,7 @@ function runTaxiFreeQuery(args = {}) {
       if (t[tripField] > max[tripField]) max = t;
       if (t[tripField] < min[tripField]) min = t;
     }
-    const brief = t => ({ value: t[tripField], date: t.date, hour: t.hour, vehicle: t.vehicle, driver: t.driver, pickupArea: t.pickupArea, dropoffArea: t.dropoffArea });
+    const brief = t => ({ value: t[tripField], date: t.date, time: t.time, dropoffTime: t.dropoffTime, vehicle: t.vehicle, driver: t.driver, pickupArea: t.pickupArea, dropoffArea: t.dropoffArea });
     result.perTrip = { field: tripField, average: taxiRound(sum / rows.length, 1), max: brief(max), min: brief(min) };
   }
 
@@ -8448,6 +8701,41 @@ function runTaxiFreeQuery(args = {}) {
     if (s) result.perDay = { days: s.groupCount, average: s.average, max: s.max, min: s.min };
   }
 
+  // Fare summary for every query: 税抜 / 税込 / 収入(税込+迎車) totals, per-trip avg/max/min,
+  // per-day avg/max/min, plus a 迎車あり/なし breakdown
+  if (rows.length) {
+    const fields = ["fare", "fareWithTax", "totalFare"];
+    const byDayFare = new Map(calendarDays.map(d => [d, [0, 0, 0]]));
+    const acc = fields.map(() => ({ total: 0, max: -Infinity, min: Infinity }));
+    const disp = { with: [0, 0, 0, 0, 0], without: [0, 0, 0, 0, 0] }; // trips, fare, fareWithTax, dispatchFee, totalFare
+    for (const t of rows) {
+      const b = byDayFare.get(t.date);
+      fields.forEach((f, i) => {
+        const v = t[f];
+        acc[i].total += v;
+        if (v > acc[i].max) acc[i].max = v;
+        if (v < acc[i].min) acc[i].min = v;
+        if (b) b[i] += v;
+      });
+      const d = t.dispatch ? disp.with : disp.without;
+      d[0]++; d[1] += t.fare; d[2] += t.fareWithTax; d[3] += t.dispatchFee; d[4] += t.totalFare;
+    }
+    const dayStats = i => {
+      const e = taxiStatsOver([...byDayFare.entries()].map(([k, v]) => ({ key: k, value: v[i] })));
+      return e ? { avg: e.average, max: e.max, min: e.min } : null;
+    };
+    const block = i => ({ total: acc[i].total, perTripAvg: taxiRound(acc[i].total / rows.length, 1), perTripMax: acc[i].max, perTripMin: acc[i].min, perDay: dayStats(i) });
+    const dBlock = d => ({ trips: d[0], fare: d[1], fareWithTax: d[2], dispatchFee: d[3], totalFare: d[4] });
+    result.fareSummary = {
+      rule: `税抜=距離×${TAXI_FARE_PER_KM}円, 税込=税抜+消費税${TAXI_TAX_RATE * 100}%, 収入=税込+迎車料金${TAXI_DISPATCH_FEE}円(迎車時のみ・非課税)`,
+      taxExcluded: block(0),
+      taxIncluded: block(1),
+      totalIncome: block(2),
+      dispatchFeeTotal: disp.with[3] + disp.without[3],
+      byDispatch: { 迎車あり: dBlock(disp.with), 迎車なし: dBlock(disp.without) },
+    };
+  }
+
   if (groupBy) {
     const dim = TAXI_DIMENSIONS[groupBy];
     let domain;
@@ -8458,7 +8746,9 @@ function runTaxiFreeQuery(args = {}) {
     else if (groupBy === "vehicle") domain = vehicleSet ? [...vehicleSet] : [...TAXI_VEHICLES];
     else if (groupBy === "driver") domain = driverSet ? [...driverSet] : [...TAXI_DRIVERS];
     else if (groupBy === "pickupArea") domain = pickupSet ? [...pickupSet] : [...TAXI_AREAS];
-    else if (groupBy === "dropoffArea") domain = dropoffSet ? [...dropoffSet] : [...TAXI_AREAS];
+    else if (groupBy === "dropoffArea") domain = dropoffSet ? [...dropoffSet] : [...TAXI_ALL_AREAS];
+    else if (groupBy === "pickupTown") domain = pickupTownSet ? [...pickupTownSet] : (pickupSet ? [...pickupSet].flatMap(a => TAXI_AREA_TOWNS[a].map(x => x[0])) : [...TAXI_TOWNS]);
+    else if (groupBy === "dropoffTown") domain = dropoffTownSet ? [...dropoffTownSet] : (dropoffSet ? [...dropoffSet].flatMap(a => TAXI_AREA_TOWNS[a].map(x => x[0])) : [...TAXI_TOWNS]);
     else domain = [...new Set(rows.map(t => t[dim.field]))];
 
     const buckets = new Map(domain.map(k => [k, []]));
@@ -8736,7 +9026,7 @@ function listAvailableAnalyses() {
       "車両ごとの稼働率比較",
       "時間帯別の売上をグラフで",
       "ドライバー別の走行距離",
-      "エリア別の乗車回数トップ5",
+      "乗車地別の乗車回数トップ5",
     ],
   };
 }
@@ -9208,37 +9498,61 @@ const LLM_TOOLS = [
     type: "function",
     function: {
       name: "query_data",
-      description: "サンプルのタクシー乗車データを自由な条件で集計し、統計値(JSON)を返す。数値を答える前に必ずこれを呼ぶこと。返り値: value=条件全体の集計値, matchedTrips=該当乗車数, perDay=1日あたりの平均/最大日/最小日(加算系メトリック), perTrip=1乗車あたりの平均/最大/最小(売上・距離・時間), groupBy指定時は groupStats(グループ間の平均/最大/最小) と groups(上位N件)。未知の値を指定すると error と suggestions(近い候補) と validValues が返る。",
+      description: "サンプルのタクシー乗車データを自由な条件で集計し、統計値(JSON)を返す。数値を答える前に必ずこれを呼ぶこと。返り値: value=条件全体の集計値, matchedTrips=該当乗車数, perDay=1日あたりの平均/最大日/最小日(加算系メトリック), perTrip=1乗車あたりの平均/最大/最小(売上・距離・時間), groupBy指定時は groupStats(グループ間の平均/最大/最小) と groups(上位N件)。fareSummary には常に税抜(taxExcluded)・税込(taxIncluded)・収入=税込+迎車料金(totalIncome)それぞれの合計/1乗車平均・最高・最低/1日あたり平均・最高日・最低日と、迎車あり/なし別(byDispatch)の件数・金額が入る。未知の値を指定すると error と suggestions(近い候補) と validValues が返る。",
       parameters: {
         type: "object",
         properties: {
           metric: {
             type: "string",
             enum: Object.keys(TAXI_METRICS),
-            description: "tripCount=乗車回数(件), fare=売上(円,合計), distance=走行距離(km,合計), avgFare=平均運賃(円/回), avgDistance=平均距離(km/回), occupiedTime=実車時間(分), emptyTime=空車時間(分), utilizationRate=稼働率(%)=実車/(実車+空車)",
+            description: "tripCount=乗車回数(件), fare=売上(円,税抜,合計), fareWithTax=売上(円,税込10%,合計), totalFare=収入(円,税込+迎車料金,合計), dispatchFee=迎車料金(円,合計), distance=走行距離(km,合計), avgFare=平均運賃(円/回,税抜), avgDistance=平均距離(km/回), occupiedTime=実車時間(分), emptyTime=空車時間(分), utilizationRate=稼働率(%)=実車/(実車+空車)",
           },
           dateFrom: { type: "string", description: "開始日 YYYY-MM-DD（この日を含む）" },
           dateTo: { type: "string", description: "終了日 YYYY-MM-DD（この日を含む）" },
           hourFrom: { type: "integer", description: "乗車開始時刻の下限 0-23（含む）。例:「15時から18時まで」→ hourFrom=15, hourTo=18（15:00〜17:59）" },
           hourTo: { type: "integer", description: "乗車開始時刻の上限 1-24（含まない）。hourFrom>hourTo なら深夜をまたぐ（例 22→2）" },
+          timeFrom: { type: "string", description: "分単位の開始時刻 \"HH:MM\"（含む）。例:「15時半から17時まで」→ timeFrom=\"15:30\", timeTo=\"17:00\"。分の指定があるときは hourFrom/hourTo ではなくこちらを使う（両方あれば time が優先）" },
+          timeTo: { type: "string", description: "分単位の終了時刻 \"HH:MM\"（含まない、\"24:00\"可）。timeFrom>timeTo なら深夜をまたぐ" },
           weekdays: { type: "array", items: { type: "string", enum: TAXI_WEEKDAYS }, description: "曜日（日,月,火,水,木,金,土）。例: 日曜日→[\"日\"], 週末→[\"土\",\"日\"]" },
-          vehicles: { type: "array", items: { type: "string" }, description: `車両: ${TAXI_VEHICLES.join(",")}。車両・ドライバー・エリアはユーザーが言った表記をそのまま渡す（読み替えはツール側で行い、corrections や suggestions を返す）` },
+          vehicles: { type: "array", items: { type: "string" }, description: `車両: ${TAXI_VEHICLES.join(",")}。車両・ドライバー・乗車地・降車地・町名はユーザーが言った表記をそのまま渡す（読み替えはツール側で行い、corrections や suggestions を返す）` },
           drivers: { type: "array", items: { type: "string" }, description: `ドライバー: ${TAXI_DRIVERS.join(",")}` },
-          pickupAreas: { type: "array", items: { type: "string" }, description: `乗車エリア: ${TAXI_AREAS.join(",")}` },
-          dropoffAreas: { type: "array", items: { type: "string" }, description: `降車エリア: ${TAXI_AREAS.join(",")}` },
+          pickupAreas: { type: "array", items: { type: "string" }, description: `乗車地（pickupArea）: ${TAXI_AREAS.join(",")}` },
+          dropoffAreas: { type: "array", items: { type: "string" }, description: `降車地（dropoffArea）: ${TAXI_ALL_AREAS.join(",")}` },
+          pickupTowns: { type: "array", items: { type: "string" }, description: "乗車地の町名（区市＋町名、丁目なし。区市は省略可、例: \"西新宿\" → 新宿区西新宿）。町名だけ言われて乗車/降車の指定がなければ乗車地として扱う。丁目まで指定されたら pickupKeyword を使う" },
+          dropoffTowns: { type: "array", items: { type: "string" }, description: "降車地の町名（区市＋町名、丁目なし。区市は省略可）" },
+          pickupKeyword: { type: "array", items: { type: "string" }, description: "乗車住所のキーワード（住所文字列への部分一致、配列はOR）。例:「調布市下石原三丁目から乗った回数」→ [\"調布市下石原三丁目\"]。0件なら error と似た住所の suggestions を返す" },
+          dropoffKeyword: { type: "array", items: { type: "string" }, description: "降車住所のキーワード（部分一致、配列はOR）。例:「新宿区西新宿への降車回数」→ [\"新宿区西新宿\"]" },
+          dropoffTimeFrom: { type: "string", description: "降車時刻の開始 \"HH:MM\"（含む）。例:「22時以降に降車」→ \"22:00\"" },
+          dropoffTimeTo: { type: "string", description: "降車時刻の終了 \"HH:MM\"（含まない、\"24:00\"可）。From>To なら深夜をまたぐ" },
           distanceMin: { type: "number", description: "1乗車の距離(km)の下限（含む）" },
           distanceMax: { type: "number", description: "1乗車の距離(km)の上限（含む）" },
-          fareMin: { type: "number", description: "1乗車の運賃(円)の下限（含む）" },
-          fareMax: { type: "number", description: "1乗車の運賃(円)の上限（含む）" },
+          dispatch: { type: "boolean", description: "迎車の有無で絞り込む（true=迎車ありのみ, false=迎車なしのみ, 省略=両方）。「芸者」「げいしゃ」は音声認識の誤りで迎車のこと" },
+          fareMin: { type: "number", description: "1乗車の運賃(円,税抜)の下限（含む）" },
+          fareMax: { type: "number", description: "1乗車の運賃(円,税抜)の上限（含む）" },
           groupBy: {
             type: "string",
             enum: Object.keys(TAXI_DIMENSIONS),
-            description: "集計軸（任意）: date=日別, month=月別, weekday=曜日別, hour=時間帯別, vehicle=車両別, driver=ドライバー別, pickupArea=乗車エリア別, dropoffArea=降車エリア別",
+            description: "集計軸（任意）: date=日別, month=月別, weekday=曜日別, hour=時間帯別, vehicle=車両別, driver=ドライバー別, pickupArea=乗車地別, dropoffArea=降車地別, pickupTown=乗車地町名別, dropoffTown=降車地町名別",
           },
           sort: { type: "string", enum: ["desc", "asc", "key"], description: "groups の並び順（desc=値の大きい順, asc=小さい順, key=軸の順）" },
           limit: { type: "integer", description: `groups に返す件数（既定${TAXI_QUERY_DEFAULT_GROUPS}, 最大${TAXI_QUERY_MAX_GROUPS}）` },
         },
         required: ["metric"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "calc_fare",
+      description: `距離(km)から運賃を計算する（サンプルデータの前提: 税抜=距離×${TAXI_FARE_PER_KM}円、税込=税抜+消費税${TAXI_TAX_RATE * 100}%、迎車なら非課税の迎車料金${TAXI_DISPATCH_FEE}円を加算）。「10キロ走ったらいくら？」「10キロで迎車ありだと？」などに使う。`,
+      parameters: {
+        type: "object",
+        properties: {
+          distanceKm: { type: "number", description: "距離(km)" },
+          dispatch: { type: "boolean", description: "迎車あり(true)なら迎車料金を加算。省略時は false" },
+        },
+        required: ["distanceKm"],
       },
     },
   },
@@ -9258,7 +9572,7 @@ const LLM_TOOLS = [
           groupBy: {
             type: "string",
             enum: [...Object.keys(TAXI_DIMENSIONS), ""],
-            description: "Dimension to group by: month (月別), weekday (曜日別), hour (時間帯別), vehicle (車両別), driver (ドライバー別), pickupArea (乗車エリア別), dropoffArea (降車エリア別). Empty string for total/KPI view.",
+            description: "Dimension to group by: month (月別), weekday (曜日別), hour (時間帯別), vehicle (車両別), driver (ドライバー別), pickupArea (乗車地別), dropoffArea (降車地別). Empty string for total/KPI view.",
           },
           chartType: {
             type: "string",
@@ -9318,7 +9632,9 @@ const LLM_TOOLS = [
   },
 ];
 
-const TAXI_LLM_MAX_ROUNDS = 4;
+const TAXI_LLM_MAX_ROUNDS = 5;
+const TAXI_LLM_MAX_TOKENS = 1600;
+const TAXI_LLM_RETRY_MAX_TOKENS = 3200;
 
 function taxiCompactToolJson(obj) {
   let s = JSON.stringify(obj);
@@ -9329,6 +9645,12 @@ function taxiCompactToolJson(obj) {
 function executeTaxiToolCall(funcName, args, state) {
   if (funcName === "query_data") {
     return runTaxiFreeQuery(args);
+  }
+  if (funcName === "calc_fare") {
+    const km = Number(args.distanceKm);
+    if (!Number.isFinite(km) || km < 0) return { ok: false, error: "distanceKm は0以上の数値で指定してください" };
+    const dispatch = args.dispatch === true || String(args.dispatch).toLowerCase() === "true";
+    return { distanceKm: km, dispatch, ...taxiFareForDistance(km, dispatch), rule: `税抜=距離×${TAXI_FARE_PER_KM}円, 消費税${TAXI_TAX_RATE * 100}%, 迎車料金${TAXI_DISPATCH_FEE}円(非課税・迎車時のみ), totalFare=税込+迎車料金` };
   }
   if (funcName === "create_panel") {
     const validation = validateAnalysisSpec(args);
@@ -9373,12 +9695,18 @@ async function callLlmBackend(userMessage, config) {
 サンプルデータセット情報（合成データ）:
 - 期間: 過去${TAXI_MONTHS}ヶ月（${dataRange}、今日=${taxiLocalDateString(new Date())}）
 - 総トリップ数: ${taxiTrips.length.toLocaleString()}件
+- 運賃の前提: 運賃（税抜）＝距離(km)×${TAXI_FARE_PER_KM}円（初乗り・割増なし）。税込額＝税抜に消費税${TAXI_TAX_RATE * 100}%を加えた額（1乗車ごとに円未満四捨五入）。例: 10km → 6,000円（税込6,600円）。fare/売上は税抜、fareWithTax は税込。
+- 迎車（配車での迎え）: 約25%の乗車が迎車。迎車料金${TAXI_DISPATCH_FEE}円は非課税で税込額の後に加算。収入(totalFare)＝税込運賃＋迎車料金。例: 10km・迎車あり → 6,000円＋消費税600円＋迎車料金400円＝7,000円。query_data の dispatch で迎車あり/なしを絞り込める。
+- 音声認識では「迎車（げいしゃ）」が「芸者」と誤認識されやすい。「芸者」「げいしゃ」「ゲイシャ」は迎車として扱い、「もしかして迎車のことですか？」と確認してから迎車として答える。
 - 有効な値の一覧（これ以外の値はデータに存在しない）:
   - 車両: ${TAXI_VEHICLES.join("、")}
   - ドライバー: ${TAXI_DRIVERS.join("、")}
-  - エリア（乗車/降車）: ${TAXI_AREAS.join("、")}
+  - 乗車地: ${TAXI_AREAS.join("、")}（降車地は加えて ${TAXI_SUBURB_AREA}）
+  - 町名（乗車地/降車地の住所の町名部分。住所には丁目が付く場合あり。乗車地: 町名）: ${Object.entries(TAXI_AREA_TOWNS).map(([a, ts]) => `${a}: ${ts.map(x => taxiTownPart(x[0])).join("・")}`).join(" / ")}
+  - 町名の読み注意: 布田＝ふだ（「札」「ふだ」「フダ」と聞こえたら「もしかして布田（ふだ）のことですか？」と確認してから布田として答える）
   - 曜日: ${TAXI_WEEKDAYS.join("、")}
-  - 時刻: 0〜23時（乗車開始時刻）
+  - 時刻: 00:00〜23:59（乗車時刻 time="HH:MM"、降車時刻 dropoffTime="HH:MM"＝乗車時刻＋実車時間、日付をまたぐ場合あり）
+  - 住所: pickupAddress / dropoffAddress は元データの文字列そのまま（丁目を含む場合や町名が無い場合もある。補完・正規化しない）。住所の質問は pickupKeyword / dropoffKeyword（部分一致）を使う
 
 利用可能なメトリック: ${Object.entries(TAXI_METRICS).map(([k, v]) => `${k}(${v.label})`).join(", ")}
 利用可能な集計軸: ${Object.entries(TAXI_DIMENSIONS).map(([k, v]) => `${k}(${v.label})`).join(", ")}
@@ -9394,11 +9722,12 @@ ${taxiPanelData.map((p, i) => `${i}: ${p.title} - ${p.value} (${p.unit})`).join(
 ルール:
 1. 数値の質問（売上・乗車回数・平均・最高・最低・比較など）は必ず query_data を呼び、その結果の数値だけを使って答える。数値は絶対に自分で生成・推測しない。
 2. 「平均」「最高」「最低」で単位が曖昧なときは、乗車回数・売上なら1日あたり（perDay）、運賃・距離なら1乗車あたり（perTrip）を基本にし、どちらの意味か一言添える。最高/最低の日付やグループ名も添える。
-3. 条件（期間・曜日・時間帯・車両・ドライバー・エリア・距離・運賃）は query_data の引数で指定する。「15時から18時まで」は hourFrom=15, hourTo=18。
-4. 音声認識の聞き間違い・誤字・存在しない値（例: 一覧にないエリア名/ドライバー名/車両名、25時などありえない時刻、似た音の名前）に見えるときは、有効な値の一覧から最も近い候補を選び「もしかして〇〇のことですか？」と提案する。query_data が error と suggestions を返した場合も同様にする。ユーザーの言葉が有効な値と完全に一致しないとき（カタカナ・ひらがな表記、「新宿区」「新宿駅」のような付け足し、似た音の別名など）も、黙って読み替えずに必ず「もしかして〇〇のことですか？」と一言添える。候補が1つに絞れる場合は、その候補で query_data を実行して「〇〇であれば…です」と数値も添える。query_data の filters.corrections に読み替えがあれば、回答の最初に必ず「もしかして〇〇のことですか？」と書く。ありえない時刻（25時など）を自分で別の時刻に読み替えた場合も「もしかして〇時のことですか？」と確認する。
+3. 条件（期間・曜日・時間帯・車両・ドライバー・乗車地・降車地・住所・距離・運賃）は query_data の引数で指定する。「15時から18時まで」は hourFrom=15, hourTo=18。分を含む指定（「15時半から17時まで」「15時30分から17時まで」）は timeFrom="15:30", timeTo="17:00"（開始を含み終了を含まない）。時刻指定は乗車時刻が基本、「降車した」「降りた」なら dropoffTimeFrom/dropoffTimeTo（例:「22時以降に降車」→ dropoffTimeFrom="22:00"、「22時から23時の間に降車」→ "22:00"〜"23:00"）。住所は「調布市下石原三丁目から乗った回数」→ pickupKeyword=["調布市下石原三丁目"]、「新宿区西新宿への降車回数」→ dropoffKeyword=["新宿区西新宿"]。住所キーワードが0件ならデータに無いことを伝え、suggestions があれば「もしかして〇〇のことですか？」と聞く。
+4. 音声認識の聞き間違い・誤字・存在しない値（例: 一覧にない乗車地・降車地名/町名/ドライバー名/車両名、25時などありえない時刻、似た音の名前）に見えるときは、有効な値の一覧から最も近い候補を選び「もしかして〇〇のことですか？」と提案する。query_data が error と suggestions を返した場合も同様にする。ユーザーの言葉が有効な値と完全に一致しないとき（カタカナ・ひらがな表記、「新宿区」「新宿駅」のような付け足し、似た音の別名など）も、黙って読み替えずに必ず「もしかして〇〇のことですか？」と一言添える。ただし区・市の省略（「西新宿」→新宿区西新宿）や丁目の省略は聞き間違いではないので、もしかしてを付けずにそのまま答える。候補が1つに絞れる場合は、その候補で query_data を実行して「〇〇であれば…です」と数値も添える。query_data の filters.corrections に読み替えがあれば、回答の最初に必ず「もしかして〇〇のことですか？」と書く。ありえない時刻（25時など）を自分で別の時刻に読み替えた場合も「もしかして〇時のことですか？」と確認する。
 5. パネル表示を頼まれたら create_panel、固定パネルについての質問は focus_panel、分析の一覧は list_capabilities、パネル削除は clear_panels を使う。
-6. 回答は自然な日本語で簡潔に（2〜4文程度）。表・Markdown（**など）・ツールの内部名（perDay, groupStats など）は使わない。
-7. 回答の最後に、これはサンプルデータであることを必ず一言添える（例:「※サンプルデータです」）。`;
+6. 回答は自然な日本語で簡潔に（2〜4文程度）。表・Markdown（**など）・ツールの内部名や英語のキー名（perDay, groupStats, fareSummary など）は書かない。金額・件数はツールの数値をそのまま3桁カンマ区切りで書き（例: 101,757,180円）、万・億への換算はしない。
+7. 運賃・売上を答えるときは税抜と税込の両方を「6,000円（消費税込みで6,600円）」の形で示す（query_data の fareSummary を使う）。距離からの運賃計算は calc_fare を使う。売上の質問では通常、運賃（税抜/税込）を答え、迎車料金を含む収入や「迎車を除くと〜」は fareSummary.byDispatch / totalIncome を使って必要に応じて添える。
+8. 回答の最後に、これはサンプルデータであることを必ず一言添える（例:「※サンプルデータです」）。`;
 
   const messages = [
     { role: "system", content: systemPrompt },
@@ -9410,7 +9739,7 @@ ${taxiPanelData.map((p, i) => `${i}: ${p.title} - ${p.value} (${p.unit})`).join(
     messages.push({ role: "user", content: userMessage });
   }
 
-  const state = { focusPanel: -1, panelCreated: false, toolNotes: [] };
+  const state = { focusPanel: -1, panelCreated: false, toolNotes: [], emptyRetries: 0 };
 
   try {
     for (let round = 0; round < TAXI_LLM_MAX_ROUNDS; round++) {
@@ -9429,7 +9758,7 @@ ${taxiPanelData.map((p, i) => `${i}: ${p.title} - ${p.value} (${p.unit})`).join(
           messages,
           tools: LLM_TOOLS,
           tool_choice: finalRound ? "none" : "auto",
-          max_tokens: 1200,
+          max_tokens: state.emptyRetries > 0 ? TAXI_LLM_RETRY_MAX_TOKENS : TAXI_LLM_MAX_TOKENS,
           temperature: 0.3,
         }),
       });
@@ -9465,6 +9794,11 @@ ${taxiPanelData.map((p, i) => `${i}: ${p.title} - ${p.value} (${p.unit})`).join(
       }
 
       let text = (msg.content || "").trim();
+      // Reasoning models sometimes return an empty message (token budget spent on thinking): retry once with a larger budget
+      if (!text && !finalRound && state.emptyRetries < 1) {
+        state.emptyRetries++;
+        continue;
+      }
       let focusPanel = state.focusPanel;
       const focusMatch = text.match(/\[FOCUS_PANEL:(\d)\]/);
       if (focusMatch) {
