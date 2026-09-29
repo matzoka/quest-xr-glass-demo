@@ -22,7 +22,7 @@ if (TAXI_ALLOWED && taxiAnalyticsButton) {
   taxiAnalyticsButton.removeAttribute("hidden");
 }
 
-const APP_VERSION = "v2026.09.29.07";
+const APP_VERSION = "v2026.09.29.06";
 const DEBUG_TOP_VIEW = new URLSearchParams(window.location.search).has("topDebug");
 const DEBUG_TOP_VIEW_DISTANCE = Number(new URLSearchParams(window.location.search).get("topDebugDist"));
 const DEBUG_BLACK_HOLE_VIEW = new URLSearchParams(window.location.search).has("blackHoleDebug");
@@ -8651,28 +8651,12 @@ const taxiGeneralResponses = {
   sampleDataNote: "※ これらはすべてサンプルデータです。実際のデータ連携には別途設定が必要です。",
 };
 
-// OpenCode endpoints are relayed through the same-origin Worker route /api/llm
-// (opencode.ai sends no CORS headers). The Worker may hold OPENCODE_API_KEY,
-// so the API key is optional for these endpoints.
-const TAXI_LLM_RELAY_PATH = "/api/llm";
-const taxiLlmSessionId = (typeof crypto !== "undefined" && crypto.randomUUID)
-  ? crypto.randomUUID()
-  : `taxi-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-
-function isOpencodeEndpoint(endpoint) {
-  try {
-    return new URL(endpoint).hostname === "opencode.ai";
-  } catch (e) {
-    return false;
-  }
-}
-
 function getTaxiLlmConfig() {
   try {
     const stored = localStorage.getItem(TAXI_CONVERSATION_STORAGE_KEY);
     if (stored) {
       const config = JSON.parse(stored);
-      if (config.endpoint && (config.apiKey || isOpencodeEndpoint(config.endpoint))) return config;
+      if (config.endpoint && config.apiKey) return config;
     }
   } catch (e) {
     console.warn("Failed to load LLM config:", e);
@@ -9005,17 +8989,12 @@ ${taxiPanelData.map((p, i) => `${i}: ${p.title} - ${p.value} (${p.unit})`).join(
   ];
 
   try {
-    const useRelay = isOpencodeEndpoint(config.endpoint);
-    const requestHeaders = { "Content-Type": "application/json" };
-    if (config.apiKey) requestHeaders["Authorization"] = `Bearer ${config.apiKey}`;
-    if (useRelay) {
-      requestHeaders["X-LLM-Endpoint"] = config.endpoint;
-      requestHeaders["X-Opencode-Session"] = taxiLlmSessionId;
-    }
-    const response = await fetch(useRelay ? TAXI_LLM_RELAY_PATH : config.endpoint, {
+    const response = await fetch(config.endpoint, {
       method: "POST",
-      credentials: "same-origin",
-      headers: requestHeaders,
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${config.apiKey}`,
+      },
       body: JSON.stringify({
         model: config.model || "gpt-4o-mini",
         messages,
@@ -9628,7 +9607,7 @@ llmSaveBtnEl?.addEventListener("click", () => {
   const apiKey = llmApiKeyEl?.value.trim();
   const model = llmModelEl?.value.trim();
   
-  if (!endpoint || (!apiKey && !isOpencodeEndpoint(endpoint))) {
+  if (!endpoint || !apiKey) {
     if (llmStatusEl) llmStatusEl.textContent = "エンドポイントとAPIキーは必須です。";
     return;
   }
