@@ -131,7 +131,17 @@ function isTaxiRoomPath(pathname) {
  * - Blocks non-https, self host / workers.dev, localhost, IP literals
  */
 const LLM_RELAY_PATH = "/api/llm";
-const LLM_MAX_BODY_BYTES = 1024 * 1024; // room for ~12 s of 16 kHz WAV (base64) for voice transcription
+const LLM_MAX_BODY_BYTES = 1024 * 1024; // default for any endpoint
+// v22: voice transcription records up to 30 s: 16 kHz 16-bit mono WAV = 960,044 B -> base64 1,280,060 B
+// + JSON. Only the opencode.ai upstream gets the larger limit (2 MB, ~46 s of audio).
+const LLM_MAX_BODY_BYTES_OPENCODE = 2 * 1024 * 1024;
+function llmBodyLimitFor(url) {
+  try {
+    const host = new URL(url).hostname.toLowerCase();
+    if (host === "opencode.ai" || host.endsWith(".opencode.ai")) return LLM_MAX_BODY_BYTES_OPENCODE;
+  } catch (e) { /* fall through */ }
+  return LLM_MAX_BODY_BYTES;
+}
 const LLM_TIMEOUT_MS = 60000;
 const LLM_USER_AGENT = "quest-xr-taxi-assistant/1.0";
 
@@ -190,10 +200,11 @@ async function handleLlmRelay(request, env, taxiAllowed, selfHost) {
     return jsonResponse(400, { error: { message: "Missing API key: set it in the settings (Authorization: Bearer <key>)" } });
   }
 
+  const bodyLimit = llmBodyLimitFor(resolved.url);
   const declared = parseInt(request.headers.get("Content-Length") || "0", 10);
-  if (declared > LLM_MAX_BODY_BYTES) return jsonResponse(413, { error: { message: "Payload too large" } });
+  if (declared > bodyLimit) return jsonResponse(413, { error: { message: "Payload too large" } });
   const body = await request.arrayBuffer();
-  if (body.byteLength > LLM_MAX_BODY_BYTES) return jsonResponse(413, { error: { message: "Payload too large" } });
+  if (body.byteLength > bodyLimit) return jsonResponse(413, { error: { message: "Payload too large" } });
   if (body.byteLength === 0) return jsonResponse(400, { error: { message: "Empty body" } });
 
   const session = (request.headers.get("X-Opencode-Session") || "").slice(0, 128) || crypto.randomUUID();

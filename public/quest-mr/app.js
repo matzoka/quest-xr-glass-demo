@@ -22,7 +22,7 @@ if (TAXI_ALLOWED && taxiAnalyticsButton) {
   taxiAnalyticsButton.removeAttribute("hidden");
 }
 
-const APP_VERSION = "v2026.09.29.21";
+const APP_VERSION = "v2026.09.29.22";
 const DEBUG_TOP_VIEW = new URLSearchParams(window.location.search).has("topDebug");
 const DEBUG_TOP_VIEW_DISTANCE = Number(new URLSearchParams(window.location.search).get("topDebugDist"));
 const DEBUG_BLACK_HOLE_VIEW = new URLSearchParams(window.location.search).has("blackHoleDebug");
@@ -9420,9 +9420,9 @@ let taxiVoiceBusy = false; // recorded audio is being transcribed
 let taxiWebSpeechUnusable = false; // Web Speech exists but failed (network/service) -> use recording
 let taxiRecorder = null;
 let taxiLastVoiceToggleAt = -1e9;
-const TAXI_STT_MAX_SEC = 12;
+const TAXI_STT_MAX_SEC = 30; // v22 (was 12)
 const TAXI_VAD_RMS = 0.012;
-const TAXI_VAD_SILENCE_MS = 1400;
+const TAXI_VAD_SILENCE_MS = 3000; // v22 (was 1400)
 const TAXI_VAD_NO_SPEECH_SEC = 7;
 const TAXI_MIC_PERMISSION_TIMEOUT_MS = 10000;
 
@@ -9834,6 +9834,27 @@ const LLM_TOOLS = [
 ];
 
 const TAXI_LLM_MAX_ROUNDS = 5;
+
+// v22: does the AI reply say a panel was made/shown?
+function taxiReplyClaimsPanel(text) {
+  return /パネル[^。\n]{0,14}(作成|作り|表示し|追加し|出し|用意し)|(作成|表示|追加)し(ました|た)[^。\n]{0,8}パネル/.test(text || "");
+}
+
+// v22: last resort when the AI still claims a panel without creating one: build it locally
+// from the request (same keyword parser as the offline mode); otherwise say it was not made.
+function taxiEnsureClaimedPanel(text, userMessage, state) {
+  if (state.panelCreated || !taxiReplyClaimsPanel(text)) return text;
+  const intent = extractAnalysisIntent(userMessage);
+  if (intent.type === "create_panel") {
+    const result = createDynamicPanel(intent.spec);
+    if (result.success) {
+      state.panelCreated = true;
+      console.log("[taxi-ai] tool", "create_panel(local-fallback)", JSON.stringify(intent.spec), { ok: true });
+      return text;
+    }
+  }
+  return `${text}\n（※パネルは作成できませんでした。もう一度「〇〇別の△△をパネルにして」のように依頼してください）`;
+}
 const TAXI_LLM_MAX_TOKENS = 1600;
 const TAXI_LLM_RETRY_MAX_TOKENS = 3200;
 
@@ -10108,7 +10129,7 @@ ${taxiPanelData.map((p, i) => `${i}: ${p.title} - ${p.value} (${p.unit})`).join(
 2. 「平均」「最高」「最低」で単位が曖昧なときは、乗車回数・売上なら1日あたり（perDay）、運賃・距離なら1乗車あたり（perTrip）を基本にし、どちらの意味か一言添える。最高/最低の日付やグループ名も添える。
 3. 条件（期間・曜日・時間帯・車両・ドライバー・乗車地・降車地・住所・距離・運賃）は query_data の引数で指定する。「15時から18時まで」は hourFrom=15, hourTo=18。分を含む指定（「15時半から17時まで」「15時30分から17時まで」）は timeFrom="15:30", timeTo="17:00"（開始を含み終了を含まない）。時刻指定は乗車時刻が基本、「降車した」「降りた」なら dropoffTimeFrom/dropoffTimeTo（例:「22時以降に降車」→ dropoffTimeFrom="22:00"、「22時から23時の間に降車」→ "22:00"〜"23:00"）。住所は「調布市下石原三丁目から乗った回数」→ pickupKeyword=["調布市下石原三丁目"]、「府中市白糸台への降車回数」→ dropoffKeyword=["府中市白糸台"]。住所キーワードが0件ならデータに無いことを伝え、suggestions があれば「もしかして〇〇のことですか？」と聞く。
 4. 音声認識の聞き間違い・誤字・存在しない値（例: 一覧にない乗車地・降車地名/町名/ドライバー名/車両名、25時などありえない時刻、似た音の名前）に見えるときは、有効な値の一覧から最も近い候補を選び「もしかして〇〇のことですか？」と提案する。query_data が error と suggestions を返した場合も同様にする。ユーザーの言葉が有効な値と完全に一致しないとき（カタカナ・ひらがな表記、「国領駅」「仙川駅」のような付け足し、似た音の別名など）も、黙って読み替えずに必ず「もしかして〇〇のことですか？」と一言添える。ただし市の省略（「布田」→調布市布田、「白糸台」→府中市白糸台）や丁目の省略は聞き間違いではないので、もしかしてを付けずにそのまま答える。候補が1つに絞れる場合は、その候補で query_data を実行して「〇〇であれば…です」と数値も添える。query_data の filters.corrections に読み替えがあれば、回答の最初に必ず「もしかして〇〇のことですか？」と書く。ありえない時刻（25時など）を自分で別の時刻に読み替えた場合も「もしかして〇時のことですか？」と確認する。
-5. パネル表示を頼まれたら create_panel、固定パネルについての質問は focus_panel、分析の一覧は list_capabilities、パネル削除は clear_panels を使う。
+5. パネル表示を頼まれたら create_panel、固定パネルについての質問は focus_panel、分析の一覧は list_capabilities、パネル削除は clear_panels を使う。パネルの依頼には毎回必ず create_panel を呼ぶ（会話履歴に「パネルを作成しました」とあっても、それは過去の依頼の結果であり、今回のパネルはまだ存在しない）。create_panel を呼ばずに「パネルを作成しました」と書いてはいけない。
 6. 回答は自然な日本語で簡潔に（2〜4文程度）。表・Markdown（**など）・ツールの内部名や英語のキー名（perDay, groupStats, fareSummary など）は書かない。金額・件数はツールの数値をそのまま3桁カンマ区切りで書き（例: 101,757,180円）、万・億への換算はしない。
 7. 運賃・売上を答えるときは税抜と税込の両方を「6,000円（消費税込みで6,600円）」の形で示す（query_data の fareSummary を使う）。距離からの運賃計算は calc_fare を使う。売上の質問では通常、運賃（税抜/税込）を答え、迎車料金を含む収入や「迎車を除くと〜」は fareSummary.byDispatch / totalIncome を使って必要に応じて添える。
 8. 回答の最後に、これはサンプルデータであることを必ず一言添える（例:「※サンプルデータです」）。`;
@@ -10123,7 +10144,7 @@ ${taxiPanelData.map((p, i) => `${i}: ${p.title} - ${p.value} (${p.unit})`).join(
     messages.push({ role: "user", content: userMessage });
   }
 
-  const state = { focusPanel: -1, panelCreated: false, toolNotes: [], emptyRetries: 0 };
+  const state = { focusPanel: -1, panelCreated: false, toolNotes: [], emptyRetries: 0, panelNudged: false };
   const mishearings = taxiDetectMishearings(userMessage);
   if (mishearings.length) {
     messages.push({
@@ -10189,10 +10210,20 @@ ${taxiPanelData.map((p, i) => `${i}: ${p.title} - ${p.value} (${p.unit})`).join(
           text = `もしかして${h.meant}のことですか？（「${h.heard}」と聞こえました）\n${text}`;
         }
       }
+      // v22: the model often copies earlier "パネルを作成しました" replies from the history without
+      // calling create_panel, so the 2nd+ panel never appeared. Nudge it once to really call the tool.
+      if (!state.panelCreated && !state.panelNudged && !finalRound && taxiReplyClaimsPanel(text)) {
+        state.panelNudged = true;
+        messages.push({ role: "assistant", content: text });
+        messages.push({ role: "user", content: "（自動チェック）今回はまだ create_panel ツールが呼ばれていないため、パネルは作成されていません。今回の依頼内容に合うパネルを今すぐ create_panel で作成し、その結果に基づいて短く回答してください。" });
+        continue;
+      }
       if (!text) text = state.toolNotes.length ? state.toolNotes.join("\n") : "応答を取得できませんでした。";
+      text = taxiEnsureClaimedPanel(text, userMessage, state);
       return { text, focusPanel, panelCreated: state.panelCreated };
     }
-    return { text: state.toolNotes.join("\n") || "処理を完了しました。", focusPanel: state.focusPanel, panelCreated: state.panelCreated };
+    const lastText = taxiEnsureClaimedPanel(state.toolNotes.join("\n") || "処理を完了しました。", userMessage, state);
+    return { text: lastText, focusPanel: state.focusPanel, panelCreated: state.panelCreated };
   } catch (error) {
     console.error("LLM API error:", error);
     const detail = error instanceof TaxiLlmError ? error.message : `${error?.message || error}`;
@@ -10923,15 +10954,17 @@ function updateTaxiMicButton() {
 // Same labels/questions as the 2D quick buttons (index.html .taxiQuickBtn).
 const TAXI_CLEAR_CHAT_ACTION = "__taxi_clear_chat__";
 
-// v21: the クリア quick button empties the chat (XR panel, 2D log and the history sent
-// to the LLM). Created panels stay; "パネルを消して" (voice/text) still clears them via the LLM.
+// v22: the クリア quick button empties the chat (XR panel, 2D log and the history sent
+// to the LLM) AND removes all created panels (fixed panels stay); slots restart at 0.
+// "パネルを消して" (voice/text) still clears panels via the LLM clear_panels tool.
 function clearTaxiChatHistory() {
+  clearDynamicPanels();
   taxiChatEpoch += 1; // a reply still in flight will not be added to the cleared chat
   taxiConversationHistory.length = 0;
   taxiChatRenderedCount = 0;
   taxiChatScrollPx = 0;
   updateTaxiChatPanel();
-  setTaxiVoiceStatus("チャット履歴をクリアしました（作成したパネルはそのままです）");
+  setTaxiVoiceStatus("チャット履歴と作成したパネルをクリアしました");
 }
 
 function handleTaxiQuickQuestion(question) {
@@ -10944,7 +10977,7 @@ const taxiSuggestedQuestions = [
   { label: "曜日別", question: "曜日別の乗車回数を見せて" },
   { label: "車両別", question: "車両ごとの稼働率比較" },
   { label: "一覧", question: "どの一覧表を出せますか？" },
-  { label: "クリア", question: TAXI_CLEAR_CHAT_ACTION }, // v21: clears the chat locally (no LLM call)
+  { label: "クリア", question: TAXI_CLEAR_CHAT_ACTION }, // v22: clears chat + created panels locally (no LLM call)
 ];
 // v20: 2x (was 0.2 x 0.085 m, gap 0.025); row = 5*0.4 + 4*0.04 = 2.16 m, fits under the 2.2 m chat panel.
 const TAXI_QUESTION_BTN_W = 0.4;
