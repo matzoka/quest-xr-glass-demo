@@ -22,7 +22,7 @@ if (TAXI_ALLOWED && taxiAnalyticsButton) {
   taxiAnalyticsButton.removeAttribute("hidden");
 }
 
-const APP_VERSION = "v2026.09.29.14";
+const APP_VERSION = "v2026.09.29.15";
 const DEBUG_TOP_VIEW = new URLSearchParams(window.location.search).has("topDebug");
 const DEBUG_TOP_VIEW_DISTANCE = Number(new URLSearchParams(window.location.search).get("topDebugDist"));
 const DEBUG_BLACK_HOLE_VIEW = new URLSearchParams(window.location.search).has("blackHoleDebug");
@@ -7959,23 +7959,22 @@ const TAXI_DATASET_SEED = 42;
 const TAXI_MONTHS = 6;
 const TAXI_VEHICLES = ["車両A", "車両B", "車両C", "車両D", "車両E", "車両F", "車両G", "車両H"];
 const TAXI_DRIVERS = ["田中", "鈴木", "佐藤", "山田", "高橋", "伊藤", "渡辺", "中村"];
-const TAXI_AREAS = ["新宿", "渋谷", "池袋", "品川", "銀座", "上野", "浅草", "六本木"];
+// 営業エリア: 調布市を中心に三鷹市・府中市（8エリア。抽選インデックスは従来と同じ）
+const TAXI_AREAS = ["調布駅周辺", "国領", "仙川", "つつじヶ丘・柴崎", "深大寺", "西調布・飛田給", "三鷹", "府中"];
 const TAXI_WEEKDAYS = ["日", "月", "火", "水", "木", "金", "土"];
 // 住所 per 乗車地/降車地: [区市＋町名, 読み, 丁目の最大値(0=丁目なし)]. Real town names only, no 番地.
 const TAXI_AREA_TOWNS = {
-  新宿: [["新宿区西新宿", "にししんじゅく", 8], ["新宿区新宿", "しんじゅく", 7], ["新宿区歌舞伎町", "かぶきちょう", 2], ["新宿区百人町", "ひゃくにんちょう", 4], ["新宿区四谷", "よつや", 4], ["新宿区大久保", "おおくぼ", 3], ["新宿区高田馬場", "たかだのばば", 4]],
-  渋谷: [["渋谷区道玄坂", "どうげんざか", 2], ["渋谷区宇田川町", "うだがわちょう", 0], ["渋谷区神南", "じんなん", 2], ["渋谷区渋谷", "しぶや", 4], ["渋谷区桜丘町", "さくらがおかちょう", 0], ["渋谷区神宮前", "じんぐうまえ", 6], ["渋谷区円山町", "まるやまちょう", 0]],
-  池袋: [["豊島区南池袋", "みなみいけぶくろ", 4], ["豊島区西池袋", "にしいけぶくろ", 5], ["豊島区東池袋", "ひがしいけぶくろ", 5], ["豊島区池袋", "いけぶくろ", 4], ["豊島区目白", "めじろ", 5], ["豊島区上池袋", "かみいけぶくろ", 4]],
-  品川: [["港区港南", "こうなん", 5], ["港区高輪", "たかなわ", 4], ["品川区北品川", "きたしながわ", 6], ["品川区東品川", "ひがししながわ", 5], ["港区芝浦", "しばうら", 4], ["品川区大崎", "おおさき", 5]],
-  銀座: [["中央区銀座", "ぎんざ", 8], ["千代田区有楽町", "ゆうらくちょう", 2], ["中央区築地", "つきじ", 7], ["中央区京橋", "きょうばし", 3], ["中央区日本橋", "にほんばし", 3], ["千代田区丸の内", "まるのうち", 3]],
-  上野: [["台東区上野", "うえの", 7], ["台東区東上野", "ひがしうえの", 6], ["台東区上野公園", "うえのこうえん", 0], ["文京区湯島", "ゆしま", 4], ["台東区上野桜木", "うえのさくらぎ", 2], ["文京区本郷", "ほんごう", 7]],
-  浅草: [["台東区浅草", "あさくさ", 7], ["台東区花川戸", "はなかわど", 2], ["台東区雷門", "かみなりもん", 2], ["台東区西浅草", "にしあさくさ", 3], ["台東区寿", "ことぶき", 4], ["台東区駒形", "こまがた", 2]],
-  六本木: [["港区六本木", "ろっぽんぎ", 7], ["港区赤坂", "あかさか", 9], ["港区西麻布", "にしあざぶ", 4], ["港区麻布十番", "あざぶじゅうばん", 4], ["港区南青山", "みなみあおやま", 7], ["港区元麻布", "もとあざぶ", 3]],
-  // 郊外の降車地（長距離の一部のみ。乗車地の抽選には使わない）
-  調布: [["調布市布田", "ふだ", 6], ["調布市小島町", "こじまちょう", 3], ["調布市国領町", "こくりょうちょう", 8], ["調布市下石原", "しもいしわら", 3]],
+  調布駅周辺: [["調布市布田", "ふだ", 6], ["調布市小島町", "こじまちょう", 3], ["調布市下石原", "しもいしわら", 3], ["調布市富士見町", "ふじみちょう", 4], ["調布市八雲台", "やくもだい", 2]],
+  国領: [["調布市国領町", "こくりょうちょう", 8], ["調布市染地", "そめち", 3], ["調布市多摩川", "たまがわ", 7], ["調布市調布ケ丘", "ちょうふがおか", 4]],
+  仙川: [["調布市仙川町", "せんがわちょう", 3], ["調布市若葉町", "わかばちょう", 3], ["調布市緑ケ丘", "みどりがおか", 2], ["調布市入間町", "いりまちょう", 3]],
+  "つつじヶ丘・柴崎": [["調布市西つつじケ丘", "にしつつじがおか", 4], ["調布市東つつじケ丘", "ひがしつつじがおか", 3], ["調布市菊野台", "きくのだい", 3], ["調布市柴崎", "しばさき", 2], ["調布市佐須町", "さずまち", 5]],
+  深大寺: [["調布市深大寺元町", "じんだいじもとまち", 5], ["調布市深大寺北町", "じんだいじきたまち", 7], ["調布市深大寺南町", "じんだいじみなみまち", 5], ["調布市深大寺東町", "じんだいじひがしまち", 8], ["調布市野水", "のみず", 2]],
+  "西調布・飛田給": [["調布市上石原", "かみいしわら", 3], ["調布市飛田給", "とびたきゅう", 3], ["調布市西町", "にしまち", 0]],
+  三鷹: [["三鷹市大沢", "おおさわ", 6], ["三鷹市下連雀", "しもれんじゃく", 9], ["三鷹市上連雀", "かみれんじゃく", 9], ["三鷹市野崎", "のざき", 4], ["三鷹市深大寺", "じんだいじ", 3], ["三鷹市新川", "しんかわ", 6]],
+  府中: [["府中市白糸台", "しらいとだい", 6], ["府中市多磨町", "たまちょう", 0], ["府中市紅葉丘", "もみじがおか", 3], ["府中市若松町", "わかまつちょう", 5], ["府中市朝日町", "あさひちょう", 0], ["府中市小柳町", "こやなぎちょう", 0], ["府中市押立町", "おしたてちょう", 0]],
 };
-const TAXI_SUBURB_AREA = "調布";
-const TAXI_ALL_AREAS = [...TAXI_AREAS, TAXI_SUBURB_AREA];
+const TAXI_ALL_AREAS = TAXI_AREAS;
+const TAXI_SERVICE_MUNICIPALITIES = ["調布市", "三鷹市", "府中市"];
 const TAXI_KANJI_NUM = ["", "一", "二", "三", "四", "五", "六", "七", "八", "九"];
 // Homophones heard by speech recognition -> reading (e.g. 札 -> ふだ = 布田)
 const TAXI_HOMOPHONES = { 札: "ふだ" };
@@ -8026,9 +8025,8 @@ function generateTaxiDataset() {
   const dispatchRand = taxiSeededRandom(TAXI_DATASET_SEED + 2000);
   // Another separate RNG for 町名 (pickupTown / dropoffTown)
   const townRand = taxiSeededRandom(TAXI_DATASET_SEED + 3000);
-  // More separate RNGs: 丁目 choice, and suburban (調布) dropoffs for some long trips
+  // Another separate RNG for the 丁目 choice
   const addrRand = taxiSeededRandom(TAXI_DATASET_SEED + 4000);
-  const suburbRand = taxiSeededRandom(TAXI_DATASET_SEED + 5000);
   const trips = [];
   const today = new Date();
   const startDate = new Date(today);
@@ -8048,12 +8046,10 @@ function generateTaxiDataset() {
       const vehicle = TAXI_VEHICLES[Math.floor(rand() * TAXI_VEHICLES.length)];
       const driver = TAXI_DRIVERS[Math.floor(rand() * TAXI_DRIVERS.length)];
       const pickupArea = TAXI_AREAS[Math.floor(rand() * TAXI_AREAS.length)];
-      const centralDropoffArea = TAXI_AREAS[Math.floor(rand() * TAXI_AREAS.length)];
+      const dropoffArea = TAXI_AREAS[Math.floor(rand() * TAXI_AREAS.length)];
       const distance = Math.round((1 + rand() * 15) * 10) / 10;
       rand(); // former random fare multiplier: keep the RNG sequence so all other fields stay identical
       const dispatch = dispatchRand() < TAXI_DISPATCH_RATE;
-      const toSuburb = suburbRand() < 0.1 && distance >= 12;
-      const dropoffArea = toSuburb ? TAXI_SUBURB_AREA : centralDropoffArea;
       const pickupTowns = TAXI_AREA_TOWNS[pickupArea];
       const dropoffTowns = TAXI_AREA_TOWNS[dropoffArea];
       const pickupEntry = pickupTowns[Math.min(pickupTowns.length - 1, Math.floor(townRand() * pickupTowns.length))];
@@ -8323,8 +8319,8 @@ const TAXI_QUERY_DEFAULT_GROUPS = 10;
 const TAXI_ADDITIVE_METRICS = ["tripCount", "fare", "fareWithTax", "totalFare", "dispatchFee", "distance", "occupiedTime", "emptyTime"];
 const TAXI_PER_TRIP_FIELDS = { fare: "fare", fareWithTax: "fareWithTax", totalFare: "totalFare", avgFare: "fare", distance: "distance", avgDistance: "distance", occupiedTime: "occupiedMinutes", emptyTime: "emptyMinutes" };
 const TAXI_READINGS = {
-  新宿: "しんじゅく", 渋谷: "しぶや", 池袋: "いけぶくろ", 品川: "しながわ",
-  銀座: "ぎんざ", 上野: "うえの", 浅草: "あさくさ", 六本木: "ろっぽんぎ",
+  調布駅周辺: "ちょうふえきしゅうへん", 国領: "こくりょう", 仙川: "せんがわ", "つつじヶ丘・柴崎": "つつじがおかしばさき",
+  深大寺: "じんだいじ", "西調布・飛田給": "にしちょうふとびたきゅう", 三鷹: "みたか", 府中: "ふちゅう",
   田中: "たなか", 鈴木: "すずき", 佐藤: "さとう", 山田: "やまだ",
   高橋: "たかはし", 伊藤: "いとう", 渡辺: "わたなべ", 中村: "なかむら",
 };
@@ -8363,7 +8359,7 @@ function taxiEditDistance(a, b) {
 
 const TAXI_TERM_SUFFIX_RE = /(区|駅|周辺|エリア|地区|さん|氏|運転手|ドライバー|号車)$/u;
 
-// Reading / suffix variant of exactly one valid value (e.g. "シンジュク", "新宿区", "スズキさん")
+// Reading / suffix variant of exactly one valid value (e.g. "コクリョウ", "仙川駅", "スズキさん")
 function taxiStrongMatch(value, validValues) {
   const v = taxiNormText(value).replace(TAXI_TERM_SUFFIX_RE, "");
   if (!v) return null;
@@ -8372,7 +8368,7 @@ function taxiStrongMatch(value, validValues) {
   return hits.length === 1 ? hits[0] : null;
 }
 
-// Suggest the closest valid values (kanji or reading, e.g. "シンジュク区" -> 新宿)
+// Suggest the closest valid values (kanji or reading, e.g. "センガワ" -> 仙川, "ふだ" -> 調布市布田)
 function taxiSuggest(value, validValues, max = 3) {
   const v0 = taxiNormText(value).replace(TAXI_TERM_SUFFIX_RE, "");
   const v = TAXI_HOMOPHONES[v0] || v0;
@@ -8441,6 +8437,7 @@ function taxiFilterValues(kind, input, fieldName, validValues, errors, applied) 
         field: fieldName,
         value: raw,
         message: `「${raw}」はデータに存在しない値です`,
+        ...(kind === "area" || kind === "town" ? { serviceArea: `データは営業エリア（${TAXI_SERVICE_MUNICIPALITIES.join("・")}）のみ。エリア外の地名なら該当0件` } : {}),
         suggestions: taxiSuggest(raw, validValues),
         validValues,
       });
@@ -8599,7 +8596,7 @@ function runTaxiFreeQuery(args = {}) {
           ...(otherTrips ? { foundInOtherSide: { field: otherField === "dropoffAddress" ? "降車地住所" : "乗車地住所", trips: otherTrips } } : {}),
           field: label,
           value: kw,
-          message: `「${kw}」を含む住所はデータにありません（0件）`,
+          message: `「${kw}」を含む住所はデータにありません（0件）。データは営業エリア（${TAXI_SERVICE_MUNICIPALITIES.join("・")}）のみ`,
           suggestions: taxiSuggest(kw, addresses, 5),
           knownAddressesSample: addresses.slice(0, 30),
         });
@@ -9517,11 +9514,11 @@ const LLM_TOOLS = [
           vehicles: { type: "array", items: { type: "string" }, description: `車両: ${TAXI_VEHICLES.join(",")}。車両・ドライバー・乗車地・降車地・町名はユーザーが言った表記をそのまま渡す（読み替えはツール側で行い、corrections や suggestions を返す）` },
           drivers: { type: "array", items: { type: "string" }, description: `ドライバー: ${TAXI_DRIVERS.join(",")}` },
           pickupAreas: { type: "array", items: { type: "string" }, description: `乗車地（pickupArea）: ${TAXI_AREAS.join(",")}` },
-          dropoffAreas: { type: "array", items: { type: "string" }, description: `降車地（dropoffArea）: ${TAXI_ALL_AREAS.join(",")}` },
-          pickupTowns: { type: "array", items: { type: "string" }, description: "乗車地の町名（区市＋町名、丁目なし。区市は省略可、例: \"西新宿\" → 新宿区西新宿）。町名だけ言われて乗車/降車の指定がなければ乗車地として扱う。丁目まで指定されたら pickupKeyword を使う" },
-          dropoffTowns: { type: "array", items: { type: "string" }, description: "降車地の町名（区市＋町名、丁目なし。区市は省略可）" },
+          dropoffAreas: { type: "array", items: { type: "string" }, description: `降車地（dropoffArea）: ${TAXI_AREAS.join(",")}` },
+          pickupTowns: { type: "array", items: { type: "string" }, description: "乗車地の町名（市＋町名、丁目なし。市は省略可、例: \"布田\" → 調布市布田）。町名だけ言われて乗車/降車の指定がなければ乗車地として扱う。丁目まで指定されたら pickupKeyword を使う" },
+          dropoffTowns: { type: "array", items: { type: "string" }, description: "降車地の町名（市＋町名、丁目なし。市は省略可）" },
           pickupKeyword: { type: "array", items: { type: "string" }, description: "乗車住所のキーワード（住所文字列への部分一致、配列はOR）。例:「調布市下石原三丁目から乗った回数」→ [\"調布市下石原三丁目\"]。0件なら error と似た住所の suggestions を返す" },
-          dropoffKeyword: { type: "array", items: { type: "string" }, description: "降車住所のキーワード（部分一致、配列はOR）。例:「新宿区西新宿への降車回数」→ [\"新宿区西新宿\"]" },
+          dropoffKeyword: { type: "array", items: { type: "string" }, description: "降車住所のキーワード（部分一致、配列はOR）。例:「府中市白糸台への降車回数」→ [\"府中市白糸台\"]" },
           dropoffTimeFrom: { type: "string", description: "降車時刻の開始 \"HH:MM\"（含む）。例:「22時以降に降車」→ \"22:00\"" },
           dropoffTimeTo: { type: "string", description: "降車時刻の終了 \"HH:MM\"（含まない、\"24:00\"可）。From>To なら深夜をまたぐ" },
           distanceMin: { type: "number", description: "1乗車の距離(km)の下限（含む）" },
@@ -9636,6 +9633,22 @@ const TAXI_LLM_MAX_ROUNDS = 5;
 const TAXI_LLM_MAX_TOKENS = 1600;
 const TAXI_LLM_RETRY_MAX_TOKENS = 3200;
 
+// Known speech-recognition mishearings, detected in the user's own words (the model tends to
+// silently convert them, so the client adds the もしかして confirmation deterministically)
+const TAXI_KNOWN_MISHEARINGS = [
+  { re: /芸者|げいしゃ|ゲイシャ/u, meant: "迎車", reading: "げいしゃ" },
+  { re: /札(?!幌)|ふだ(?!ん)|フダ/u, meant: "布田", reading: "ふだ" },
+];
+
+function taxiDetectMishearings(text) {
+  const found = [];
+  for (const m of TAXI_KNOWN_MISHEARINGS) {
+    const hit = m.re.exec(String(text || ""));
+    if (hit) found.push({ heard: hit[0], meant: m.meant, reading: m.reading });
+  }
+  return found;
+}
+
 function taxiCompactToolJson(obj) {
   let s = JSON.stringify(obj);
   if (s.length > 6000) s = s.slice(0, 6000) + "…(truncated)";
@@ -9701,7 +9714,8 @@ async function callLlmBackend(userMessage, config) {
 - 有効な値の一覧（これ以外の値はデータに存在しない）:
   - 車両: ${TAXI_VEHICLES.join("、")}
   - ドライバー: ${TAXI_DRIVERS.join("、")}
-  - 乗車地: ${TAXI_AREAS.join("、")}（降車地は加えて ${TAXI_SUBURB_AREA}）
+  - 営業エリア: ${TAXI_SERVICE_MUNICIPALITIES.join("・")}のみ（調布市中心）。これ以外の地名（23区など）はデータに存在しない
+  - 乗車地・降車地: ${TAXI_AREAS.join("、")}
   - 町名（乗車地/降車地の住所の町名部分。住所には丁目が付く場合あり。乗車地: 町名）: ${Object.entries(TAXI_AREA_TOWNS).map(([a, ts]) => `${a}: ${ts.map(x => taxiTownPart(x[0])).join("・")}`).join(" / ")}
   - 町名の読み注意: 布田＝ふだ（「札」「ふだ」「フダ」と聞こえたら「もしかして布田（ふだ）のことですか？」と確認してから布田として答える）
   - 曜日: ${TAXI_WEEKDAYS.join("、")}
@@ -9722,8 +9736,8 @@ ${taxiPanelData.map((p, i) => `${i}: ${p.title} - ${p.value} (${p.unit})`).join(
 ルール:
 1. 数値の質問（売上・乗車回数・平均・最高・最低・比較など）は必ず query_data を呼び、その結果の数値だけを使って答える。数値は絶対に自分で生成・推測しない。
 2. 「平均」「最高」「最低」で単位が曖昧なときは、乗車回数・売上なら1日あたり（perDay）、運賃・距離なら1乗車あたり（perTrip）を基本にし、どちらの意味か一言添える。最高/最低の日付やグループ名も添える。
-3. 条件（期間・曜日・時間帯・車両・ドライバー・乗車地・降車地・住所・距離・運賃）は query_data の引数で指定する。「15時から18時まで」は hourFrom=15, hourTo=18。分を含む指定（「15時半から17時まで」「15時30分から17時まで」）は timeFrom="15:30", timeTo="17:00"（開始を含み終了を含まない）。時刻指定は乗車時刻が基本、「降車した」「降りた」なら dropoffTimeFrom/dropoffTimeTo（例:「22時以降に降車」→ dropoffTimeFrom="22:00"、「22時から23時の間に降車」→ "22:00"〜"23:00"）。住所は「調布市下石原三丁目から乗った回数」→ pickupKeyword=["調布市下石原三丁目"]、「新宿区西新宿への降車回数」→ dropoffKeyword=["新宿区西新宿"]。住所キーワードが0件ならデータに無いことを伝え、suggestions があれば「もしかして〇〇のことですか？」と聞く。
-4. 音声認識の聞き間違い・誤字・存在しない値（例: 一覧にない乗車地・降車地名/町名/ドライバー名/車両名、25時などありえない時刻、似た音の名前）に見えるときは、有効な値の一覧から最も近い候補を選び「もしかして〇〇のことですか？」と提案する。query_data が error と suggestions を返した場合も同様にする。ユーザーの言葉が有効な値と完全に一致しないとき（カタカナ・ひらがな表記、「新宿区」「新宿駅」のような付け足し、似た音の別名など）も、黙って読み替えずに必ず「もしかして〇〇のことですか？」と一言添える。ただし区・市の省略（「西新宿」→新宿区西新宿）や丁目の省略は聞き間違いではないので、もしかしてを付けずにそのまま答える。候補が1つに絞れる場合は、その候補で query_data を実行して「〇〇であれば…です」と数値も添える。query_data の filters.corrections に読み替えがあれば、回答の最初に必ず「もしかして〇〇のことですか？」と書く。ありえない時刻（25時など）を自分で別の時刻に読み替えた場合も「もしかして〇時のことですか？」と確認する。
+3. 条件（期間・曜日・時間帯・車両・ドライバー・乗車地・降車地・住所・距離・運賃）は query_data の引数で指定する。「15時から18時まで」は hourFrom=15, hourTo=18。分を含む指定（「15時半から17時まで」「15時30分から17時まで」）は timeFrom="15:30", timeTo="17:00"（開始を含み終了を含まない）。時刻指定は乗車時刻が基本、「降車した」「降りた」なら dropoffTimeFrom/dropoffTimeTo（例:「22時以降に降車」→ dropoffTimeFrom="22:00"、「22時から23時の間に降車」→ "22:00"〜"23:00"）。住所は「調布市下石原三丁目から乗った回数」→ pickupKeyword=["調布市下石原三丁目"]、「府中市白糸台への降車回数」→ dropoffKeyword=["府中市白糸台"]。住所キーワードが0件ならデータに無いことを伝え、suggestions があれば「もしかして〇〇のことですか？」と聞く。
+4. 音声認識の聞き間違い・誤字・存在しない値（例: 一覧にない乗車地・降車地名/町名/ドライバー名/車両名、25時などありえない時刻、似た音の名前）に見えるときは、有効な値の一覧から最も近い候補を選び「もしかして〇〇のことですか？」と提案する。query_data が error と suggestions を返した場合も同様にする。ユーザーの言葉が有効な値と完全に一致しないとき（カタカナ・ひらがな表記、「国領駅」「仙川駅」のような付け足し、似た音の別名など）も、黙って読み替えずに必ず「もしかして〇〇のことですか？」と一言添える。ただし市の省略（「布田」→調布市布田、「白糸台」→府中市白糸台）や丁目の省略は聞き間違いではないので、もしかしてを付けずにそのまま答える。候補が1つに絞れる場合は、その候補で query_data を実行して「〇〇であれば…です」と数値も添える。query_data の filters.corrections に読み替えがあれば、回答の最初に必ず「もしかして〇〇のことですか？」と書く。ありえない時刻（25時など）を自分で別の時刻に読み替えた場合も「もしかして〇時のことですか？」と確認する。
 5. パネル表示を頼まれたら create_panel、固定パネルについての質問は focus_panel、分析の一覧は list_capabilities、パネル削除は clear_panels を使う。
 6. 回答は自然な日本語で簡潔に（2〜4文程度）。表・Markdown（**など）・ツールの内部名や英語のキー名（perDay, groupStats, fareSummary など）は書かない。金額・件数はツールの数値をそのまま3桁カンマ区切りで書き（例: 101,757,180円）、万・億への換算はしない。
 7. 運賃・売上を答えるときは税抜と税込の両方を「6,000円（消費税込みで6,600円）」の形で示す（query_data の fareSummary を使う）。距離からの運賃計算は calc_fare を使う。売上の質問では通常、運賃（税抜/税込）を答え、迎車料金を含む収入や「迎車を除くと〜」は fareSummary.byDispatch / totalIncome を使って必要に応じて添える。
@@ -9740,6 +9754,13 @@ ${taxiPanelData.map((p, i) => `${i}: ${p.title} - ${p.value} (${p.unit})`).join(
   }
 
   const state = { focusPanel: -1, panelCreated: false, toolNotes: [], emptyRetries: 0 };
+  const mishearings = taxiDetectMishearings(userMessage);
+  if (mishearings.length) {
+    messages.push({
+      role: "system",
+      content: mishearings.map(h => `注意（自動検出）: ユーザーの発言「${h.heard}」は音声認識の誤りで「${h.meant}」（${h.reading}）の可能性が高い。「${h.meant}」として集計し、回答の最初に必ず「もしかして${h.meant}のことですか？」と書くこと。`).join("\n"),
+    });
+  }
 
   try {
     for (let round = 0; round < TAXI_LLM_MAX_ROUNDS; round++) {
@@ -9787,6 +9808,9 @@ ${taxiPanelData.map((p, i) => `${i}: ${p.title} - ${p.value} (${p.unit})`).join(
             result = { ok: false, error: `ツール引数のパースエラー: ${e.message}` };
           }
           if (result && result.message) state.toolNotes.push(result.message);
+          if (result && typeof result === "object" && mishearings.length) {
+            result.confirmationNeeded = mishearings.map(h => `ユーザーは「${h.heard}」と言っている → 「${h.meant}」として扱い、回答冒頭で「もしかして${h.meant}のことですか？」と確認すること`);
+          }
           console.log("[taxi-ai] tool", funcName, toolCall.function?.arguments, result);
           messages.push({ role: "tool", tool_call_id: toolCall.id, content: taxiCompactToolJson(result) });
         }
@@ -9806,6 +9830,11 @@ ${taxiPanelData.map((p, i) => `${i}: ${p.title} - ${p.value} (${p.unit})`).join(
         text = text.replace(/\[FOCUS_PANEL:\d\]/g, "").trim();
       }
       text = text.replace(/\*\*/g, "");
+      for (const h of mishearings) {
+        if (text && !(text.includes("もしかして") && text.includes(h.meant))) {
+          text = `もしかして${h.meant}のことですか？（「${h.heard}」と聞こえました）\n${text}`;
+        }
+      }
       if (!text) text = state.toolNotes.length ? state.toolNotes.join("\n") : "応答を取得できませんでした。";
       return { text, focusPanel, panelCreated: state.panelCreated };
     }
