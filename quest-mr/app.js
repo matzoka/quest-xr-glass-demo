@@ -14,7 +14,15 @@ const blackHoleTourButton = document.querySelector("#blackHoleTourButton");
 const controllerHelpButton = document.querySelector("#controllerHelpButton");
 const taxiAnalyticsButton = document.querySelector("#taxiAnalyticsButton");
 const poseDebugOutputEl = document.querySelector("#poseDebugOutput");
-const APP_VERSION = "v2026.09.29.03";
+
+// Taxi feature gating: only show if Worker injected __TAXI_ALLOWED__=true
+// When accessed outside Worker (GitHub Pages, local file), defaults to hidden
+const TAXI_ALLOWED = window.__TAXI_ALLOWED__ === true;
+if (TAXI_ALLOWED && taxiAnalyticsButton) {
+  taxiAnalyticsButton.removeAttribute("hidden");
+}
+
+const APP_VERSION = "v2026.09.29.12";
 const DEBUG_TOP_VIEW = new URLSearchParams(window.location.search).has("topDebug");
 const DEBUG_TOP_VIEW_DISTANCE = Number(new URLSearchParams(window.location.search).get("topDebugDist"));
 const DEBUG_BLACK_HOLE_VIEW = new URLSearchParams(window.location.search).has("blackHoleDebug");
@@ -3122,7 +3130,7 @@ async function enterXr(mode) {
     enterpriseOrbitXrButton.visible = true;
     klingonXrButton.visible = true;
     blackHoleTourXrButton.visible = true;
-    taxiAnalyticsXrButton.visible = true;
+    taxiAnalyticsXrButton.visible = TAXI_ALLOWED;
     enterpriseOrbitXrIcon.visible = true;
     klingonXrIcon.visible = true;
     blackHoleTourXrIcon.visible = true;
@@ -8519,6 +8527,7 @@ function getTaxiAnalyticsViewTarget() {
 }
 
 function requestTaxiAnalyticsRoom() {
+  if (!TAXI_ALLOWED) return; // Gated: requires valid authentication
   if (inTaxiAnalyticsRoom || taxiAnalyticsPreview2D) {
     returnFromTaxiAnalyticsRoom();
     return;
@@ -8607,7 +8616,6 @@ let taxiFocusedPanelIndex = -1;
 let taxiFocusAnimationT = 0;
 let taxiSpeechRecognition = null;
 let taxiIsListening = false;
-let taxiSpeechSynthesisEnabled = true;
 
 const taxiPanelKeywords = {
   0: ["売上", "売り上げ", "収益", "金額", "日次", "revenue", "sales", "daily"],
@@ -8641,6 +8649,13 @@ const taxiGeneralResponses = {
   allPanels: "現在4つの分析パネルがあります：日次売上（¥847,200）、乗車回数（156件）、ピーク時間帯（18-21時）、車両稼働率（78%）。詳しく知りたい項目を教えてください。",
   sampleDataNote: "※ これらはすべてサンプルデータです。実際のデータ連携には別途設定が必要です。",
 };
+
+// LLM requests go through the same-origin Worker relay (/api/llm), which
+// forwards to the settings endpoint (many providers send no CORS headers).
+const TAXI_LLM_RELAY_PATH = "/api/llm";
+const taxiLlmSessionId = (typeof crypto !== "undefined" && crypto.randomUUID)
+  ? crypto.randomUUID()
+  : `taxi-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 
 function getTaxiLlmConfig() {
   try {
@@ -8980,11 +8995,14 @@ ${taxiPanelData.map((p, i) => `${i}: ${p.title} - ${p.value} (${p.unit})`).join(
   ];
 
   try {
-    const response = await fetch(config.endpoint, {
+    const response = await fetch(TAXI_LLM_RELAY_PATH, {
       method: "POST",
+      credentials: "same-origin",
       headers: {
         "Content-Type": "application/json",
         "Authorization": `Bearer ${config.apiKey}`,
+        "X-LLM-Endpoint": config.endpoint,
+        "X-Opencode-Session": taxiLlmSessionId,
       },
       body: JSON.stringify({
         model: config.model || "gpt-4o-mini",
@@ -9101,28 +9119,6 @@ async function processTaxiConversation(userMessage) {
   if (response.focusPanel >= 0 && response.focusPanel < taxiAnalyticsPanels.length) {
     setTaxiFocusedPanel(response.focusPanel);
   }
-  
-  if (taxiSpeechSynthesisEnabled && "speechSynthesis" in window) {
-    speakTaxiResponse(response.text);
-  }
-}
-
-function speakTaxiResponse(text) {
-  if (!("speechSynthesis" in window)) return;
-  
-  window.speechSynthesis.cancel();
-  
-  const utterance = new SpeechSynthesisUtterance(text);
-  utterance.lang = "ja-JP";
-  utterance.rate = 1.0;
-  utterance.pitch = 1.0;
-  utterance.volume = 0.8;
-  
-  const voices = window.speechSynthesis.getVoices();
-  const japaneseVoice = voices.find(v => v.lang.startsWith("ja"));
-  if (japaneseVoice) utterance.voice = japaneseVoice;
-  
-  window.speechSynthesis.speak(utterance);
 }
 
 function initTaxiSpeechRecognition() {

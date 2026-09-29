@@ -11,7 +11,7 @@
       <section class="panel">
         <div class="titleRow">
           <h1>Quest XR 地球デモ</h1>
-          <span class="versionBadge" aria-label="App version">v2026.09.29.05</span>
+          <span class="versionBadge" aria-label="App version">v2026.09.29.12</span>
         </div>
         <p id="status">地球を準備中…</p>
         <div class="actions">
@@ -22,12 +22,12 @@
           <button class="actionButton demo" id="enterpriseOrbitButton" type="button">Enterprise 周回</button>
           <button class="actionButton demo klingon" id="klingonButton" type="button">クリンゴン登場</button>
           <button class="actionButton demo blackHole" id="blackHoleTourButton" type="button">ブラックホール探訪</button>
-          <button class="actionButton demo taxiAnalytics" id="taxiAnalyticsButton" type="button">タクシー業務アプリ分析</button>
+          <button class="actionButton demo taxiAnalytics" id="taxiAnalyticsButton" type="button" hidden>タクシー業務アプリ分析</button>
           <button class="actionButton demo help" id="controllerHelpButton" type="button">操作HELP</button>
         </div>
         <textarea id="poseDebugOutput" class="poseDebugOutput" readonly hidden aria-label="Pose debug URL"></textarea>
       </section>
-      <section class="panel taxiChatPanel" id="taxiChatPanel" hidden>
+      <section class="panel taxiChatPanel" id="taxiChatPanel" hidden data-taxi-feature>
         <div class="taxiChatHeader">
           <span>AI 分析アシスタント</span>
           <span class="taxiSampleBadge">サンプルデータ</span>
@@ -48,7 +48,7 @@
         </div>
       </section>
     </main>
-    <div class="modalOverlay" id="taxiSettingsModal" hidden>
+    <div class="modalOverlay" id="taxiSettingsModal" hidden data-taxi-feature>
       <div class="modalContent">
         <h2>LLM バックエンド設定</h2>
         <p class="modalNote">オプション：OpenAI互換エンドポイントを設定すると、より自然な会話ができます。設定しない場合はオフラインモード（インテントマッチング）で動作します。</p>
@@ -81,6 +81,6 @@
         }
       }
     </script>
-    <script type="module" src="./app.js?v=2026.09.29.05"></script>
+    <script type="module" src="./app.js?v=2026.09.29.12"></script>
   </body>
 </html>
