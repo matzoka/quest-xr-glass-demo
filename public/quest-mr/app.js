@@ -22,7 +22,7 @@ if (TAXI_ALLOWED && taxiAnalyticsButton) {
   taxiAnalyticsButton.removeAttribute("hidden");
 }
 
-const APP_VERSION = "v2026.09.29.15";
+const APP_VERSION = "v2026.09.29.16";
 const DEBUG_TOP_VIEW = new URLSearchParams(window.location.search).has("topDebug");
 const DEBUG_TOP_VIEW_DISTANCE = Number(new URLSearchParams(window.location.search).get("topDebugDist"));
 const DEBUG_BLACK_HOLE_VIEW = new URLSearchParams(window.location.search).has("blackHoleDebug");
@@ -4987,6 +4987,17 @@ function isViewerInsideEarthFrame() {
   );
 }
 
+// The taxi analytics room sits outside the Earth frame (x = 11..19 m vs. the
+// solar room's |x| <= 4.5 m), so hands/controllers/rays must also be allowed
+// while the player is in that room.
+function isViewerInTaxiAnalyticsRoomXr() {
+  return renderer.xr.isPresenting && inTaxiAnalyticsRoom && taxiAnalyticsGroup.visible;
+}
+
+function isXrHandUiAllowed() {
+  return isViewerInsideEarthFrame() || isViewerInTaxiAnalyticsRoomXr();
+}
+
 function setHandPresenceVisible(visible) {
   for (const item of handPresence) {
     item.root.visible = visible;
@@ -4995,7 +5006,7 @@ function setHandPresenceVisible(visible) {
 }
 
 function updateHandPresence() {
-  const visible = isViewerInsideEarthFrame();
+  const visible = isXrHandUiAllowed();
   setHandPresenceVisible(visible);
 }
 
@@ -5063,6 +5074,7 @@ function getXrUiTargets() {
   if (inTaxiAnalyticsRoom) {
     if (taxiMicButtonMesh) targets.push(taxiMicButtonMesh);
     targets.push(...taxiQuestionButtons);
+    targets.push(...taxiAnalyticsPanels); // fixed dashboard panels: select = focus/highlight
   }
   return targets;
 }
@@ -5167,9 +5179,15 @@ for (let index = 0; index < 2; index += 1) {
           playXrButtonPressSound();
           processTaxiConversation(uiHit.object.userData.questionText);
         }
+        else if (taxiAnalyticsPanels.includes(uiHit.object)) {
+          playXrButtonPressSound();
+          setTaxiFocusedPanel(taxiAnalyticsPanels.indexOf(uiHit.object));
+        }
         return;
       }
     }
+    // In the taxi room the Earth is in another room: don't launch it from here.
+    if (inTaxiAnalyticsRoom) return;
     // Otherwise launch along the controller's pointing (-Z) direction.
     tmpDir.set(0, 0, -1).applyQuaternion(controller.getWorldQuaternion(new THREE.Quaternion()));
     kick(tmpDir, CRUISE_DEFAULT);
@@ -5267,7 +5285,7 @@ function updateHandTouch(dt) {
 }
 
 function updateXrAimRays() {
-  const visible = renderer.xr.isPresenting && isViewerInsideEarthFrame() && exitButton.visible;
+  const visible = renderer.xr.isPresenting && isXrHandUiAllowed() && exitButton.visible;
   const uiTargets = visible ? getXrUiTargets() : [];
   for (let i = 0; i < xrAimControllers.length; i += 1) {
     const controller = xrAimControllers[i];
