@@ -8,3 +8,9 @@ node_modules/
 output/
 *.log
 *.blend1
+
+# Wrangler local development secrets (never commit!)
+.dev.vars
+
+# Wrangler build artifacts
+.wrangler/

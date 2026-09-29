@@ -1,0 +1,26 @@
+{
+  "name": "workspace",
+  "version": "1.0.0",
+  "description": "Meta Quest 3 の VR / AR と、PC ブラウザの3Dプレビューで動く Three.js + WebXR デモです。 宇宙空間に浮かぶワイヤーフレームの部屋を舞台に、地球をコントローラーやキーボードで弾きながら、月、惑星、太陽フレア、インターステラー風ブラックホール、Apollo 11風ミッション、USS Enterprise風のワープ演出、クリンゴン船のクローク解除風通過演出、小さな隕石、人工衛星、旅客機、彗星、夜景、オーロラ、稲光などを眺められます。",
+  "main": "index.js",
+  "directories": {
+    "doc": "docs"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/matzoka/quest-xr-glass-demo.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/matzoka/quest-xr-glass-demo/issues"
+  },
+  "homepage": "https://github.com/matzoka/quest-xr-glass-demo#readme",
+  "devDependencies": {
+    "wrangler": "^4.143.0"
+  }
+}

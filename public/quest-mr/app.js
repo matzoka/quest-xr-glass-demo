@@ -14,7 +14,15 @@ const blackHoleTourButton = document.querySelector("#blackHoleTourButton");
 const controllerHelpButton = document.querySelector("#controllerHelpButton");
 const taxiAnalyticsButton = document.querySelector("#taxiAnalyticsButton");
 const poseDebugOutputEl = document.querySelector("#poseDebugOutput");
-const APP_VERSION = "v2026.09.29.03";
+
+// Taxi feature gating: only show if Worker injected __TAXI_ALLOWED__=true
+// When accessed outside Worker (GitHub Pages, local file), defaults to hidden
+const TAXI_ALLOWED = window.__TAXI_ALLOWED__ === true;
+if (TAXI_ALLOWED && taxiAnalyticsButton) {
+  taxiAnalyticsButton.removeAttribute("hidden");
+}
+
+const APP_VERSION = "v2026.09.29.06";
 const DEBUG_TOP_VIEW = new URLSearchParams(window.location.search).has("topDebug");
 const DEBUG_TOP_VIEW_DISTANCE = Number(new URLSearchParams(window.location.search).get("topDebugDist"));
 const DEBUG_BLACK_HOLE_VIEW = new URLSearchParams(window.location.search).has("blackHoleDebug");
@@ -3122,7 +3130,7 @@ async function enterXr(mode) {
     enterpriseOrbitXrButton.visible = true;
     klingonXrButton.visible = true;
     blackHoleTourXrButton.visible = true;
-    taxiAnalyticsXrButton.visible = true;
+    taxiAnalyticsXrButton.visible = TAXI_ALLOWED;
     enterpriseOrbitXrIcon.visible = true;
     klingonXrIcon.visible = true;
     blackHoleTourXrIcon.visible = true;
@@ -8519,6 +8527,7 @@ function getTaxiAnalyticsViewTarget() {
 }
 
 function requestTaxiAnalyticsRoom() {
+  if (!TAXI_ALLOWED) return; // Gated: requires valid authentication
   if (inTaxiAnalyticsRoom || taxiAnalyticsPreview2D) {
     returnFromTaxiAnalyticsRoom();
     return;

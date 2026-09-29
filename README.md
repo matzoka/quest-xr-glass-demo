@@ -190,22 +190,25 @@ Apollo 11そのものの精密シミュレーションではなく、Questの小
 
 ## Project Structure
 
-- `index.html`: GitHub Pages用の入口。`quest-mr/` へリダイレクトします。
-- `quest-mr/index.html`: アプリ本体のHTML。
-- `quest-mr/app.js`: Three.jsシーン、WebXR、入力、宇宙演出、Apollo風ミッション、Enterprise風ワープ演出、クリンゴン船演出、太陽・惑星・月の陰影制御の本体。
-- `quest-mr/styles.css`: HUDとボタンのスタイル。
-- `quest-mr/assets/`: 地球、月、惑星、Enterpriseモデル、クリンゴン船モデル、音声などのアセット。
-- `quest-mr/inspect.html` / `quest-mr/inspect.js`: 現行クリンゴン船モデルを単体確認するための検査ビュー。
-- `quest-mr/_headers`: 静的ホスト用のMIME設定とCOOP / COEPヘッダー設定。
+- `public/`: Cloudflare Workers Static Assets用の静的ファイルディレクトリ
+  - `index.html`: 入口ページ。`quest-mr/` へリダイレクトします。
+  - `quest-mr/index.html`: アプリ本体のHTML。
+  - `quest-mr/app.js`: Three.jsシーン、WebXR、入力、宇宙演出、Apollo風ミッション、Enterprise風ワープ演出、クリンゴン船演出、太陽・惑星・月の陰影制御の本体。
+  - `quest-mr/styles.css`: HUDとボタンのスタイル。
+  - `quest-mr/assets/`: 地球、月、惑星、Enterpriseモデル、クリンゴン船モデル、音声などのアセット。
+  - `quest-mr/inspect.html` / `quest-mr/inspect.js`: 現行クリンゴン船モデルを単体確認するための検査ビュー。
+  - `quest-mr/_headers`: 静的ホスト用のMIME設定とCOOP / COEPヘッダー設定。
+- `worker/index.js`: Cloudflare Worker（認証、HTMLRewriter）
+- `wrangler.jsonc`: Wrangler設定
 - `docs/images/`: README掲載用スクリーンショット。
 - `scripts/`: 初期のBlender生成スクリプト。現在の地球デモ本体では使用していません。
 
 ## Local Preview
 
-任意の静的HTTPサーバーで `quest-mr` を配信します。
+任意の静的HTTPサーバーで `public` ディレクトリを配信します。
 
 ```bash
-npx http-server quest-mr -p 4321 -c-1
+npx http-server public -p 4321 -c-1
 ```
 
 ブラウザで以下を開きます。
@@ -217,7 +220,7 @@ http://localhost:4321
 Pythonだけで確認する場合:
 
 ```bash
-cd quest-mr
+cd public
 python -m http.server 4321
 ```
 
@@ -277,3 +280,87 @@ Quest Browserで上記URLを開き、`Enter VR` または `Enter AR` を押し�
 このデモにはNASA由来・three.jsサンプル由来の惑星テクスチャ、フリーのEnterprise風3Dモデル、現行のクリンゴン船OBJ / MTLモデル、ローカル音声ファイルを含みます。再配布や公開利用の際は、各素材のライセンスと権利関係を確認してください。
 
 `quest-mr/assets/enterprise_theme.mp3`、`quest-mr/assets/star-trek-viewer.mp3`、`quest-mr/assets/warp.mp3`、`quest-mr/assets/klingon_theme.mp3`、`quest-mr/assets/star-trek-tng-transporter.mp3`、`quest-mr/assets/star-trek-transportation.mp3` を差し替える場合も、利用する音源の権利確認は利用者側で行ってください。
+
+## Cloudflare Workersデプロイ
+
+このリポジトリはCloudflare Workers Static Assetsとしてデプロイできます。GitHub Pagesとは別に、シークレットキーでゲートされた「タクシー業務アプリ分析」機能を有効にできます。
+
+### デプロイ手順
+
+```bash
+# 1. Cloudflare CLIでデプロイ
+npx wrangler deploy
+```
+
+### シークレット設定
+
+「タクシー業務アプリ分析」ボタンを有効にするには、`TAXI_APP_KEY` シークレットを設定します。
+
+**CLIで設定：**
+
+```bash
+npx wrangler secret put TAXI_APP_KEY
+# プロンプトでシークレット値を入力
+```
+
+**Cloudflareダッシュボードで設定：**
+
+1. [Cloudflare Dashboard](https://dash.cloudflare.com/) にログイン
+2. Workers & Pages → `quest-xr-glass-demo` を選択
+3. Settings → Variables and Secrets
+4. Add → Type: Secret → Name: `TAXI_APP_KEY` → 値を入力して保存
+
+### アクセス方法
+
+シークレット設定後、以下のようにキーをURLパラメータで渡します：
+
+```
+https://your-worker.workers.dev/quest-mr/?key=YOUR_SECRET_KEY
+```
+
+- 正しいキーを渡すと、HttpOnlyクッキーが設定され、キーなしのURLにリダイレクトされます
+- 以降はクッキーで認証され、「タクシー業務アプリ分析」ボタンが表示されます
+- クッキーは7日間有効です
+
+**ログアウト：**
+
+```
+https://your-worker.workers.dev/quest-mr/?key=logout
+```
+
+または
+
+```
+https://your-worker.workers.dev/logout
+```
+
+### 仕組み
+
+1. **キー検証**: URLパラメータ `?key=...` をWorker側でシークレットと定数時間比較
+2. **クッキー設定**: 正しいキーの場合、署名付きHttpOnly/Secure/SameSiteクッキーを設定
+3. **HTMLリライト**: 認証なしの場合、HTMLRewriterでタクシー関連のUI要素を削除
+4. **クライアント側ガード**: `window.__TAXI_ALLOWED__` フラグでJavaScript側でもゲート
+
+### セキュリティについての注意
+
+⚠️ **このリポジトリはパブリックです。** タクシールームのソースコード（`quest-mr/app.js` のタクシー関連部分）はGitHub上で誰でも閲覧できます。このゲーティングは、デプロイされたサイトへのアクセスを制御するものであり、ソースコードを非公開にするものではありません。
+
+### ローカル開発
+
+ローカルでテストする場合は、`.dev.vars` ファイルを作成します（`.gitignore` に含まれているため、コミットされません）：
+
+```bash
+# .dev.vars
+TAXI_APP_KEY=your-test-key
+```
+
+```bash
+npx wrangler dev
+```
+
+### 設定ファイル
+
+- `wrangler.jsonc` - Wrangler設定（Worker名、アセットディレクトリ、compatibility_date）
+- `worker/index.js` - Workerスクリプト（認証、HTMLRewriter）
+- `.assetsignore` - 静的アセットから除外するファイル（Workerソース、設定ファイル等）
+- `.dev.vars` - ローカル開発用シークレット（gitignore済み、自分で作成）

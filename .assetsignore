@@ -1,0 +1,13 @@
+# Files to exclude from static assets upload
+# These patterns apply to the public/ directory
+
+# Git files that might be present
+.git/
+.gitignore
+
+# Any temp or log files
+*.log
+*.tmp
+
+# macOS metadata
+.DS_Store
