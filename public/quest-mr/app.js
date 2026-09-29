@@ -22,7 +22,7 @@ if (TAXI_ALLOWED && taxiAnalyticsButton) {
   taxiAnalyticsButton.removeAttribute("hidden");
 }
 
-const APP_VERSION = "v2026.09.29.17";
+const APP_VERSION = "v2026.09.29.18";
 const DEBUG_TOP_VIEW = new URLSearchParams(window.location.search).has("topDebug");
 const DEBUG_TOP_VIEW_DISTANCE = Number(new URLSearchParams(window.location.search).get("topDebugDist"));
 const DEBUG_BLACK_HOLE_VIEW = new URLSearchParams(window.location.search).has("blackHoleDebug");
@@ -5231,8 +5231,7 @@ for (let index = 0; index < 2; index += 1) {
           returnFromTaxiAnalyticsRoom();
         }
         else if (uiHit.object.userData?.isTaxiMicButton) {
-          playXrButtonPressSound();
-          toggleTaxiVoiceInput();
+          toggleTaxiVoiceInput(); // silent: no press sound for the mic (start/stop)
         }
         else if (uiHit.object.userData?.isTaxiQuestionButton) {
           playXrButtonPressSound();
@@ -5243,8 +5242,7 @@ for (let index = 0; index < 2; index += 1) {
           setTaxiFocusedPanel(taxiAnalyticsPanels.indexOf(uiHit.object));
         }
         else if (uiHit.object.userData?.isTaxiChatScroll) {
-          playXrButtonPressSound();
-          scrollTaxiChatPanel(uiHit.object.userData.scrollDir * TAXI_CHAT_SCROLL_STEP_PX);
+          scrollTaxiChatPanel(uiHit.object.userData.scrollDir * TAXI_CHAT_SCROLL_STEP_PX); // silent scroll
         }
         return;
       }
@@ -5310,7 +5308,8 @@ function updateHandTouch(dt) {
     }
     if (taxiTouch && taxiTouch !== taxiButtonTouching[i]) {
       initAudio();
-      playXrButtonPressSound();
+      // mic (start/stop) and chat scroll buttons are silent; other taxi buttons keep the press sound
+      if (taxiTouch !== "mic" && !touchedScrollDir) playXrButtonPressSound();
       if (taxiTouch === "return") returnFromTaxiAnalyticsRoom();
       else if (taxiTouch === "mic") toggleTaxiVoiceInput();
       else if (touchedQuestion) processTaxiConversation(touchedQuestion);
@@ -10872,6 +10871,40 @@ const llmEndpointEl = document.getElementById("llmEndpoint");
 const llmApiKeyEl = document.getElementById("llmApiKey");
 const llmModelEl = document.getElementById("llmModel");
 const llmSttModelEl = document.getElementById("llmSttModel");
+const llmApiKeyToggleEl = document.getElementById("llmApiKeyToggle");
+const llmApiKeyHintEl = document.getElementById("llmApiKeyHint");
+
+function setTaxiApiKeyVisible(visible) {
+  if (!llmApiKeyEl) return;
+  llmApiKeyEl.type = visible ? "text" : "password";
+  if (llmApiKeyToggleEl) {
+    llmApiKeyToggleEl.textContent = visible ? "非表示" : "表示";
+    llmApiKeyToggleEl.setAttribute("aria-pressed", visible ? "true" : "false");
+  }
+}
+
+// Shows what the app will actually send (after removing spaces/newlines/"Bearer " etc.).
+function updateTaxiApiKeyHint(storedRaw) {
+  if (!llmApiKeyHintEl || !llmApiKeyEl) return;
+  const raw = llmApiKeyEl.value;
+  const key = taxiSanitizeApiKey(raw);
+  if (!key) {
+    llmApiKeyHintEl.textContent = raw ? "⚠ 空白・改行だけでキーがありません。" : "";
+    return;
+  }
+  const peek = key.length > 12 ? `先頭「${key.slice(0, 4)}」…末尾「${key.slice(-4)}」` : "";
+  let text = `使用するキー: ${key.length}文字 ${peek}`;
+  if (key !== raw) text += `\n⚠ 入力に空白・改行・「Bearer 」などが含まれています。取り除いた${key.length}文字のキーを使います（保存すると欄も置き換わります）。`;
+  else if (typeof storedRaw === "string" && storedRaw !== key) text += "\n⚠ 保存済みキーに空白・改行などが含まれていたため、取り除いて使っています。";
+  if (/[^\x21-\x7e]/.test(key)) text += "\n⚠ 全角文字など使えない文字が含まれています。キーを貼り直してください。";
+  llmApiKeyHintEl.textContent = text;
+}
+
+llmApiKeyToggleEl?.addEventListener("click", () => {
+  setTaxiApiKeyVisible(llmApiKeyEl?.type === "password");
+});
+llmApiKeyEl?.addEventListener("input", () => updateTaxiApiKeyHint());
+setTaxiApiKeyVisible(true);
 const llmSaveBtnEl = document.getElementById("llmSaveBtn");
 const llmClearBtnEl = document.getElementById("llmClearBtn");
 const llmCloseBtnEl = document.getElementById("llmCloseBtn");
@@ -10942,13 +10975,17 @@ taxiQuickBtns.forEach((btn) => {
 taxiSettingsBtnEl?.addEventListener("click", () => {
   if (taxiSettingsModalEl) {
     taxiSettingsModalEl.hidden = false;
+    setTaxiApiKeyVisible(true);
     const config = getTaxiLlmConfig();
+    let storedRawKey;
+    try { storedRawKey = JSON.parse(localStorage.getItem(TAXI_CONVERSATION_STORAGE_KEY) || "null")?.apiKey; } catch (e) { storedRawKey = undefined; }
     if (config) {
       if (llmEndpointEl) llmEndpointEl.value = config.endpoint || "";
       if (llmApiKeyEl) llmApiKeyEl.value = config.apiKey || "";
       if (llmModelEl) llmModelEl.value = config.model || "";
       if (llmSttModelEl) llmSttModelEl.value = config.sttModel || "";
     }
+    updateTaxiApiKeyHint(storedRawKey);
   }
 });
 
@@ -10958,6 +10995,7 @@ llmSaveBtnEl?.addEventListener("click", () => {
   const model = llmModelEl?.value.trim();
   const sttModel = llmSttModelEl?.value.trim() || "";
   if (llmApiKeyEl) llmApiKeyEl.value = apiKey;
+  updateTaxiApiKeyHint();
   
   if (!endpoint || !apiKey) {
     if (llmStatusEl) llmStatusEl.textContent = "エンドポイントとAPIキーは必須です。";
@@ -10987,6 +11025,7 @@ llmClearBtnEl?.addEventListener("click", () => {
   if (llmApiKeyEl) llmApiKeyEl.value = "";
   if (llmModelEl) llmModelEl.value = "";
   if (llmSttModelEl) llmSttModelEl.value = "";
+  updateTaxiApiKeyHint();
   if (llmStatusEl) llmStatusEl.textContent = "設定をクリアしました。オフラインモードで動作します。";
 });
 
