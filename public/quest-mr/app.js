@@ -22,7 +22,7 @@ if (TAXI_ALLOWED && taxiAnalyticsButton) {
   taxiAnalyticsButton.removeAttribute("hidden");
 }
 
-const APP_VERSION = "v2026.09.29.27";
+const APP_VERSION = "v2026.09.29.28";
 const DEBUG_TOP_VIEW = new URLSearchParams(window.location.search).has("topDebug");
 const DEBUG_TOP_VIEW_DISTANCE = Number(new URLSearchParams(window.location.search).get("topDebugDist"));
 const DEBUG_BLACK_HOLE_VIEW = new URLSearchParams(window.location.search).has("blackHoleDebug");
@@ -9336,7 +9336,16 @@ function createDynamicPanel(spec) {
     return { success: false, error: validation.errors.join(", ") };
   }
   
-  const queryResult = taxiTakePrefetched(taxiPanelDataKey(spec)) || queryTaxiData(spec);
+  let queryResult;
+  if (taxiPanelConditions(spec)) {
+    // v28: conditional panel = the query_data result (D1 when prefetched, else local) for the same conditions
+    const qargs = taxiPanelQueryArgs(spec);
+    const r = taxiTakePrefetched(taxiQueryDataKey(qargs)) || runTaxiFreeQuery(qargs);
+    if (!r || r.error) return { success: false, error: (r && (r.invalid || []).map(i => i.message).join(", ")) || r?.error || "集計エラー", invalid: r?.invalid };
+    queryResult = taxiQueryResultToPanelData(spec, r);
+  } else {
+    queryResult = taxiTakePrefetched(taxiPanelDataKey(spec)) || queryTaxiData(spec);
+  }
   if (queryResult.error) {
     return { success: false, error: queryResult.error };
   }
@@ -9413,7 +9422,8 @@ function placeTaxiDisplaySlot(mesh, slot, y) {
 function taxiDynamicPanelKey(spec) {
   const chart = spec.chartType || (spec.groupBy ? "bar" : "kpi");
   const limit = Number(spec.limit) > 0 ? Number(spec.limit) : "";
-  return [spec.metric || "", spec.groupBy || "", chart, limit, spec.sort || "", String(spec.title || "").trim()].join("|");
+  const cond = taxiPanelConditions(spec);
+  return [spec.metric || "", spec.groupBy || "", chart, limit, spec.sort || "", String(spec.title || "").trim(), cond ? JSON.stringify(cond) : ""].join("|");
 }
 
 const TAXI_PANELS_FULL_MESSAGE = "作成パネルがいっぱいです（4枚）。新しいパネルを作るには「クリア」を押してください。";
@@ -9973,7 +9983,7 @@ const LLM_TOOLS = [
     type: "function",
     function: {
       name: "query_data",
-      description: "サンプルのタクシー乗車データを自由な条件で集計し、統計値(JSON)を返す。数値を答える前に必ずこれを呼ぶこと。返り値: value=条件全体の集計値, matchedTrips=該当乗車数, perDay=1日あたりの平均/最大日/最小日(加算系メトリック), perTrip=1乗車あたりの平均/最大/最小(売上・距離・時間), groupBy指定時は groupStats(グループ間の平均/最大/最小) と groups(24グループ以下=時間帯・曜日・月などは全件、日付など多い場合は上位10件。limitで変更可)。売上以外のメトリックのgroupBy結果では fareSummary は省略される。fareSummary には常に税抜(taxExcluded)・税込(taxIncluded)・収入=税込+迎車料金(totalIncome)それぞれの合計/1乗車平均・最高・最低/1日あたり平均・最高日・最低日と、迎車あり/なし別(byDispatch)の件数・金額が入る。未知の値を指定すると error と suggestions(近い候補) と validValues が返る。",
+      description: "サンプルのタクシー乗車データを自由な条件で集計し、統計値(JSON)を返す。数値を答える前に必ずこれを呼ぶこと。返り値: value=条件全体の集計値, matchedTrips=該当乗車数, perDay=1日あたりの平均/最大日/最小日(加算系メトリック), perTrip=1乗車あたりの平均/最大/最小(売上・距離・時間), groupBy指定時は groupStats(グループ間の平均/最大/最小) と groups(売上系は各グループの trips=乗車回数 と avgPerTrip=1乗車平均 も入る。売上・回数・平均は metric=fare の1回で足りる。24グループ以下=時間帯・曜日・月などは全件、日付など多い場合は上位10件。limitで変更可)。売上以外のメトリックのgroupBy結果では fareSummary は省略される。fareSummary には常に税抜(taxExcluded)・税込(taxIncluded)・収入=税込+迎車料金(totalIncome)それぞれの合計/1乗車平均・最高・最低/1日あたり平均・最高日・最低日と、迎車あり/なし別(byDispatch)の件数・金額が入る。未知の値を指定すると error と suggestions(近い候補) と validValues が返る。",
       parameters: {
         type: "object",
         properties: {
@@ -10065,6 +10075,10 @@ const LLM_TOOLS = [
             enum: ["asc", "desc", ""],
             description: "Sort order for the data",
           },
+          conditions: {
+            type: "object",
+            description: "v28: optional filters for a conditional panel, same argument names and values as query_data (dateFrom, dateTo, weekdays, hourFrom, hourTo, timeFrom, timeTo, dropoffTimeFrom, dropoffTimeTo, pickupAreas, dropoffAreas, pickupTowns, dropoffTowns, pickupKeyword, dropoffKeyword, distanceMin, distanceMax, fareMin, fareMax, dispatch). Example: 布田から乗った時間帯別の売上 -> metric=fare, groupBy=hour, conditions={pickupKeyword:[\"布田\"]}. The panel then shows exactly the query_data result for these conditions.",
+          },
         },
         required: ["metric"],
       },
@@ -10129,8 +10143,18 @@ function taxiEnsureClaimedPanel(text, userMessage, state) {
   }
   return `${text}\n（※パネルは作成できませんでした。もう一度「〇〇別の△△をパネルにして」のように依頼してください）`;
 }
-const TAXI_LLM_MAX_TOKENS = 1600;
-const TAXI_LLM_RETRY_MAX_TOKENS = 3200;
+// v28: hy3 counts its reasoning tokens in max_tokens. 1600 was used up by reasoning on detailed follow-up
+// questions (finish=length, content cut mid-sentence or empty -> the short-answer retry). Larger budgets,
+// capped by the time left before the 90 s question deadline (see taxiLlmTokenBudget).
+// Live, hy3 sometimes "thinks" for 5,000+ tokens (50 s+) on a detailed question and never writes the answer, so a
+// normal round is capped at 4,000; when a round ends with no answer text (or is cut), the rest of the question runs in
+// "fast mode" (reasoning_effort "none": hy3 answers without the hidden thinking; checked live: 0 reasoning tokens).
+const TAXI_LLM_MAX_TOKENS = 4000;
+const TAXI_LLM_RETRY_MAX_TOKENS = 6000;
+const TAXI_LLM_MIN_TOKENS = 800;
+const TAXI_LLM_TOKENS_PER_S = 70; // conservative hy3 generation speed seen live (~90 tokens/s)
+const TAXI_LLM_CONTINUE_MIN_LEFT_MS = 25000; // auto-continue a cut answer only with this much time left
+const TAXI_LLM_MORE_MARKER = "（続きがあります。「続けて」と話しかけると続きを表示します）";
 const TAXI_LLM_CUT_SHORT_CHARS = 60; // v25: finish=length with less than this = no real answer yet
 
 // Known speech-recognition mishearings, detected in the user's own words (the model tends to
@@ -10234,6 +10258,38 @@ function taxiNoteIfD1Unavailable() {
   if (taxiD1State === "unavailable" && typeof window !== "undefined" && window.__TAXI_ALLOWED__ === true) taxiNoteLocalData(taxiD1UnavailableReason || "D1未接続");
 }
 
+// v28: create_panel.conditions (query_data filter args) -> non-empty object or null
+const TAXI_PANEL_CONDITION_KEYS = ["dateFrom", "dateTo", "weekdays", "hourFrom", "hourTo", "timeFrom", "timeTo", "dropoffTimeFrom", "dropoffTimeTo", "pickupAreas", "dropoffAreas", "pickupTowns", "dropoffTowns", "pickupKeyword", "dropoffKeyword", "distanceMin", "distanceMax", "fareMin", "fareMax", "dispatch"];
+function taxiPanelConditions(spec) {
+  const c = spec && spec.conditions;
+  if (!c || typeof c !== "object" || Array.isArray(c)) return null;
+  const out = {};
+  for (const k of TAXI_PANEL_CONDITION_KEYS) {
+    const v = c[k];
+    if (v === undefined || v === null || v === "" || (Array.isArray(v) && !v.length)) continue;
+    out[k] = v;
+  }
+  return Object.keys(out).length ? out : null;
+}
+function taxiPanelQueryArgs(spec) {
+  const args = { metric: spec.metric, ...taxiPanelConditions(spec) };
+  if (spec.groupBy) { args.groupBy = spec.groupBy; args.limit = Number(spec.limit) > 0 ? Number(spec.limit) : 31; }
+  if (spec.sort === "asc" || spec.sort === "desc") args.sort = spec.sort;
+  return args;
+}
+// query_data result -> the {data:[{key,label,value,formatted,count}], total} shape the panel renderer uses
+function taxiQueryResultToPanelData(spec, r) {
+  const fmt = TAXI_METRICS[spec.metric]?.format || (v => String(v));
+  if (!spec.groupBy || !Array.isArray(r.groups)) {
+    const v = Number(r.value) || 0;
+    return { data: [{ label: TAXI_METRICS[spec.metric]?.label || spec.metric, value: v, formatted: fmt(v) }], total: v, totalFormatted: fmt(v), conditional: true, filters: r.filters };
+  }
+  let groups = r.groups;
+  if (spec.groupBy === "hour") groups = groups.filter(g => (g.trips ?? 1) > 0); // no empty 5-8時 bars
+  const data = groups.map(g => ({ key: g.key, label: String(g.key), value: Number(g.value) || 0, formatted: fmt(Number(g.value) || 0), count: g.trips }));
+  return { data, total: Number(r.value) || 0, totalFormatted: fmt(Number(r.value) || 0), conditional: true, filters: r.filters };
+}
+
 async function taxiPrefetchPanel(spec, signal = null) {
   if (!taxiD1Enabled()) { taxiNoteIfD1Unavailable(); return; }
   if (!spec || typeof spec !== "object" || !spec.metric || (spec.filters && Object.keys(spec.filters).length)) return;
@@ -10250,7 +10306,13 @@ async function taxiPrefetchToolData(funcName, args, signal = null) {
     const r = await taxiD1Query("query_data", { args }, signal);
     if (r) taxiPrefetched.set(taxiQueryDataKey(args), r);
   } else if (funcName === "create_panel") {
-    await taxiPrefetchPanel(args, signal);
+    if (taxiPanelConditions(args) && validateAnalysisSpec(args).valid) {
+      const qargs = taxiPanelQueryArgs(args);
+      const r = await taxiD1Query("query_data", { args: qargs }, signal);
+      if (r) taxiPrefetched.set(taxiQueryDataKey(qargs), r);
+    } else {
+      await taxiPrefetchPanel(args, signal);
+    }
   }
 }
 
@@ -10264,7 +10326,14 @@ async function taxiPrefetchForMessage(userMessage, signal = null) {
 // no fareSummary (~1 KB of 売上 figures nobody asked for) and no groups[].trips when it equals value.
 // Cuts an hourly tripCount result from ~2.3 KB to ~0.9 KB; 7 weekday×hour queries no longer build 30 KB+ prompts.
 const TAXI_MONEY_METRICS = new Set(["fare", "fareWithTax", "totalFare", "dispatchFee", "avgFare"]);
+// v28: additive money metrics (fare / fareWithTax / totalFare) grouped: each group also gets avgPerTrip (= value / trips,
+// rounded), so 「時間帯ごとの売上・回数・1乗車平均」 needs one query and no mental division (hy3 spent 5,000+ reasoning
+// tokens dividing 20 groups by hand and the answer never came). LLM view only; the query result itself is unchanged.
+const TAXI_ADDITIVE_MONEY_METRICS = new Set(["fare", "fareWithTax", "totalFare"]);
 function taxiCompactQueryResultForLlm(obj) {
+  if (obj && typeof obj === "object" && Array.isArray(obj.groups) && TAXI_ADDITIVE_MONEY_METRICS.has(obj.metric)) {
+    return { ...obj, groups: obj.groups.map((g) => (g && Number(g.trips) > 0 ? { ...g, avgPerTrip: Math.round(g.value / g.trips) } : g)) };
+  }
   if (!obj || typeof obj !== "object" || !Array.isArray(obj.groups) || !obj.metric || TAXI_MONEY_METRICS.has(obj.metric)) return obj;
   const out = { ...obj };
   if (out.fareSummary) { delete out.fareSummary; out.fareSummaryOmitted = "売上が必要なら metric=fare で query_data を呼ぶ"; }
@@ -10296,7 +10365,7 @@ function executeTaxiToolCall(funcName, args, state) {
     const panelResult = createDynamicPanel(args);
     if (panelResult.full) state.panelsFull = true;
     if (panelResult.full) return { ok: false, full: true, error: panelResult.error, instruction: "パネルは作成していない。既存のパネルは消していない。ユーザーに、作成パネルが4枚でいっぱいなので「クリア」を押してから依頼するよう伝えること。" };
-    if (!panelResult.success) return { ok: false, error: `パネル作成エラー: ${panelResult.error}` };
+    if (!panelResult.success) return { ok: false, error: `パネル作成エラー: ${panelResult.error}`, ...(panelResult.invalid ? { invalid: panelResult.invalid } : {}) };
     state.panelCreated = true;
     const metricLabel = TAXI_METRICS[args.metric]?.label || args.metric;
     const dimLabel = args.groupBy ? `${TAXI_DIMENSIONS[args.groupBy]?.label}` : "";
@@ -10622,6 +10691,23 @@ async function taxiTranscribeAudioBase64(wavBase64, config, signal = null) {
   return "";
 }
 
+// v28: max_tokens for one LLM request = the wanted budget, but never more than the answer that can still be
+// generated before the 90 s question deadline (so a long answer ends as finish=length + 「続き」 marker
+// instead of the deadline message). At least TAXI_LLM_MIN_TOKENS.
+function taxiLlmTokenBudget(wanted, timeLeftMs) {
+  const byTime = Math.floor(((Number(timeLeftMs) || 0) - 6000) / 1000 * TAXI_LLM_TOKENS_PER_S);
+  return Math.max(TAXI_LLM_MIN_TOKENS, Math.min(wanted, byTime));
+}
+
+// v28: join an answer that was cut (finish=length) with its continuation; drops a repeated overlap
+function taxiJoinContinuation(a, b) {
+  a = String(a || ""); b = String(b || "").replace(/^\s+/, "");
+  for (let n = Math.min(a.length, b.length, 80); n >= 6; n--) {
+    if (a.endsWith(b.slice(0, n))) return a + b.slice(n);
+  }
+  return a + b;
+}
+
 async function callLlmBackend(userMessage, config, signal = null) {
   const taxiToday = taxiLocalDateString(new Date());
   const taxiYesterday = (() => { const d = new Date(); d.setDate(d.getDate() - 1); return taxiLocalDateString(d); })();
@@ -10664,11 +10750,13 @@ ${taxiPanelData.map((p, i) => `${i}: ${p.title} - ${p.value} (${p.unit})`).join(
 3. 条件（期間・曜日・時間帯・乗車地・降車地・住所・距離・運賃・迎車）は query_data の引数で指定する。「15時から18時まで」は hourFrom=15, hourTo=18。分を含む指定（「15時半から17時まで」「15時30分から17時まで」）は timeFrom="15:30", timeTo="17:00"（開始を含み終了を含まない）。時刻指定は乗車時刻が基本、「降車した」「降りた」なら dropoffTimeFrom/dropoffTimeTo（例:「22時以降に降車」→ dropoffTimeFrom="22:00"、「22時から23時の間に降車」→ "22:00"〜"23:00"）。住所は「調布市下石原三丁目から乗った回数」→ pickupKeyword=["調布市下石原三丁目"]、「府中市白糸台への降車回数」→ dropoffKeyword=["府中市白糸台"]。住所キーワードが0件ならデータに無いことを伝え、suggestions があれば「もしかして〇〇のことですか？」と聞く。
 4. 音声認識の聞き間違い・誤字・存在しない値（例: 一覧にない乗車地・降車地名/町名、25時などありえない時刻、似た音の名前）に見えるときは、有効な値の一覧から最も近い候補を選び「もしかして〇〇のことですか？」と提案する。query_data が error と suggestions を返した場合も同様にする。ユーザーの言葉が有効な値と完全に一致しないとき（カタカナ・ひらがな表記、「国領駅」「仙川駅」のような付け足し、似た音の別名など）も、黙って読み替えずに必ず「もしかして〇〇のことですか？」と一言添える。ただし市の省略（「布田」→調布市布田、「白糸台」→府中市白糸台）や丁目の省略は聞き間違いではないので、もしかしてを付けずにそのまま答える。候補が1つに絞れる場合は、その候補で query_data を実行して「〇〇であれば…です」と数値も添える。query_data の filters.corrections に読み替えがあれば、回答の最初に必ず「もしかして〇〇のことですか？」と書く。ありえない時刻（25時など）を自分で別の時刻に読み替えた場合も「もしかして〇時のことですか？」と確認する。
 5. パネル表示を頼まれたら create_panel、固定パネルについての質問は focus_panel、分析の一覧は list_capabilities、パネル削除は clear_panels を使う。パネルの依頼には毎回必ず create_panel を呼ぶ（会話履歴に「パネルを作成しました」とあっても、それは過去の依頼の結果であり、今回のパネルはまだ存在しない）。create_panel を呼ばずに「パネルを作成しました」と書いてはいけない。
-6. 回答は自然な日本語で簡潔に（2〜4文程度）。表・Markdown（**など）・ツールの内部名や英語のキー名（perDay, groupStats, fareSummary など）は書かない。金額・件数はツールの数値をそのまま3桁カンマ区切りで書き（例: 101,757,180円）、万・億への換算はしない。
+6. 回答は自然な日本語で。通常は簡潔に（2〜4文程度）。ただしユーザーが「詳しく」「全部」「すべて」「一覧」「理由」「提案」などを求めたときは省略せず、必要なだけ詳しく答える（改行や「・」の箇条書きは可）。表・Markdown（**など）・ツールの内部名や英語のキー名（perDay, groupStats, fareSummary など）は書かない。金額・件数はツールの数値をそのまま3桁カンマ区切りで書き（例: 101,757,180円）、万・億への換算はしない。
 7. 運賃・売上を答えるときは税抜と税込の両方を「6,000円（消費税込みで6,600円）」の形で示す（query_data の fareSummary を使う）。距離からの運賃計算は calc_fare を使う。売上の質問では通常、運賃（税抜/税込）を答え、迎車料金を含む収入や「迎車を除くと〜」は fareSummary.byDispatch / totalIncome を使って必要に応じて添える。
 8. 回答の最後に、これはサンプルデータであることを必ず一言添える（例:「※サンプルデータです」）。
 9. 日付の指定（今日・昨日・○月○日）がデータの無い日（明休・公休、query_data の daysInPeriod=0）なら「その日は乗務なし（明休/公休）」と答え、直近の出番の数値を提案する。明休の日の「昨日」「昨夜」は前日の出番（今朝4:50までの乗務）を指すので、その出番の日付で query_data を呼ぶ。
-10. 車両別・ドライバー別（運転手別・号車別）の集計や比較は存在しないので、自分から提案・言及しない。頼まれたら「このデータはご本人の1台・1名分の記録なので、車両別・ドライバー別の分析はありません」と丁寧に伝え、時間帯別・曜日別・月別・乗車地別などの代わりの分析を提案する（query_data や create_panel は呼ばない）。`;
+10. 車両別・ドライバー別（運転手別・号車別）の集計や比較は存在しないので、自分から提案・言及しない。頼まれたら「このデータはご本人の1台・1名分の記録なので、車両別・ドライバー別の分析はありません」と丁寧に伝え、時間帯別・曜日別・月別・乗車地別などの代わりの分析を提案する（query_data や create_panel は呼ばない）。
+11. ユーザーが「続けて」「続き」と言ったら、直前の回答が途中で終わった所から、前の文を繰り返さずに続きを書く。
+12. 条件付きの集計（例:「布田から乗った時間帯別の売上」「迎車ありの曜日別の乗車回数」「8月の降車地別の売上」など、期間・曜日・時間帯・乗車地・降車地・住所・距離・迎車などで絞り込んだ集計）をパネルにするときは、create_panel の conditions に query_data と同じ条件を入れる（metric と groupBy は create_panel 側に指定）。`;
 
   const messages = [
     { role: "system", content: systemPrompt },
@@ -10680,7 +10768,9 @@ ${taxiPanelData.map((p, i) => `${i}: ${p.title} - ${p.value} (${p.unit})`).join(
     messages.push({ role: "user", content: userMessage });
   }
 
-  const state = { focusPanel: -1, panelCreated: false, toolNotes: [], emptyRetries: 0, panelNudged: false };
+  const state = { focusPanel: -1, panelCreated: false, toolNotes: [], emptyRetries: 0, panelNudged: false, continued: 0, partial: "" };
+  const questionStartedAt = Date.now();
+  const timeLeftMs = () => TAXI_QUESTION_DEADLINE_MS - (Date.now() - questionStartedAt);
   const mishearings = taxiDetectMishearings(userMessage);
   if (mishearings.length) {
     messages.push({
@@ -10698,8 +10788,9 @@ ${taxiPanelData.map((p, i) => `${i}: ${p.title} - ${p.value} (${p.unit})`).join(
         messages,
         tools: LLM_TOOLS,
         tool_choice: finalRound ? "none" : "auto",
-        max_tokens: state.emptyRetries > 0 ? TAXI_LLM_RETRY_MAX_TOKENS : TAXI_LLM_MAX_TOKENS,
+        max_tokens: taxiLlmTokenBudget(state.fastMode ? TAXI_LLM_RETRY_MAX_TOKENS : TAXI_LLM_MAX_TOKENS, timeLeftMs()),
         temperature: 0.3,
+        ...(state.fastMode ? { reasoning_effort: "none" } : {}),
       }, signal);
       const choice = data.choices?.[0];
       if (!choice) {
@@ -10709,6 +10800,7 @@ ${taxiPanelData.map((p, i) => `${i}: ${p.title} - ${p.value} (${p.unit})`).join(
       const msg = choice.message || {};
       const toolCalls = Array.isArray(msg.tool_calls) ? msg.tool_calls : [];
       if (toolCalls.length > 0 && !finalRound) {
+        state.toolRounds = (state.toolRounds || 0) + 1;
         messages.push({ role: "assistant", content: msg.content || "", tool_calls: toolCalls });
         for (const toolCall of toolCalls) {
           const funcName = toolCall.function?.name;
@@ -10735,13 +10827,29 @@ ${taxiPanelData.map((p, i) => `${i}: ${p.title} - ${p.value} (${p.unit})`).join(
       let text = (msg.content || "").trim();
       // Reasoning models sometimes return an empty message (token budget spent on thinking): retry once with a larger budget.
       // v25: also when the budget ran out a few characters into the answer (seen live: finish=length, content 「曜日×」).
-      const cutShort = choice?.finish_reason === "length" && text.length < TAXI_LLM_CUT_SHORT_CHARS;
+      const cutShort = choice?.finish_reason === "length" && text.length < TAXI_LLM_CUT_SHORT_CHARS && !state.partial; // v28: not for a continuation
       if ((!text || cutShort) && !finalRound && state.emptyRetries < 1) {
         state.emptyRetries++;
-        // v25: live, hy3 spent the whole budget thinking about a 7×24 cross table; ask for a short answer instead
-        messages.push({ role: "user", content: "（自動チェック）回答が空か途中で切れていました。これ以上ツールは呼ばず、集計済みの結果から、表や全数値の列挙はせずに主な傾向（最大・最小・特徴）だけを2〜4文で今すぐ答えてください。" });
+        state.fastMode = true; // v28
+        // v25: live, hy3 spent the whole budget thinking about a 7×24 cross table
+        // v28: no longer forces a 2-4 sentence answer (users asking for details got a cut-down reply)
+        messages.push({ role: "user", content: state.toolRounds
+          ? "（自動チェック）考える時間が長すぎて回答本文が出ていません。これ以上ツールは呼ばず、考えるのは短くして、集計済みの結果から今すぐ回答本文を書いてください（表は使わない。詳しい説明を求められていれば必要なだけ詳しく）。"
+          : "（自動チェック）考える時間が長すぎて何も出力されていません。考えるのは短くして、必要な query_data などのツールを今すぐ呼んでください（数値は必ずツールの結果から）。" });
         continue;
       }
+      // v28: the budget ran out in the middle of a real answer -> ask once for the rest (if time allows), then join
+      if (choice?.finish_reason === "length" && text && !finalRound && state.continued < 1 && timeLeftMs() > TAXI_LLM_CONTINUE_MIN_LEFT_MS) {
+        state.continued++;
+        state.fastMode = true;
+        state.partial += text;
+        messages.push({ role: "assistant", content: text });
+        messages.push({ role: "user", content: "（自動チェック）回答が途中で切れました。ツールは呼ばず、前の文を繰り返さずに、切れた所からそのまま続きだけを書いてください。" });
+        continue;
+      }
+      const stillCut = choice?.finish_reason === "length" && !!text;
+      if (state.partial) text = taxiJoinContinuation(state.partial, text);
+      if (stillCut) text = `${text}\n${TAXI_LLM_MORE_MARKER}`;
       let focusPanel = state.focusPanel;
       const focusMatch = text.match(/\[FOCUS_PANEL:(\d)\]/);
       if (focusMatch) {
@@ -10768,11 +10876,11 @@ ${taxiPanelData.map((p, i) => `${i}: ${p.title} - ${p.value} (${p.unit})`).join(
       return { text, focusPanel, panelCreated: state.panelCreated };
     }
     if (!state.panelCreated && !state.panelsFull) await taxiPrefetchForMessage(userMessage, signal);
-    const lastText = taxiEnsureClaimedPanel(state.toolNotes.join("\n") || "処理を完了しました。", userMessage, state);
+    const lastText = taxiEnsureClaimedPanel(state.partial ? `${state.partial}\n${TAXI_LLM_MORE_MARKER}` : (state.toolNotes.join("\n") || "処理を完了しました。"), userMessage, state);
     return { text: lastText, focusPanel: state.focusPanel, panelCreated: state.panelCreated };
   } catch (error) {
     // v25: 90 s question deadline -> short message, no offline text; クリア -> silent
-    if (error?.kind === "deadline") return { text: TAXI_DEADLINE_MESSAGE, focusPanel: state.focusPanel, panelCreated: state.panelCreated, deadline: true };
+    if (error?.kind === "deadline") return { text: state.partial ? `${state.partial}\n${TAXI_LLM_MORE_MARKER}` : TAXI_DEADLINE_MESSAGE, focusPanel: state.focusPanel, panelCreated: state.panelCreated, deadline: true };
     if (error?.kind === "cancelled") return { text: "", focusPanel: -1, cancelled: true };
     if (error?.kind === "timeout") return { text: error.message, focusPanel: state.focusPanel, panelCreated: state.panelCreated, timedOut: true };
     console.error("LLM API error:", error);
@@ -11202,6 +11310,7 @@ const TAXI_CHAT_MAX_RENDER_MESSAGES = 40;
 const TAXI_CHAT_SCROLL_STEP_PX = 320;
 const TAXI_CHAT_STICK_SCROLL_PX_PER_S = 1100;
 let taxiChatScrollPx = 0; // how far the view is scrolled up from the latest message
+let taxiChatAnchorLastStart = false; // v28: next draw scrolls so the start of the latest AI reply is at the top
 let taxiChatMaxScrollPx = 0;
 let taxiChatRenderedCount = -1;
 let taxiVoiceStatusText = "";
@@ -11263,6 +11372,12 @@ function drawTaxiChatPanel(ctx, messages, scrollPx, statusText) {
     const { blocks, total } = layoutTaxiChatMessages(ctx, messages, textWidth);
     const maxScroll = Math.max(0, total - viewH);
     taxiChatMaxScrollPx = maxScroll;
+    const lastBlock = blocks[blocks.length - 1];
+    if (taxiChatAnchorLastStart && lastBlock && !lastBlock.thinking) {
+      taxiChatAnchorLastStart = false;
+      scrollPx = Math.max(0, maxScroll - lastBlock.y + 8);
+      taxiChatScrollPx = scrollPx;
+    }
     const scroll = Math.min(Math.max(scrollPx, 0), maxScroll);
     const offsetY = TAXI_CHAT_VIEW_TOP - (maxScroll - scroll);
     ctx.save();
@@ -11383,6 +11498,9 @@ function updateTaxiChatPanel() {
   if (taxiConversationHistory.length !== taxiChatRenderedCount) {
     taxiChatRenderedCount = taxiConversationHistory.length;
     taxiChatScrollPx = 0; // new message: jump to the latest
+    // v28: a new AI reply taller than the view opens at its FIRST line (was: its last lines)
+    const lastMsg = taxiConversationHistory[taxiConversationHistory.length - 1];
+    taxiChatAnchorLastStart = !!(lastMsg && lastMsg.role === "assistant");
   }
   makeTaxiChatPanelTexture(taxiConversationHistory);
 }
@@ -11733,6 +11851,11 @@ function update2DTaxiChatMessages() {
     taxiThinkingEl = div;
   }
   taxiChatMessagesEl.scrollTop = taxiChatMessagesEl.scrollHeight;
+  // v28: a long new AI reply opens at its first line
+  const lastDiv = taxiChatMessagesEl.lastElementChild;
+  if (!taxiThinkingText && lastDiv && lastDiv.classList.contains("assistant") && lastDiv.offsetHeight > taxiChatMessagesEl.clientHeight) {
+    taxiChatMessagesEl.scrollTop = Math.max(0, lastDiv.offsetTop - taxiChatMessagesEl.offsetTop - 4);
+  }
 }
 
 const originalUpdateTaxiChatPanel = updateTaxiChatPanel;

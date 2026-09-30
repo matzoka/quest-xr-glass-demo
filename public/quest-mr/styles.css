@@ -200,7 +200,7 @@ p {
 }
 
 .taxiChatMessages {
-  max-height: 180px;
+  max-height: min(320px, 40vh); /* v28: was 180px; long replies scroll */
   overflow-y: auto;
   margin-bottom: 10px;
   padding: 8px;
