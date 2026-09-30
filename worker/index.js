@@ -261,7 +261,7 @@ const STT_MAX_BODY_BYTES = 2 * 1024 * 1024; // 30 s of 16 kHz mono WAV = 960,044
 const STT_BEAM_SIZE = 10;
 const STT_BEAM_SIZE_MAX = 20;
 const STT_INITIAL_PROMPT =
-  "タクシー売上分析の音声質問です。日次売上、乗車回数、ピーク時間帯、時間帯別、月別売上、曜日別、" +
+  "タクシー売上分析の音声質問です。日次売上、乗車回数、ピーク時間帯、時間帯別、月別売上、給与月別、曜日別、" +
   "パネルを作成して、パネルを消して、クリア。迎車。調布、調布駅周辺、国領、仙川、つつじヶ丘・柴崎、深大寺、西調布・飛田給、三鷹、府中。";
 
 async function handleSttRequest(request, env, taxiAllowed) {
@@ -449,8 +449,12 @@ const TQ_METRICS = {
   utilizationRate: { label: "稼働率", unit: "%", format: v => `${tqFixed1(v)}%` },
 };
 // dimension -> fixed column name (identifiers never come from the request)
+const TQ_PAY_MONTH_SQL = "(CASE WHEN CAST(substr(date, 9, 2) AS INTEGER) >= (CASE CAST(substr(date, 6, 2) AS INTEGER) WHEN 1 THEN 15 WHEN 2 THEN 14 WHEN 11 THEN 15 WHEN 12 THEN 15 ELSE 16 END) THEN substr(date(substr(date, 1, 7) || '-01', '+1 month'), 1, 7) ELSE substr(date, 1, 7) END)";
 const TQ_DIMENSIONS = {
   month: { label: "月別", col: "month", format: v => `${v}月` },
+  // v29: 給与月 "YYYY-MM" from the shift date (same rule as the app's taxiPayMonthOf): pay month m+1 starts on
+  // day 15 (Jan, Nov, Dec), 14 (Feb) or 16 (other months) of calendar month m. Read-only SQL, no schema change.
+  payMonth: { label: "給与月別", col: TQ_PAY_MONTH_SQL, format: v => `${Number(String(v).slice(5, 7))}月分`, sort: (a, b) => (a < b ? -1 : a > b ? 1 : 0) },
   weekday: { label: "曜日別", col: "weekday", sort: (a, b) => TQ_WEEKDAYS.indexOf(a) - TQ_WEEKDAYS.indexOf(b) },
   hour: { label: "時間帯別", col: "hour", format: v => `${v}時`, sort: (a, b) => ((a + 19) % 24) - ((b + 19) % 24) }, // v27: shift order 5..23, 0..4
   pickupArea: { label: "乗車地別", col: "pickup_area" },
@@ -802,6 +806,7 @@ async function tqRunFreeQuery(db, args = {}) {
     groupIdx = stmts.length;
     stmts.push(db.prepare(`SELECT ${dim.col} AS k, ${TQ_AGG_SELECT} FROM trips${all.sql} GROUP BY ${dim.col} ORDER BY MIN(id)`).bind(...all.params));
     if (groupBy === "month") { monthIdx = stmts.length; stmts.push(db.prepare(`SELECT month FROM trips${cal.sql} GROUP BY month ORDER BY MIN(id)`).bind(...cal.params)); }
+    if (groupBy === "payMonth") { monthIdx = stmts.length; stmts.push(db.prepare(`SELECT ${TQ_PAY_MONTH_SQL} AS month FROM trips${cal.sql} GROUP BY 1 ORDER BY MIN(id)`).bind(...cal.params)); }
   }
   const res = await db.batch(stmts);
   const calendarDays = (res[0].results || []).map(r => r.date);
@@ -845,7 +850,7 @@ async function tqRunFreeQuery(db, args = {}) {
   if (dim) {
     let domain;
     if (groupBy === "date") domain = calendarDays;
-    else if (groupBy === "month") domain = (res[monthIdx].results || []).map(r => r.month);
+    else if (groupBy === "month" || groupBy === "payMonth") domain = (res[monthIdx].results || []).map(r => r.month);
     else if (groupBy === "hour") domain = hourSet ? [...hourSet] : Array.from({ length: 24 }, (_, h) => h);
     else if (groupBy === "weekday") domain = weekdaySet ? TQ_WEEKDAYS.filter(w => weekdaySet.has(w)) : [...TQ_WEEKDAYS];
     else if (groupBy === "pickupArea") domain = pickupSet ? [...pickupSet] : [...V.areas];
@@ -858,7 +863,7 @@ async function tqRunFreeQuery(db, args = {}) {
     const entries = [...buckets.entries()].map(([k, a]) => ({ key: labelOf(k), rawKey: k, value: tqMetricFromAgg(a, metric), trips: a ? Number(a.n) : 0 }));
     result.groupStats = { groupBy, groupLabel: dim.label, ...tqStatsOver(entries) };
     if (!TQ_ADDITIVE.includes(metric)) delete result.groupStats.sum;
-    const sort = args.sort || (groupBy === "date" || groupBy === "hour" || groupBy === "month" || groupBy === "weekday" ? "key" : "desc");
+    const sort = args.sort || (groupBy === "date" || groupBy === "hour" || groupBy === "month" || groupBy === "payMonth" || groupBy === "weekday" ? "key" : "desc");
     // v26: compare values rounded to 1e-6 so float-noise "ties" keep the domain order (same in JS and D1)
     if (sort === "desc") entries.sort((a, b) => (tqSortKey(b.value) ?? -Infinity) - (tqSortKey(a.value) ?? -Infinity));
     else if (sort === "asc") entries.sort((a, b) => (tqSortKey(a.value) ?? Infinity) - (tqSortKey(b.value) ?? Infinity));

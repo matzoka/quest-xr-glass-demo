@@ -22,7 +22,7 @@ if (TAXI_ALLOWED && taxiAnalyticsButton) {
   taxiAnalyticsButton.removeAttribute("hidden");
 }
 
-const APP_VERSION = "v2026.09.29.28";
+const APP_VERSION = "v2026.09.29.29";
 const DEBUG_TOP_VIEW = new URLSearchParams(window.location.search).has("topDebug");
 const DEBUG_TOP_VIEW_DISTANCE = Number(new URLSearchParams(window.location.search).get("topDebugDist"));
 const DEBUG_BLACK_HOLE_VIEW = new URLSearchParams(window.location.search).has("blackHoleDebug");
@@ -8438,6 +8438,47 @@ function generateTaxiDataset() {
 // optional fare (税抜) / dropoffTime / dropoffDate if the source provides them.
 // Addresses are kept verbatim (never normalised or completed).
 // ---------------------------------------------------------------------------
+// v29: 給与月 (pay month). Pay month M runs from its start day (in calendar month M-1) to the day before the next
+// pay month starts: 1月 12/15-1/14, 2月 1/15-2/13, 3月 2/14-3/15, 4月 3/16-4/15, 5月 4/16-5/15, 6月 5/16-6/15,
+// 7月 6/16-7/15, 8月 7/16-8/15, 9月 8/16-9/15, 10月 9/16-10/15, 11月 10/16-11/14, 12月 11/15-12/14.
+// A shift counts by its departure date (date = 営業日), so its 0-4時 trips of the next morning stay in the same pay month.
+// TAXI_PAY_NEXT_START[m] = day of calendar month m on which pay month m+1 starts.
+const TAXI_PAY_NEXT_START = [0, 15, 14, 16, 16, 16, 16, 16, 16, 16, 16, 15, 15];
+function taxiPayMonthOf(dateStr) {
+  const y = Number(String(dateStr).slice(0, 4)), m = Number(String(dateStr).slice(5, 7)), d = Number(String(dateStr).slice(8, 10));
+  if (!y || !m || !d) return "";
+  let py = y, pm = m;
+  if (d >= TAXI_PAY_NEXT_START[m]) { pm = m + 1; if (pm > 12) { pm = 1; py = y + 1; } }
+  return `${py}-${String(pm).padStart(2, "0")}`;
+}
+// pay month key "YYYY-MM" -> { key, label, from, to } (from/to = shift dates, inclusive)
+function taxiPayPeriodOf(key) {
+  const py = Number(String(key).slice(0, 4)), pm = Number(String(key).slice(5, 7));
+  const prevY = pm === 1 ? py - 1 : py, prevM = pm === 1 ? 12 : pm - 1;
+  const from = `${prevY}-${String(prevM).padStart(2, "0")}-${String(TAXI_PAY_NEXT_START[prevM]).padStart(2, "0")}`;
+  const endDay = TAXI_PAY_NEXT_START[pm] - 1;
+  const to = `${py}-${String(pm).padStart(2, "0")}-${String(endDay).padStart(2, "0")}`;
+  return { key, label: `${pm}月分`, from, to };
+}
+// periods overlapping [dataFrom, dataTo]; partial = the data covers only part of it (data start / in progress)
+function taxiPayPeriodsFor(dataFrom, dataTo, today) {
+  if (!dataFrom || !dataTo) return [];
+  const out = [];
+  let k = taxiPayMonthOf(dataFrom);
+  const last = taxiPayMonthOf(dataTo);
+  for (let i = 0; i < 24 && k && k <= last; i++) {
+    const p = taxiPayPeriodOf(k);
+    const notes = [];
+    if (p.from < dataFrom) notes.push(`データは${dataFrom}から（期間の途中から）`);
+    if (today && p.to >= today) notes.push(`進行中（${p.to}まで。今日=${today}）`);
+    else if (p.to > dataTo) notes.push(`データは${dataTo}まで（期間の途中まで）`);
+    out.push({ ...p, partial: notes.length > 0, ...(notes.length ? { note: notes.join("、") } : {}) });
+    const [yy, mm] = k.split("-").map(Number);
+    k = mm === 12 ? `${yy + 1}-01` : `${yy}-${String(mm + 1).padStart(2, "0")}`;
+  }
+  return out;
+}
+
 function taxiTripFromRecord(rec) {
   const [y, mo, da] = String(rec.date).split("-").map(Number);
   const d = new Date(y, mo - 1, da);
@@ -8472,6 +8513,7 @@ function taxiTripFromRecord(rec) {
     date: rec.date,
     year: d.getFullYear(),
     month: d.getMonth() + 1,
+    payMonth: taxiPayMonthOf(rec.date), // v29: 給与月 "YYYY-MM" (by the shift's departure date)
     day: d.getDate(),
     weekday: TAXI_WEEKDAYS[d.getDay()],
     dayOfWeek: d.getDay(),
@@ -8575,6 +8617,7 @@ const TAXI_METRICS = {
 
 const TAXI_DIMENSIONS = {
   month: { label: "月別", field: "month", format: v => `${v}月` },
+  payMonth: { label: "給与月別", field: "payMonth", format: v => `${Number(String(v).slice(5, 7))}月分`, sort: (a, b) => (a < b ? -1 : a > b ? 1 : 0) }, // v29: always chronological in panels
   weekday: { label: "曜日別", field: "weekday", sort: (a, b) => TAXI_WEEKDAYS.indexOf(a) - TAXI_WEEKDAYS.indexOf(b) },
   // v27: shift order (a shift runs 09:00 -> 04:50 next morning): 5,6,..,23,0,..,4
   hour: { label: "時間帯別", field: "hour", format: v => `${v}時`, sort: (a, b) => ((a + 19) % 24) - ((b + 19) % 24) },
@@ -9118,6 +9161,7 @@ function runTaxiFreeQuery(args = {}) {
     let domain;
     if (groupBy === "date") domain = calendarDays;
     else if (groupBy === "month") domain = [...new Set(taxiTrips.filter(inCalendar).map(t => t.month))];
+    else if (groupBy === "payMonth") domain = [...new Set(taxiTrips.filter(inCalendar).map(t => t.payMonth))];
     else if (groupBy === "hour") domain = hourSet ? [...hourSet] : Array.from({ length: 24 }, (_, h) => h);
     else if (groupBy === "weekday") domain = weekdaySet ? TAXI_WEEKDAYS.filter(w => weekdaySet.has(w)) : [...TAXI_WEEKDAYS];
     else if (groupBy === "pickupArea") domain = pickupSet ? [...pickupSet] : [...TAXI_AREAS];
@@ -9137,7 +9181,7 @@ function runTaxiFreeQuery(args = {}) {
     result.groupStats = { groupBy, groupLabel: dim.label, ...taxiStatsOver(entries) };
     if (!TAXI_ADDITIVE_METRICS.includes(metric)) delete result.groupStats.sum;
 
-    const sort = args.sort || (groupBy === "date" || groupBy === "hour" || groupBy === "month" || groupBy === "weekday" ? "key" : "desc");
+    const sort = args.sort || (groupBy === "date" || groupBy === "hour" || groupBy === "month" || groupBy === "payMonth" || groupBy === "weekday" ? "key" : "desc");
     // v26: compare values rounded to 1e-6 so float-noise "ties" keep the domain order (same in JS and D1)
     if (sort === "desc") entries.sort((a, b) => (taxiSortKey(b.value) ?? -Infinity) - (taxiSortKey(a.value) ?? -Infinity));
     else if (sort === "asc") entries.sort((a, b) => (taxiSortKey(a.value) ?? Infinity) - (taxiSortKey(b.value) ?? Infinity));
@@ -9464,6 +9508,7 @@ function listAvailableAnalyses() {
       "乗車地別の乗車回数トップ5",
       "降車地別の売上を見せて",
       "月別の走行距離を出して",
+      "給与月別の売上を見せて",
     ],
   };
 }
@@ -9820,6 +9865,7 @@ const METRIC_KEYWORDS = {
 };
 
 const DIMENSION_KEYWORDS = {
+  payMonth: ["給与月別", "給与月", "給料月", "給与ごと", "給与別", "締め日", "給与期間"], // v29 (longer than 月別, so it wins)
   month: ["月別", "月ごと", "月毎", "各月", "monthly"],
   weekday: ["曜日", "曜日別", "曜日ごと", "weekly"],
   hour: ["時間帯", "時間別", "時間ごと", "hourly", "時"],
@@ -10015,7 +10061,7 @@ const LLM_TOOLS = [
           groupBy: {
             type: "string",
             enum: Object.keys(TAXI_DIMENSIONS),
-            description: "集計軸（任意）: date=日別, month=月別, weekday=曜日別, hour=時間帯別, pickupArea=乗車地別, dropoffArea=降車地別, pickupTown=乗車地町名別, dropoffTown=降車地町名別（1台・1名分のデータのため車両別・ドライバー別は無い）",
+            description: "集計軸（任意）: date=日別, month=月別（暦月）, payMonth=給与月別（締め日で区切った給与の月: 9月分=8/16〜9/15 など）, weekday=曜日別, hour=時間帯別, pickupArea=乗車地別, dropoffArea=降車地別, pickupTown=乗車地町名別, dropoffTown=降車地町名別（1台・1名分のデータのため車両別・ドライバー別は無い）",
           },
           sort: { type: "string", enum: ["desc", "asc", "key"], description: "groups の並び順（desc=値の大きい順, asc=小さい順, key=軸の順）" },
           limit: { type: "integer", description: `groups に返す件数（既定${TAXI_QUERY_DEFAULT_GROUPS}, 最大${TAXI_QUERY_MAX_GROUPS}）` },
@@ -10055,7 +10101,7 @@ const LLM_TOOLS = [
           groupBy: {
             type: "string",
             enum: [...Object.keys(TAXI_DIMENSIONS), ""],
-            description: "Dimension to group by: month (月別), weekday (曜日別), hour (時間帯別), pickupArea (乗車地別), dropoffArea (降車地別), pickupTown (乗車地町名別), dropoffTown (降車地町名別), date (日別). Empty string for total/KPI view. There is no vehicle / driver dimension (one car, one driver).",
+            description: "Dimension to group by: month (月別), payMonth (給与月別: pay months, e.g. 9月分 = 8/16-9/15), weekday (曜日別), hour (時間帯別), pickupArea (乗車地別), dropoffArea (降車地別), pickupTown (乗車地町名別), dropoffTown (降車地町名別), date (日別). Empty string for total/KPI view. There is no vehicle / driver dimension (one car, one driver).",
           },
           chartType: {
             type: "string",
@@ -10326,11 +10372,20 @@ async function taxiPrefetchForMessage(userMessage, signal = null) {
 // no fareSummary (~1 KB of 売上 figures nobody asked for) and no groups[].trips when it equals value.
 // Cuts an hourly tripCount result from ~2.3 KB to ~0.9 KB; 7 weekday×hour queries no longer build 30 KB+ prompts.
 const TAXI_MONEY_METRICS = new Set(["fare", "fareWithTax", "totalFare", "dispatchFee", "avgFare"]);
+// v29: groupBy=payMonth -> each group gets its period (from/to) and a partial flag (data start / in progress)
+function taxiWithPayPeriods(obj) {
+  if (!obj || typeof obj !== "object" || !Array.isArray(obj.groups) || obj.groupStats?.groupBy !== "payMonth") return obj;
+  const periods = taxiPayPeriodsFor(obj.dataRange?.from, obj.dataRange?.to, taxiLocalDateString(new Date()));
+  const byLabel = new Map(periods.map(p => [p.label, p]));
+  return { ...obj, groups: obj.groups.map(g => { const p = byLabel.get(g.key); return p ? { ...g, period: `${p.from}〜${p.to}`, ...(p.partial ? { partial: true, partialNote: p.note } : {}) } : g; }) };
+}
+
 // v28: additive money metrics (fare / fareWithTax / totalFare) grouped: each group also gets avgPerTrip (= value / trips,
 // rounded), so 「時間帯ごとの売上・回数・1乗車平均」 needs one query and no mental division (hy3 spent 5,000+ reasoning
 // tokens dividing 20 groups by hand and the answer never came). LLM view only; the query result itself is unchanged.
 const TAXI_ADDITIVE_MONEY_METRICS = new Set(["fare", "fareWithTax", "totalFare"]);
 function taxiCompactQueryResultForLlm(obj) {
+  obj = taxiWithPayPeriods(obj);
   if (obj && typeof obj === "object" && Array.isArray(obj.groups) && TAXI_ADDITIVE_MONEY_METRICS.has(obj.metric)) {
     return { ...obj, groups: obj.groups.map((g) => (g && Number(g.trips) > 0 ? { ...g, avgPerTrip: Math.round(g.value / g.trips) } : g)) };
   }
@@ -10404,7 +10459,7 @@ const TAXI_LLM_CLIENT_TIMEOUT_MS = 88000; // v25: per request incl. body; above 
 const TAXI_STT_MODEL_DEFAULT = "mimo-v2.5"; // OpenCode Go: accepts input_audio (wav) in chat/completions
 const TAXI_STT_MAX_TOKENS = 1200;
 const TAXI_STT_PROMPT = `タクシー業務分析アシスタントへの日本語の音声質問です。聞こえたとおりに日本語で文字起こしし、文字起こし結果の1文だけを出力してください（説明・引用符なし）。
-よく出る語: 迎車（げいしゃ）, 乗車, 降車, 乗車地, 降車地, 売上, 乗車回数, 運賃, 税込, 月別, 曜日別, 時間帯別, 稼働率, 布田（ふだ）, 国領, 仙川, 調布, つつじヶ丘, 柴崎, 深大寺, 西調布, 飛田給, 三鷹, 府中, 下石原, 白糸台`;
+よく出る語: 迎車（げいしゃ）, 乗車, 降車, 乗車地, 降車地, 売上, 乗車回数, 運賃, 税込, 月別, 給与月別, 曜日別, 時間帯別, 稼働率, 布田（ふだ）, 国領, 仙川, 調布, つつじヶ丘, 柴崎, 深大寺, 西調布, 飛田給, 三鷹, 府中, 下石原, 白糸台`;
 
 // Pasted keys often carry spaces/newlines/zero-width chars or a "Bearer " prefix.
 function taxiSanitizeApiKey(raw) {
@@ -10708,6 +10763,14 @@ function taxiJoinContinuation(a, b) {
   return a + b;
 }
 
+// v29: several money / count amounts in a reply (e.g. 「25,920円」「39件」) - used to catch answers made up without data tools.
+// A 「続けて」 continuation of an earlier answer legitimately repeats numbers from the history, so it is exempt.
+function taxiReplyHasUnsourcedNumbers(text, userMessage = "") {
+  if (!text || /^\s*(続け|つづけ|続き|つづき)/.test(String(userMessage))) return false;
+  const amounts = String(text).match(/\d[\d,]*(?:\.\d+)?\s*(?:円|件|回)/g) || [];
+  return amounts.length >= 2;
+}
+
 async function callLlmBackend(userMessage, config, signal = null) {
   const taxiToday = taxiLocalDateString(new Date());
   const taxiYesterday = (() => { const d = new Date(); d.setDate(d.getDate() - 1); return taxiLocalDateString(d); })();
@@ -10718,6 +10781,8 @@ async function callLlmBackend(userMessage, config, signal = null) {
 - データはユーザー本人の売上記録（車両1台・運転手はユーザー本人の1名）。車両・ドライバーの項目は無く、車両別・ドライバー別（運転手別）の集計・比較・絞り込みはできない
 - 勤務: 乗務は「出番」の日だけ（9:00出庫〜翌朝4:50帰庫、途中に2時間の休憩1回）。翌朝0:00〜4:59の乗車も出番の日の日付（date＝営業日）で記録されている。1日あたり（perDay）＝1出番あたり
 - シフト: 12日周期 ${TAXI_SHIFT_PATTERN.join("→")}（${TAXI_SHIFT_ANCHOR} が周期の先頭の出番）。明休・公休の日はデータなし
+- 給与月（締め日で区切った給与の月。出番は出庫日＝date で数える）: 1月分=12/15〜1/14, 2月分=1/15〜2/13, 3月分=2/14〜3/15, 4月分=3/16〜4/15, 5月分=4/16〜5/15, 6月分=5/16〜6/15, 7月分=6/16〜7/15, 8月分=7/16〜8/15, 9月分=8/16〜9/15, 10月分=9/16〜10/15, 11月分=10/16〜11/14, 12月分=11/15〜12/14（1月分は前年12/15から）
+- データ期間の給与月: ${taxiPayPeriodsFor(taxiD1Meta?.dataRange?.from || taxiTrips[0]?.date, taxiD1Meta?.dataRange?.to || taxiTrips[taxiTrips.length - 1]?.date, taxiToday).map(p => `${p.label}=${p.from}〜${p.to}${p.partial ? `（一部のみ: ${p.note}）` : ""}`).join(", ")}
 - 今日=${taxiToday}（${taxiShiftTypeOf(taxiToday) || "-"}）、昨日=${taxiYesterday}（${taxiShiftTypeOf(taxiYesterday) || "-"}）、直近の出番（データの最終日）=${dataRange.split("〜")[1] || "-"}
 - 期間: 過去${TAXI_MONTHS}ヶ月（${dataRange}、今日=${taxiLocalDateString(new Date())}）
 - 総トリップ数: ${tripTotal.toLocaleString()}件
@@ -10756,7 +10821,8 @@ ${taxiPanelData.map((p, i) => `${i}: ${p.title} - ${p.value} (${p.unit})`).join(
 9. 日付の指定（今日・昨日・○月○日）がデータの無い日（明休・公休、query_data の daysInPeriod=0）なら「その日は乗務なし（明休/公休）」と答え、直近の出番の数値を提案する。明休の日の「昨日」「昨夜」は前日の出番（今朝4:50までの乗務）を指すので、その出番の日付で query_data を呼ぶ。
 10. 車両別・ドライバー別（運転手別・号車別）の集計や比較は存在しないので、自分から提案・言及しない。頼まれたら「このデータはご本人の1台・1名分の記録なので、車両別・ドライバー別の分析はありません」と丁寧に伝え、時間帯別・曜日別・月別・乗車地別などの代わりの分析を提案する（query_data や create_panel は呼ばない）。
 11. ユーザーが「続けて」「続き」と言ったら、直前の回答が途中で終わった所から、前の文を繰り返さずに続きを書く。
-12. 条件付きの集計（例:「布田から乗った時間帯別の売上」「迎車ありの曜日別の乗車回数」「8月の降車地別の売上」など、期間・曜日・時間帯・乗車地・降車地・住所・距離・迎車などで絞り込んだ集計）をパネルにするときは、create_panel の conditions に query_data と同じ条件を入れる（metric と groupBy は create_panel 側に指定）。`;
+12. 条件付きの集計（例:「布田から乗った時間帯別の売上」「迎車ありの曜日別の乗車回数」「8月の降車地別の売上」など、期間・曜日・時間帯・乗車地・降車地・住所・距離・迎車などで絞り込んだ集計）をパネルにするときは、create_panel の conditions に query_data と同じ条件を入れる（metric と groupBy は create_panel 側に指定）。
+13. 「給与月別」「給料の月ごと」は query_data の groupBy="payMonth"（暦の「月別」は month のまま）。「9月の給与分」「9月分の給料の売上」などは、その給与月の期間を dateFrom/dateTo に指定する（例: 9月分 → dateFrom="2026-08-16", dateTo="2026-09-15"）。データ開始前から始まる給与月や、まだ締め日が来ていない進行中の給与月は、一部の期間だけの集計であることを必ず一言添える（groups の partial / partialNote、上の「データ期間の給与月」を参照）。`;
 
   const messages = [
     { role: "system", content: systemPrompt },
@@ -10861,6 +10927,14 @@ ${taxiPanelData.map((p, i) => `${i}: ${p.title} - ${p.value} (${p.unit})`).join(
         if (text && !(text.includes("もしかして") && text.includes(h.meant))) {
           text = `もしかして${h.meant}のことですか？（「${h.heard}」と聞こえました）\n${text}`;
         }
+      }
+      // v29: seen live, hy3 answered 「時間帯別の売上は？」 with made-up per-hour amounts without any tool call.
+      // An answer with several amounts but no data tool this question -> reject it once and make it query.
+      if (!state.toolRounds && !state.numberNudged && !finalRound && !state.partial && taxiReplyHasUnsourcedNumbers(text, userMessage)) {
+        state.numberNudged = true;
+        messages.push({ role: "assistant", content: text });
+        messages.push({ role: "user", content: "（自動チェック）今回はまだ query_data などのツールを呼んでいないのに数値を答えています。数値は推測せず、今すぐ query_data を呼んで、その結果の数値だけで答え直してください。" });
+        continue;
       }
       // v22: the model often copies earlier "パネルを作成しました" replies from the history without
       // calling create_panel, so the 2nd+ panel never appeared. Nudge it once to really call the tool.
