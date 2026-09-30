@@ -3,21 +3,17 @@
 Meta Quest 3 の VR / AR と、PC ブラウザの3Dプレビューで動く Three.js + WebXR デモです。
 宇宙空間に浮かぶワイヤーフレームの部屋を舞台に、地球をコントローラーやキーボードで弾きながら、月、惑星、太陽フレア、インターステラー風ブラックホール、Apollo 11風ミッション、USS Enterprise風のワープ演出、クリンゴン船のクローク解除風通過演出、小さな隕石、人工衛星、旅客機、彗星、夜景、オーロラ、稲光などを眺められます。
 
-公開URL（Cloudflare Workers）:
-
-https://quest-xr-glass-demo.matzoka.workers.dev/
-
-直接アプリを開く場合:
-
-https://quest-xr-glass-demo.matzoka.workers.dev/quest-mr/
+自分の環境で動かす手順は「Local Preview」と「Cloudflare Workersデプロイ」を参照してください。
 
 ## Reference Video
 
 Meta Quest 3 の VR で動かしたときの参考動画です。宇宙空間、操作パネル、ブラックホール探訪、惑星・宇宙船演出の雰囲気を確認できます。
 
-[![MyEarth Meta Quest 3 VR reference video](public/quest-mr/assets/myearth-video-poster.jpg)](https://quest-xr-glass-demo.matzoka.workers.dev/quest-mr/myearth-video.html)
+[![MyEarth Meta Quest 3 VR reference video](public/quest-mr/assets/myearth-video-poster.jpg)](https://github.com/matzoka/quest-xr-glass-demo/releases/download/my-earth-vr-reference-2026-06-19/MyEarth.mp4)
 
-[動画プレイヤーを開く](https://quest-xr-glass-demo.matzoka.workers.dev/quest-mr/myearth-video.html)
+[動画ファイル（GitHub Releases）を開く](https://github.com/matzoka/quest-xr-glass-demo/releases/download/my-earth-vr-reference-2026-06-19/MyEarth.mp4)
+
+アプリと同じサイト上の動画プレイヤーページは `public/quest-mr/myearth-video.html`（デプロイ後は `/quest-mr/myearth-video.html`）です。
 
 ## Screenshots
 
@@ -195,9 +191,9 @@ Apollo 11そのものの精密シミュレーションではなく、Questの小
   - `quest-mr/index.html`: アプリ本体のHTML。
   - `quest-mr/app.js`: Three.jsシーン、WebXR、入力、宇宙演出、Apollo風ミッション、Enterprise風ワープ演出、クリンゴン船演出、太陽・惑星・月の陰影制御の本体。
   - `quest-mr/styles.css`: HUDとボタンのスタイル。
-  - `public/quest-mr/assets/`: 地球、月、惑星、Enterpriseモデル、クリンゴン船モデル、音声などのアセット。
+  - `quest-mr/assets/`: 地球、月、惑星、Enterpriseモデル、クリンゴン船モデル、音声などのアセット。
   - `quest-mr/inspect.html` / `quest-mr/inspect.js`: 現行クリンゴン船モデルを単体確認するための検査ビュー。
-  - `quest-mr/_headers`: 静的ホスト用のMIME設定とCOOP / COEPヘッダー設定。
+  - `quest-mr/_headers`: 静的ホスト向けのMIME設定とCOOP / COEPヘッダー設定（Cloudflare Workers の静的アセットでは `_headers` はアセットディレクトリ直下のものだけが読まれるため、この位置のファイルは現在のWorkers構成では使われません）。
 - `worker/index.js`: Cloudflare Worker（キー認証・Cookie、HTMLRewriter、LLM中継 `/api/llm`、音声認識 `/api/stt`、D1集計 `/api/query`）
 - `wrangler.jsonc`: Wrangler設定（Worker名、静的アセット、Workers AI・D1 のバインディング）
 - `migrations/`: D1 のスキーマ（`wrangler d1 migrations apply` で適用）
@@ -208,7 +204,8 @@ Apollo 11そのものの精密シミュレーションではなく、Questの小
 
 ## Local Preview
 
-任意の静的HTTPサーバーで `public` ディレクトリを配信します。
+地球デモ部分だけを確認する場合は、任意の静的HTTPサーバーで `public` ディレクトリを配信します
+（Worker を通さないため、キー認証や `/api/*` を使う追加機能は動きません。Worker ごと動かす場合は「Cloudflare Workersデプロイ」の「4. ローカル開発」を参照）。
 
 ```bash
 npx http-server public -p 4321 -c-1
@@ -229,20 +226,14 @@ python -m http.server 4321
 
 ## Quest実機で見る
 
-QuestのVR / ARセッションはHTTPSが必須です。GitHub Pages、Netlify、Cloudflare Pagesなど、HTTPS対応の静的ホストで公開してください。
-
-静的ファイルはすべて `public/` 以下にあります。GitHub Pages で公開する場合は `public/` をサイトのルートとして配信してください
-（GitHub Pages の `Deploy from a branch` は `/ (root)` か `/docs` しか選べないため、`public/` を配信する GitHub Actions ワークフローを使います。
-`Settings -> Pages -> Source` を `GitHub Actions` にし、`actions/upload-pages-artifact` の `path` に `public` を指定します）。
-Cloudflare Workers で公開する手順は後述の「Cloudflare Workersデプロイ」を参照してください。
-
-GitHub Pages で公開すると以下のようなURLになります。
+QuestのVR / ARセッションはHTTPSが必須です。後述の「Cloudflare Workersデプロイ」の手順で自分の Cloudflare アカウントへデプロイし、
+Quest Browserで以下のURLを開いて `Enter VR` または `Enter AR` を押します。
 
 ```text
-https://matzoka.github.io/quest-xr-glass-demo/
+https://<name>.<サブドメイン>.workers.dev/quest-mr/
 ```
 
-Quest Browserで上記URLを開き、`Enter VR` または `Enter AR` を押します。
+`<name>` は `wrangler.jsonc` の Worker 名、`<サブドメイン>` は自分のアカウントの workers.dev サブドメインです（`npx wrangler deploy` の出力に表示されます）。
 
 ## Implementation Notes
 
@@ -348,7 +339,7 @@ node scripts/import-trips.mjs --sample --apply    # リモート D1 へ（CLOUDF
 「表1行 + インデックス数」行を書き込みとして数えるため、サンプル（2,710 件）の初回取り込みで約 5,600 行、同じ件数の入れ替えで約 11,000 行を使います。
 集計 1 回の読み取りは数千〜数万行です。試験的な取り込みや大量の自動テストは `--local` で行ってください。
 
-D1 が無い・使えない環境（GitHub Pages など）では、アプリはブラウザ内の JavaScript 集計（同じサンプルデータ）に自動で切り替わります。
+D1 が無い・使えない環境（D1 未設定の Worker や、静的サーバーでの Local Preview など）では、アプリはブラウザ内の JavaScript 集計（同じサンプルデータ）に自動で切り替わります。
 
 ### 3. シークレットの設定
 
