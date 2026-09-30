@@ -4,7 +4,7 @@
     {
       "name": "quest-mr",
       "runtimeExecutable": "npx",
-      "runtimeArgs": ["-y", "http-server", "quest-mr", "-p", "4321", "-c-1", "--cors"],
+      "runtimeArgs": ["-y", "http-server", "public", "-p", "4321", "-c-1", "--cors"],
       "port": 4321
     }
   ]

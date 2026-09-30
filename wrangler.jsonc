@@ -19,7 +19,9 @@
     "binding": "AI"
   },
 
-  // v26: taxi analytics data (trips / vocab / meta). Schema: migrations/, data: scripts/import-trips.mjs
+  // v26: analytics data (trips / vocab / meta). Schema: migrations/, data: scripts/import-trips.mjs
+  // database_id is the repository author's database: replace it with the id printed by
+  // `npx wrangler d1 create taxi-analytics` in your own account (see README "Cloudflare Workersデプロイ").
   "d1_databases": [
     {
       "binding": "DB",

@@ -3,21 +3,21 @@
 Meta Quest 3 の VR / AR と、PC ブラウザの3Dプレビューで動く Three.js + WebXR デモです。
 宇宙空間に浮かぶワイヤーフレームの部屋を舞台に、地球をコントローラーやキーボードで弾きながら、月、惑星、太陽フレア、インターステラー風ブラックホール、Apollo 11風ミッション、USS Enterprise風のワープ演出、クリンゴン船のクローク解除風通過演出、小さな隕石、人工衛星、旅客機、彗星、夜景、オーロラ、稲光などを眺められます。
 
-公開URL:
+公開URL（Cloudflare Workers）:
 
-https://matzoka.github.io/quest-xr-glass-demo/
+https://quest-xr-glass-demo.matzoka.workers.dev/
 
 直接アプリを開く場合:
 
-https://matzoka.github.io/quest-xr-glass-demo/quest-mr/
+https://quest-xr-glass-demo.matzoka.workers.dev/quest-mr/
 
 ## Reference Video
 
 Meta Quest 3 の VR で動かしたときの参考動画です。宇宙空間、操作パネル、ブラックホール探訪、惑星・宇宙船演出の雰囲気を確認できます。
 
-[![MyEarth Meta Quest 3 VR reference video](quest-mr/assets/myearth-video-poster.jpg)](https://matzoka.github.io/quest-xr-glass-demo/quest-mr/myearth-video.html)
+[![MyEarth Meta Quest 3 VR reference video](public/quest-mr/assets/myearth-video-poster.jpg)](https://quest-xr-glass-demo.matzoka.workers.dev/quest-mr/myearth-video.html)
 
-[動画プレイヤーを開く](https://matzoka.github.io/quest-xr-glass-demo/quest-mr/myearth-video.html)
+[動画プレイヤーを開く](https://quest-xr-glass-demo.matzoka.workers.dev/quest-mr/myearth-video.html)
 
 ## Screenshots
 
@@ -76,7 +76,7 @@ Meta Quest 3 の VR で動かしたときの参考動画です。宇宙空間、
 - 遠方に、インターステラー風のリアル寄りブラックホールを常設しています。
 - 黒い事象の地平面、明るい降着円盤、上下に回り込む疑似重力レンズ光、円盤を流れる粒子を重ねています。
 - Questで近づくと、中心付近で短い落下演出に入り、星が伸びるトンネル風の視界を通って安全な観測位置へ戻ります。
-- `quest-mr/assets/blackhole.mp3` をループ再生し、ブラックホールへ近づくほど音量が徐々に大きくなります。接近時は低音フィルターも少し開き、圧力が増すようにしています。
+- `public/quest-mr/assets/blackhole.mp3` をループ再生し、ブラックホールへ近づくほど音量が徐々に大きくなります。接近時は低音フィルターも少し開き、圧力が増すようにしています。
 - Enterprise風宇宙船とクリンゴン船の航路計算では、ブラックホールも障害物として扱い、中心を突っ切らないようにしています。
 
 ### 人工衛星と旅客機
@@ -121,26 +121,26 @@ Apollo 11そのものの精密シミュレーションではなく、Questの小
 
 - フリーのOBJ / MTLモデルとテクスチャを読み込んで表示します。
 - モデルの材質を調整し、暗く潰れた面が出にくいようにしています。
-- 登場時には音声が鳴ります。`quest-mr/assets/enterprise_theme.mp3` があればそれを使い、無ければ合成ファンファーレへフォールバックします。登場音、レア周回中BGM、ワープ音はいずれも視点位置をリスナーにした3D音声として鳴り、離れるほど小さくなります。
+- 登場時には音声が鳴ります。`public/quest-mr/assets/enterprise_theme.mp3` があればそれを使い、無ければ合成ファンファーレへフォールバックします。登場音、レア周回中BGM、ワープ音はいずれも視点位置をリスナーにした3D音声として鳴り、離れるほど小さくなります。
 - 地球の部屋枠を通過してから約10秒後、何もない宇宙空間へ向けてワープを開始します。
 - ワープ中は船体と航跡が一体で前進します。
-- ワープ音 `quest-mr/assets/warp.mp3` の終了タイミングに合わせて、船体・航跡・スパークが同時に消えます。
+- ワープ音 `public/quest-mr/assets/warp.mp3` の終了タイミングに合わせて、船体・航跡・スパークが同時に消えます。
 - 消滅地点には前方スパークが表示され、船体の最後尾がスパーク内に収まった瞬間に全体が消えるようにしています。
 - ワープ速度は視線で追いやすいように抑え、通常航行より遅くならない範囲で調整しています。
 - 低確率のレア演出では、別角度から低速接近し、地球近くを約5周してから、地球の部屋枠を抜けるまで通常航行で離脱し、その後は通常と同じ長い航跡のワープで去ります。
-- レア演出の周回中だけ `quest-mr/assets/star-trek-viewer.mp3` を流し、周回軌道に入った瞬間に開始して、周回を離れる瞬間に停止します。
+- レア演出の周回中だけ `public/quest-mr/assets/star-trek-viewer.mp3` を流し、周回軌道に入った瞬間に開始して、周回を離れる瞬間に停止します。
 
 ### クリンゴン船
 
-- 現在は `quest-mr/assets/klingon_ship/` の `klingon_ship.obj` / `klingon_ship.mtl` を読み込むクリンゴン船モデルを使っています。
+- 現在は `public/quest-mr/assets/klingon_ship/` の `klingon_ship.obj` / `klingon_ship.mtl` を読み込むクリンゴン船モデルを使っています。
 - アプリ内の演出名は、特定の艦級名ではなく汎用的に「クリンゴン船」としています。
 - ごくまれに、地球の奥側を低速で威圧的に横切ります。
 - 出現時は薄い緑のクローク解除風フェードインで現れます。
 - 船体の赤・黄・白・緑系ライト材質は、暗い宇宙でも見えるよう弱く発光します。
 - 通過の最後は緑のフラッシュとクローク風フェードアウトで消えます。
 - Enterprise風宇宙船とは同時に出現しないよう排他制御しています。
-- 通過中は `quest-mr/assets/klingon_theme.mp3` を3D音声として再生し、音声を読み込めた場合は実際の長さに合わせて通過時間を調整します。読み込めない場合は約29秒のフォールバック尺で動きます。
-- 出現時は `quest-mr/assets/star-trek-tng-transporter.mp3`、消滅時は `quest-mr/assets/star-trek-transportation.mp3` を3D効果音として使います。これらの短い効果音も再生中はクリンゴン船の現在位置へ追従します。
+- 通過中は `public/quest-mr/assets/klingon_theme.mp3` を3D音声として再生し、音声を読み込めた場合は実際の長さに合わせて通過時間を調整します。読み込めない場合は約29秒のフォールバック尺で動きます。
+- 出現時は `public/quest-mr/assets/star-trek-tng-transporter.mp3`、消滅時は `public/quest-mr/assets/star-trek-transportation.mp3` を3D効果音として使います。これらの短い効果音も再生中はクリンゴン船の現在位置へ追従します。
 
 ### 音声
 
@@ -195,13 +195,16 @@ Apollo 11そのものの精密シミュレーションではなく、Questの小
   - `quest-mr/index.html`: アプリ本体のHTML。
   - `quest-mr/app.js`: Three.jsシーン、WebXR、入力、宇宙演出、Apollo風ミッション、Enterprise風ワープ演出、クリンゴン船演出、太陽・惑星・月の陰影制御の本体。
   - `quest-mr/styles.css`: HUDとボタンのスタイル。
-  - `quest-mr/assets/`: 地球、月、惑星、Enterpriseモデル、クリンゴン船モデル、音声などのアセット。
+  - `public/quest-mr/assets/`: 地球、月、惑星、Enterpriseモデル、クリンゴン船モデル、音声などのアセット。
   - `quest-mr/inspect.html` / `quest-mr/inspect.js`: 現行クリンゴン船モデルを単体確認するための検査ビュー。
   - `quest-mr/_headers`: 静的ホスト用のMIME設定とCOOP / COEPヘッダー設定。
-- `worker/index.js`: Cloudflare Worker（認証、HTMLRewriter）
-- `wrangler.jsonc`: Wrangler設定
+- `worker/index.js`: Cloudflare Worker（キー認証・Cookie、HTMLRewriter、LLM中継 `/api/llm`、音声認識 `/api/stt`、D1集計 `/api/query`）
+- `wrangler.jsonc`: Wrangler設定（Worker名、静的アセット、Workers AI・D1 のバインディング）
+- `migrations/`: D1 のスキーマ（`wrangler d1 migrations apply` で適用）
+- `scripts/import-trips.mjs`: D1 へサンプルデータを取り込むスクリプト
+- `.dev.vars.example`: ローカル開発用シークレットの雛形（コピーして `.dev.vars` を作成）
 - `docs/images/`: README掲載用スクリーンショット。
-- `scripts/`: 初期のBlender生成スクリプト。現在の地球デモ本体では使用していません。
+- `scripts/*.py`: 初期のBlender生成スクリプト。現在の地球デモ本体では使用していません。
 
 ## Local Preview
 
@@ -228,12 +231,12 @@ python -m http.server 4321
 
 QuestのVR / ARセッションはHTTPSが必須です。GitHub Pages、Netlify、Cloudflare Pagesなど、HTTPS対応の静的ホストで公開してください。
 
-このリポジトリはGitHub Pagesでそのまま公開できます。
+静的ファイルはすべて `public/` 以下にあります。GitHub Pages で公開する場合は `public/` をサイトのルートとして配信してください
+（GitHub Pages の `Deploy from a branch` は `/ (root)` か `/docs` しか選べないため、`public/` を配信する GitHub Actions ワークフローを使います。
+`Settings -> Pages -> Source` を `GitHub Actions` にし、`actions/upload-pages-artifact` の `path` に `public` を指定します）。
+Cloudflare Workers で公開する手順は後述の「Cloudflare Workersデプロイ」を参照してください。
 
-1. GitHubの `Settings -> Pages` を開きます。
-2. `Build and deployment` の `Source` を `Deploy from a branch` にします。
-3. Branchを `master`、フォルダを `/ (root)` に設定します。
-4. 数分待つと以下で公開されます。
+GitHub Pages で公開すると以下のようなURLになります。
 
 ```text
 https://matzoka.github.io/quest-xr-glass-demo/
@@ -263,12 +266,12 @@ Quest Browserで上記URLを開き、`Enter VR` または `Enter AR` を押し�
 - Enterpriseのレア演出は通常ルートとは別の状態として管理し、地球中心を追従しながら近距離を5周した後、地球の部屋枠外まで離脱してから通常ワープへ遷移します。
 - Enterpriseのレア周回BGMは、接近中やワープ中には鳴らさず、周回フェーズの開始・終了に合わせてWeb Audioで明示的に開始 / 停止します。
 - すべての音声はWeb AudioのPannerNodeを通します。XR中はヘッド位置、PCプレビューではカメラ位置をWeb Audioのリスナーとして扱い、音源ごとの発生位置へ追従させています。Enterpriseとクリンゴン船の長い音声、クリンゴン船の出現 / 消滅効果音のような短い音は、再生中も船の現在位置へ追従します。船の音声は近距離で最大音量へ到達し、3D減衰経路とは別に小さな床音量経路を重ね、遠距離でも最低音量が残るようにしています。
-- クリンゴン船モデルは `quest-mr/assets/klingon_ship/` のOBJ / MTLを初回登場直前まで遅延ロードし、フェード中だけ材質の透明度を操作します。Enterpriseと同時に出ないよう、双方の出現スケジュールで排他制御しています。
+- クリンゴン船モデルは `public/quest-mr/assets/klingon_ship/` のOBJ / MTLを初回登場直前まで遅延ロードし、フェード中だけ材質の透明度を操作します。Enterpriseと同時に出ないよう、双方の出現スケジュールで排他制御しています。
 - Apollo風ミッションは見やすさ優先の圧縮スケールで、打ち上げから月面着陸までをループ再生します。
 
 ## Main Tuning Points
 
-主な見た目や動きは `quest-mr/app.js` の定数で調整できます。
+主な見た目や動きは `public/quest-mr/app.js` の定数で調整できます。
 
 - `roomCenter` / `roomHalf`: ワイヤーフレーム部屋の位置とサイズ。
 - `EARTH_RADIUS`: 地球の表示サイズ。
@@ -279,143 +282,135 @@ Quest Browserで上記URLを開き、`Enter VR` または `Enter AR` を押し�
 
 このデモにはNASA由来・three.jsサンプル由来の惑星テクスチャ、フリーのEnterprise風3Dモデル、現行のクリンゴン船OBJ / MTLモデル、ローカル音声ファイルを含みます。再配布や公開利用の際は、各素材のライセンスと権利関係を確認してください。
 
-`quest-mr/assets/enterprise_theme.mp3`、`quest-mr/assets/star-trek-viewer.mp3`、`quest-mr/assets/warp.mp3`、`quest-mr/assets/klingon_theme.mp3`、`quest-mr/assets/star-trek-tng-transporter.mp3`、`quest-mr/assets/star-trek-transportation.mp3` を差し替える場合も、利用する音源の権利確認は利用者側で行ってください。
+`public/quest-mr/assets/enterprise_theme.mp3`、`public/quest-mr/assets/star-trek-viewer.mp3`、`public/quest-mr/assets/warp.mp3`、`public/quest-mr/assets/klingon_theme.mp3`、`public/quest-mr/assets/star-trek-tng-transporter.mp3`、`public/quest-mr/assets/star-trek-transportation.mp3` を差し替える場合も、利用する音源の権利確認は利用者側で行ってください。
 
 ## Cloudflare Workersデプロイ
 
-このリポジトリはCloudflare Workers Static Assetsとしてデプロイできます。GitHub Pagesとは別に、シークレットキーでゲートされた「タクシー業務アプリ分析」機能を有効にできます。
+このリポジトリは Cloudflare Workers（Static Assets）としてそのままデプロイできます。静的な地球デモは誰でも見られ、
+それに加えて、シークレットキーを知っている人だけが使える追加機能（キー認証・Cookie、LLM 中継、Workers AI の音声認識、
+Cloudflare D1 の集計 API）を Worker が提供します。キーが無いリクエストには、HTMLRewriter で追加機能の UI を取り除いた HTML を返します。
 
-### デプロイ手順
+以下は自分の Cloudflare アカウントで動かすための手順です（アカウント ID・キーなどの値は各自のものを使ってください）。
+
+### 前提
+
+- Node.js 22 以上と npm（Wrangler 4 の要件）
+- Cloudflare アカウント（無料プランで動きます。Workers AI・D1 は無料枠あり）
+- このリポジトリを clone して依存関係（Wrangler）をインストール
 
 ```bash
-# 1. Cloudflare CLIでデプロイ
-npx wrangler deploy
+git clone https://github.com/matzoka/quest-xr-glass-demo.git
+cd quest-xr-glass-demo
+npm install          # devDependencies の wrangler が入ります（以降 npx wrangler ... で実行）
+npx wrangler login   # ブラウザで Cloudflare にログイン（CI では環境変数 CLOUDFLARE_API_TOKEN / CLOUDFLARE_ACCOUNT_ID）
 ```
 
-### シークレット設定
+API トークンを使う場合の権限: `Workers Scripts: Edit`、`D1: Edit`、`Workers AI: Read`（`wrangler whoami` で確認できます）。
 
-「タクシー業務アプリ分析」ボタンを有効にするには、`TAXI_APP_KEY` シークレットを設定します。
+### バインディング（`wrangler.jsonc`）
 
-**CLIで設定：**
+| バインディング | 種類 | 用途 |
+| --- | --- | --- |
+| `ASSETS` | Static Assets（`./public`、`run_worker_first: true`） | 静的ファイル配信。すべてのリクエストは先に Worker を通ります |
+| `AI` | Workers AI | `/api/stt` の音声認識（`@cf/openai/whisper-large-v3-turbo`） |
+| `DB` | D1 データベース（`database_name: taxi-analytics`、`migrations_dir: migrations`） | `/api/query` の集計 |
+
+`wrangler.jsonc` の `d1_databases[0].database_id` は**リポジトリ作者のデータベースの ID** です。自分の環境では次の手順で作った
+データベースの ID に置き換えてください（ID は秘密情報ではありませんが、他人のアカウントのものは使えません）。
+Worker 名（`name`）を変えると公開 URL も `https://<name>.<サブドメイン>.workers.dev` に変わります。
+`account_id` は設定ファイルに書いていません（`wrangler login` のアカウント、または環境変数 `CLOUDFLARE_ACCOUNT_ID` が使われます）。
+
+### 1. D1 データベースの作成とマイグレーション
+
+```bash
+npx wrangler d1 create taxi-analytics
+# 出力された "database_id" を wrangler.jsonc の d1_databases[0].database_id に貼り付ける
+
+npx wrangler d1 migrations apply taxi-analytics --remote   # 未適用のマイグレーション（migrations/*.sql）だけ適用
+```
+
+データベース名を変える場合は、`wrangler.jsonc` の `database_name` と `scripts/import-trips.mjs` の `DB_NAME` もあわせて変更してください。
+
+### 2. サンプルデータの取り込み
+
+アプリに同梱のサンプルデータ（架空のデータ）を D1 に入れます。まずローカルで確認してからリモートへ入れるのがおすすめです。
+
+```bash
+node scripts/import-trips.mjs --sample            # SQL ファイル（既定 /tmp/taxi-import.sql）の生成だけ
+node scripts/import-trips.mjs --sample --local    # ローカル D1（wrangler dev 用の .wrangler/）へ
+node scripts/import-trips.mjs --sample --apply    # リモート D1 へ（CLOUDFLARE_API_TOKEN / CLOUDFLARE_ACCOUNT_ID が必要）
+```
+
+取り込みは表の中身を**置き換え**ます。`--apply` の前に読み取りだけで現在の件数と内容ハッシュを確認し、内容が同じなら書き込みません。
+見積もり書き込み行数が `--max-writes`（既定 50,000）を超える場合は中止します。
+
+**D1 無料枠に注意**: 1日あたり 書き込み 100,000 行・読み取り 5,000,000 行（00:00 UTC にリセット）。D1 は行の挿入・削除ごとに
+「表1行 + インデックス数」行を書き込みとして数えるため、サンプル（2,710 件）の初回取り込みで約 5,600 行、同じ件数の入れ替えで約 11,000 行を使います。
+集計 1 回の読み取りは数千〜数万行です。試験的な取り込みや大量の自動テストは `--local` で行ってください。
+
+D1 が無い・使えない環境（GitHub Pages など）では、アプリはブラウザ内の JavaScript 集計（同じサンプルデータ）に自動で切り替わります。
+
+### 3. シークレットの設定
+
+| 名前 | 必須 | 内容 |
+| --- | --- | --- |
+| `TAXI_APP_KEY` | 追加機能を使う場合 | 追加機能を有効にするアクセスキー（任意の長いランダム文字列）。Cookie の署名にも使います。未設定なら追加機能は常に無効 |
 
 ```bash
 npx wrangler secret put TAXI_APP_KEY
-# プロンプトでシークレット値を入力
+# プロンプトに値を入力（例: openssl rand -hex 24 で作った文字列）
 ```
 
-**Cloudflareダッシュボードで設定：**
+ダッシュボードで設定する場合: Workers & Pages → 対象の Worker → Settings → Variables and Secrets → Add → Type: Secret。
 
-1. [Cloudflare Dashboard](https://dash.cloudflare.com/) にログイン
-2. Workers & Pages → `quest-xr-glass-demo` を選択
-3. Settings → Variables and Secrets
-4. Add → Type: Secret → Name: `TAXI_APP_KEY` → 値を入力して保存
+LLM（チャット）の API キーは Worker のシークレットではありません。利用者がアプリの設定欄にエンドポイント URL・API キー・モデル名を入力し、
+ブラウザに保存されます。Worker の `/api/llm` はその `Authorization` ヘッダーを HTTPS の上流（OpenAI 互換の `/chat/completions`）へ
+そのまま中継するだけで、キーを保存しません（自ホスト・localhost・IP アドレス宛ては拒否）。
+
+### 4. ローカル開発
+
+```bash
+cp .dev.vars.example .dev.vars      # .dev.vars は .gitignore 済み。値を自分のテスト用キーに変更
+npx wrangler d1 migrations apply taxi-analytics --local
+node scripts/import-trips.mjs --sample --local
+npx wrangler dev                    # http://localhost:8787/quest-mr/
+```
+
+- ローカルの D1 は `.wrangler/` に作られます（リモートの枠を使いません）。
+- Workers AI（`AI` バインディング）はローカル実行でも Cloudflare 上で動くため、`wrangler dev` には `wrangler login`（または `CLOUDFLARE_API_TOKEN`）が必要で、利用量が計上されます。
+  ログインせずに試す場合は `npx wrangler dev --local` を使います（音声認識 `/api/stt` だけ使えません。地球デモ・D1 集計・LLM 中継は動きます）。
+- WebXR（Quest 実機）は HTTPS が必要なので、実機確認はデプロイ後の URL で行います。
+
+### 5. デプロイ
+
+```bash
+npx wrangler deploy
+# => https://<name>.<サブドメイン>.workers.dev
+```
 
 ### アクセス方法
 
-シークレット設定後、以下のようにキーをURLパラメータで渡します：
-
-```
-https://your-worker.workers.dev/quest-mr/?key=YOUR_SECRET_KEY
+```text
+https://<name>.<サブドメイン>.workers.dev/quest-mr/?key=<TAXI_APP_KEY の値>
 ```
 
-- 正しいキーを渡すと、HttpOnlyクッキーが設定され、キーなしのURLにリダイレクトされます
-- 以降はクッキーで認証され、「タクシー業務アプリ分析」ボタンが表示されます
-- クッキーは7日間有効です
+- 正しいキーを渡すと、署名付きの HttpOnly / Secure / SameSite Cookie（7日間有効）が設定され、キーなしの URL にリダイレクトされます
+- ログアウト: `/quest-mr/?key=logout` または `/logout`
+- キーは Worker 側で定数時間比較します。Cookie が無い場合、`/api/llm`・`/api/stt`・`/api/query` は 401 を返します
+- クライアント側でも `window.__TAXI_ALLOWED__` フラグでゲートします
 
-**ログアウト：**
+⚠️ このリポジトリはパブリックです。ゲーティングはデプロイ先のサイトへのアクセスを制御するもので、ソースコード（`public/quest-mr/app.js` など）は GitHub 上で誰でも閲覧できます。
 
-```
-https://your-worker.workers.dev/quest-mr/?key=logout
-```
+### Worker の API
 
-または
-
-```
-https://your-worker.workers.dev/logout
-```
-
-### 仕組み
-
-1. **キー検証**: URLパラメータ `?key=...` をWorker側でシークレットと定数時間比較
-2. **クッキー設定**: 正しいキーの場合、署名付きHttpOnly/Secure/SameSiteクッキーを設定
-3. **HTMLリライト**: 認証なしの場合、HTMLRewriterでタクシー関連のUI要素を削除
-4. **クライアント側ガード**: `window.__TAXI_ALLOWED__` フラグでJavaScript側でもゲート
-
-### セキュリティについての注意
-
-⚠️ **このリポジトリはパブリックです。** タクシールームのソースコード（`quest-mr/app.js` のタクシー関連部分）はGitHub上で誰でも閲覧できます。このゲーティングは、デプロイされたサイトへのアクセスを制御するものであり、ソースコードを非公開にするものではありません。
-
-### ローカル開発
-
-ローカルでテストする場合は、`.dev.vars` ファイルを作成します（`.gitignore` に含まれているため、コミットされません）：
-
-```bash
-# .dev.vars
-TAXI_APP_KEY=your-test-key
-```
-
-```bash
-npx wrangler dev
-```
+| パス | 認証 | 内容 |
+| --- | --- | --- |
+| `POST /api/llm` | Cookie | OpenAI 互換 Chat Completions の中継（上流 URL は `X-LLM-Endpoint` ヘッダー、キーは `Authorization`）。上流タイムアウト 85 秒 |
+| `POST /api/stt` | Cookie | 音声認識（`{ audio: "<base64 WAV>" }` → Workers AI Whisper） |
+| `POST /api/query` | Cookie | D1 のパラメータ化 SQL による集計。D1 未設定なら `503 db-unavailable` |
 
 ### 設定ファイル
 
-- `wrangler.jsonc` - Wrangler設定（Worker名、アセットディレクトリ、compatibility_date）
-- `worker/index.js` - Workerスクリプト（認証、HTMLRewriter、LLM/STT中継、D1集計 `/api/query`）
-- `migrations/`, `scripts/import-trips.mjs` - タクシー分析データ（D1）のスキーマと取り込み
-- `.assetsignore` - 静的アセットから除外するファイル（Workerソース、設定ファイル等）
-- `.dev.vars` - ローカル開発用シークレット（gitignore済み、自分で作成）
-
-### タクシー分析データ（Cloudflare D1）
-
-v26 から、タクシー分析の集計（AIの `query_data`、作成パネル、固定パネル）は Cloudflare D1 データベース
-`taxi-analytics`（バインディング `DB`）で行います。Worker の `POST /api/query`（taxi_auth Cookie 必須、無い場合 401）が
-パラメータ化SQLで集計します。D1 が使えない環境（Pages など、`503 db-unavailable`）や通信エラー時は、
-アプリ内の JavaScript 集計（サンプルデータ）に自動で切り替わり、ステータス行に小さな注記が出ます。
-
-v27 から、データは**ご本人の1台・1名分の売上記録**（車両・ドライバーの区別なし）です。車両別・ドライバー別の
-集計・絞り込みはなく、AI やオフライン応答も「ありません」と答えます。固定パネル4枚目とクイックボタンは「時間帯別」
-（時間帯ごとの売上・乗車回数）です。サンプルデータは実際の勤務に合わせ、[シフトカレンダー](https://matzoka.github.io/shift-calendar/) の12日周期（出番→明休→出番→明休→出番→明休→公休→出番→明休→出番→明休→公休、2026-06-03 が起点の出番）の**出番の日だけ**乗務します。出番は 9:00 出庫〜翌朝 4:50 帰庫、途中に2時間の休憩（乗車なし）が1回。翌朝 0〜4時台の乗車も出番の日の日付（営業日）で記録します。1出番平均約35回・約60,000円（税抜）、1乗車約1,700円。
-
-v28 から、AI の長い回答が途中で切れないようにしました。hy3 は考える分のトークンも `max_tokens` に数えるため、
-1回の上限を 1,600 → 4,000 に上げ（90秒の質問期限までに生成できる量で自動的に上限を下げる）、
-上限で切れた場合は1回だけ自動で続きを取得してつなぎます。考えるだけで上限に達して本文が出なかった・切れた場合、
-その質問の残りは `reasoning_effort: "none"`（hy3 の思考なし・高速）で続けます。売上系の `groupBy` 結果には、AI 向けに
-グループごとの1乗車平均（avgPerTrip）も付けます。それでも切れたときは「（続きがあります。「続けて」と話しかけると続きを表示します）」
-を表示し、「続けて」で続きを答えます。新しい長い回答はチャット欄の先頭行から表示します（スクロールで全文）。
-また、AI の `create_panel` に `conditions`（`query_data` と同じ絞り込み条件）を指定でき、「布田から乗った時間帯別の売上」のような
-条件付き集計もパネルにできます（値は `query_data` の結果＝D1 集計と同じ）。
-
-- スキーマ: `migrations/0001_taxi_schema.sql` + `migrations/0002_single_driver.sql`（v27: `trips` から車両・ドライバー列を除き、
-  二次インデックスは `date` のみ。v26 の表は書き込みを発生させないよう `trips_v26_legacy` へ名前変更して残しています）。
-  `trips` = 正規化済み乗車記録、`vocab` = 有効なエリア/町名と読み、`meta` = 注記・運賃ルール・contentHash 等
-- 取り込み: `scripts/import-trips.mjs`（アプリの `taxiTripFromRecord()` をそのまま使って派生項目を計算し、trips / vocab / meta を**置き換え**ます）
-
-**D1 無料枠に注意**（1日あたり 書き込み 100,000 行・読み取り 5,000,000 行、00:00 UTC = 9:00 JST にリセット）。
-D1 は行の挿入・削除ごとに「表1行 + インデックス数」行を書き込みとして数えます。取り込み1回の書き込みは
-おおよそ `(旧件数 + 新件数) × 2 + (vocab + meta) × 2` 行です（例: 空の表へ 2,710 件 → 約 5,600 行、同じ件数の入れ替え → 約 11,000 行）。
-スクリプトは `--apply` の前に**読み取りだけ**で現在の件数・インデックス数・contentHash を確認し、
-内容が同じなら何も書き込まず終了、見積もりが `--max-writes`（既定 50,000）を超える場合は中止します。
-試験的な取り込みはリモートで繰り返さず、`--local`（`wrangler dev` のローカル D1）で行ってください。
-集計1回の読み取りは約 5,000〜40,000 行（2,710 件の場合、平均約 11,000 行）です。大量の自動テストをリモートに流すと読み取り枠を超えます。
-
-```bash
-export CLOUDFLARE_API_TOKEN=...   # D1 Edit 権限つき
-export CLOUDFLARE_ACCOUNT_ID=...
-# スキーマ（未適用のマイグレーションのみ適用）
-npx wrangler d1 migrations apply taxi-analytics --remote
-# サンプルデータ（アプリと同一の 2,710 件）: まずローカルで確認してからリモートへ
-node scripts/import-trips.mjs --sample --local
-node scripts/import-trips.mjs --sample --apply
-# 実データ: 生レコードの JSON 配列（taxiTripFromRecord の入力形式）
-node scripts/import-trips.mjs --input records.json [--vocab vocab.json] --note "実データによる集計結果" --dataset "2026年4〜9月 PDF" --apply
-# 旧 v26 の表（任意・書き込み枠に余裕のある日に。削除の書き込み数は D1 の meta で確認）
-# npx wrangler d1 execute taxi-analytics --remote --command "DROP TABLE trips_v26_legacy"
-```
-
-`records.json` の1件: `{ id, date "YYYY-MM-DD", time "HH:MM", pickupArea, pickupTown, pickupAddress,
-dropoffArea, dropoffTown, dropoffAddress, distance, dispatch, occupiedMinutes, emptyMinutes, fare?, dropoffTime?, dropoffDate? }`
-（vehicle / driver があっても無視されます）。
-`--vocab` を省略すると有効値はレコードから（出現順で）作られます。読み（ひらがな）を付けたい場合は
-`[{ "kind": "town", "value": "調布市布田", "reading": "ふだ", "parent": "調布駅周辺" }, ...]` の形式で渡します。
-`--apply` / `--local` を付けない場合は SQL ファイル（既定 `/tmp/taxi-import.sql`）の生成のみです。
+- `wrangler.jsonc` - Worker 名、エントリ（`worker/index.js`）、`compatibility_date`、アセット・AI・D1 のバインディング
+- `.assetsignore` - 静的アセットのアップロードから除外するファイル
+- `.dev.vars.example` - ローカル用シークレットの雛形（実際の値は `.dev.vars` に書き、コミットしない）
